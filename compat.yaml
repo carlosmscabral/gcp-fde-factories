@@ -26,15 +26,16 @@ toolchain:
     license: "Apache-2.0"
 
 images:
-  # Digest values populate during Phase 1b mirror build and replace PENDING before customer handoff.
-  claude-gecx: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/gecx-factory-images/scion-claude-gecx@sha256:0000000000000000000000000000000000000000000000000000000000000000"
-  antigravity-gecx: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/gecx-factory-images/scion-antigravity-gecx@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  # Immutable @sha256 digests built and verified offline (--network=none) in Phase 1b Cloud Build 3c48001b.
+  core-gcp-fde-base: "us-central1-docker.pkg.dev/cabral-gecx-spk-hub/gecx-spk-images/core-gcp-fde-base@sha256:a1cbe2bd7401cff34b6da924428f57646c66004c1024d26e6f38e8c0ecdf9333"
+  scion-gecx-runtime: "us-central1-docker.pkg.dev/cabral-gecx-spk-hub/gecx-spk-images/scion-gecx-runtime@sha256:730282ce9892339455780aaefb68c7d53cc9daa7bb2e9ea0d146e1626510ec1b"
 
 models:
   claude_reviewer: "claude-sonnet-4-6"
-  gemini_developer: "gemini-2.5-pro"
+  gemini_developer: "gemini-3.1-pro-preview"
+  gemini_fast: "gemini-3-flash-preview"
 
 canary:
-  run_id: "gate0-argolis-spike-2026-11-22"
+  run_id: "phase1b-argolis-validation-2026-11-22"
   date_brt: "2026-11-22"
-  notes: "Validated 2-project Argolis Terraform, 3 non-wildcard CES Custom Roles, split-SA cxas 1.11.0, and Scion v0.4.0-preview.3 cross-project enforce."
+  notes: "Passed live-gcp-verified E2E (70.34s), all 7 negative tests, Cloud Build rebuild (1m55s), and 68.6s IAM kill-switch on cabral-gecx-spk-hub + cabral-gecx-spk-sbx."

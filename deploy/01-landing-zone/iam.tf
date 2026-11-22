@@ -185,6 +185,30 @@ resource "google_service_account" "sandbox_janitor" {
   display_name = "GECX Sandbox Hourly Janitor"
 }
 
+resource "google_service_account" "release_builder" {
+  project      = var.hub_project_id
+  account_id   = "${var.name_prefix}-builder"
+  display_name = "Factory Release Kit Cloud Build SA (Rebuild Mode)"
+}
+
+resource "google_project_iam_member" "builder_ar_writer" {
+  project = var.hub_project_id
+  role    = "roles/artifactregistry.writer"
+  member  = "serviceAccount:${google_service_account.release_builder.email}"
+}
+
+resource "google_project_iam_member" "builder_logging" {
+  project = var.hub_project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.release_builder.email}"
+}
+
+resource "google_project_iam_member" "builder_storage_viewer" {
+  project = var.hub_project_id
+  role    = "roles/storage.objectViewer"
+  member  = "serviceAccount:${google_service_account.release_builder.email}"
+}
+
 # --- Scion Hub Server IAM (required by gcp_iam_check_mode=enforce + assign SA minting) ---
 
 resource "google_project_iam_member" "hub_security_reviewer" {

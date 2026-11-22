@@ -60,6 +60,10 @@ output "sandbox_janitor_sa_email" {
   value = google_service_account.sandbox_janitor.email
 }
 
+output "release_builder_sa_email" {
+  value = google_service_account.release_builder.email
+}
+
 output "budget_pubsub_topic" {
   value = google_pubsub_topic.budget_alerts.id
 }

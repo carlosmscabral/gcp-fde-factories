@@ -13,13 +13,13 @@ ENV GECX_FOUNDRY_DIR=/opt/gecx-foundry
 RUN uv pip install --system --no-cache "cxas-scrapi==${CXAS_VERSION}"
 
 # Vendor unmodified Apache-2.0 cxas-agent-foundry scripts, references, and assets at pinned commit.
+COPY NOTICE "${GECX_FOUNDRY_DIR}/NOTICE"
 RUN mkdir -p /tmp/foundry-fetch "${GECX_FOUNDRY_DIR}" \
     && curl -fsSL "https://github.com/GoogleCloudPlatform/cxas-scrapi/archive/${FOUNDRY_COMMIT}.tar.gz" \
        | tar -xz -C /tmp/foundry-fetch --strip-components=1 \
     && cp -r /tmp/foundry-fetch/.agents/skills/cxas-agent-foundry/scripts "${GECX_FOUNDRY_DIR}/scripts" \
     && cp -r /tmp/foundry-fetch/.agents/skills/cxas-agent-foundry/references "${GECX_FOUNDRY_DIR}/references" \
     && cp -r /tmp/foundry-fetch/.agents/skills/cxas-agent-foundry/assets "${GECX_FOUNDRY_DIR}/assets" \
-    && cp /tmp/foundry-fetch/LICENSE "${GECX_FOUNDRY_DIR}/LICENSE" \
     && rm -rf /tmp/foundry-fetch
 
 RUN cxas --help >/dev/null \

@@ -3,7 +3,7 @@
 schema_version: "1"
 name: claude-vertex
 harness: claude
-image: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/gecx-factory-images/scion-claude-gecx@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+image: "us-central1-docker.pkg.dev/cabral-gecx-spk-hub/gecx-spk-images/scion-gecx-runtime@sha256:730282ce9892339455780aaefb68c7d53cc9daa7bb2e9ea0d146e1626510ec1b"
 model: "claude-sonnet-4-6"
 env:
   CLAUDE_CODE_USE_VERTEX: "1"

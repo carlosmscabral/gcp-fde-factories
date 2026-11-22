@@ -3,11 +3,11 @@
 schema_version: "1"
 name: antigravity-vertex
 harness: antigravity
-image: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/gecx-factory-images/scion-antigravity-gecx@sha256:0000000000000000000000000000000000000000000000000000000000000000"
-model: "gemini-2.5-pro"
+image: "us-central1-docker.pkg.dev/cabral-gecx-spk-hub/gecx-spk-images/scion-gecx-runtime@sha256:730282ce9892339455780aaefb68c7d53cc9daa7bb2e9ea0d146e1626510ec1b"
+model: "gemini-3.1-pro-preview"
 env:
   GOOGLE_GENAI_USE_VERTEXAI: "true"
-  GOOGLE_CLOUD_LOCATION: "us-central1"
+  GOOGLE_CLOUD_LOCATION: "global"
   GOOGLE_CLOUD_PROJECT: "REPLACE_INFERENCE_PROJECT"
 resources:
   cpu: "2"

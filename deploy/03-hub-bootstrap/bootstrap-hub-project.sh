@@ -126,14 +126,17 @@ do_apply() {
   fi
 
   # Publish pack skills to Hub Skill Bank (directory basename defines skill name in Scion v0.4).
-  local pack_ver
+  local pack_ver existing_skills
   pack_ver="$(jq -r '.pack_version' "$KIT_DIR/manifest.json")"
+  existing_skills="$(scion project skills list --hub "$HUB_URL" 2>/dev/null || true)"
   for skill_dir in "$KIT_DIR"/skills/*; do
     [[ -d "$skill_dir" ]] || continue
     local sname
     sname="$(basename "$skill_dir")"
     scion skills publish "$skill_dir" --scope global --version "$pack_ver" --hub "$HUB_URL"
-    scion project skills add "skill://${sname}" --hub "$HUB_URL" || true
+    if ! grep -Fq "skill://${sname}" <<< "$existing_skills"; then
+      scion project skills add "skill://${sname}" --hub "$HUB_URL"
+    fi
   done
 
   # Sync local templates only (stores zero upstream source URL, blocking accidental Refresh clobber).
