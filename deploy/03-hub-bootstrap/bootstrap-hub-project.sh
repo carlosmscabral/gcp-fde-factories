@@ -75,7 +75,7 @@ do_backup() {
   for tpl_dir in "$KIT_DIR"/templates/*; do
     local name
     name="$(basename "$tpl_dir")"
-    scion templates pull "$name" --out "$dir/templates/$name" --hub "$HUB_URL" 2>/dev/null || true
+    scion templates pull "$name" --to "$dir/templates/$name" 2>/dev/null || true
   done
   echo "BACKUP COMPLETE: $dir"
 }
@@ -125,7 +125,7 @@ do_apply() {
     fi
   fi
 
-  # Publish all pack and SEP skills to Hub Skill Bank.
+  # Publish all pack and SEP skills to Hub Skill Bank (idempotent across already-published versions).
   # Attach only attach_to_project=true skills project-wide; role-specific SEP skills mount via template skills[].
   local existing_skills
   existing_skills="$(scion project skills list --hub "$HUB_URL" 2>/dev/null || true)"
@@ -133,13 +133,17 @@ do_apply() {
     [[ -n "$sname" ]] || continue
     local skill_dir="$KIT_DIR/skills/$sname"
     [[ -d "$skill_dir" ]] || continue
-    scion skills publish "$skill_dir" --scope global --version "$sver" --hub "$HUB_URL"
+    if scion skills resolve "skill://scion/global/${sname}@${sver}" --hub "$HUB_URL" >/dev/null 2>&1; then
+      echo "SKIP publish: ${sname}@${sver} already published in Hub Skill Bank."
+    else
+      scion skills publish "$skill_dir" --scope global --version "$sver" --hub "$HUB_URL"
+    fi
     if [[ "$sattach" == "true" ]]; then
       if ! grep -Fq "$sname" <<< "$existing_skills"; then
         scion project skills add "skill://scion/global/${sname}" --hub "$HUB_URL"
       fi
     fi
-  done < <(jq -r '.skills[] | [.name, .version, ((.attach_to_project // true) | tostring)] | @tsv' "$KIT_DIR/manifest.json")
+  done < <(jq -r '.skills[] | [.name, .version, ((if has("attach_to_project") then .attach_to_project else true end) | tostring)] | @tsv' "$KIT_DIR/manifest.json")
 
   # Sync local templates only (stores zero upstream source URL, blocking accidental Refresh clobber).
   for tpl_dir in "$KIT_DIR"/templates/*; do

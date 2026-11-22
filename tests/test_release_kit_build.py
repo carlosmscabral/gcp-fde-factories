@@ -101,3 +101,11 @@ def test_release_kit_is_offline_prefix_isolated_and_model_free(tmp_path: pathlib
     assert (
         out_dir / "skills" / "software-engineering-process" / "references" / "em-brief-template.md"
     ).exists()
+
+    # Regression guard for live-discovered Scion v0.4 CLI/jq bugs in bootstrap-hub-project.sh:
+    # 1. scion templates pull uses --to (not --out).
+    # 2. jq must preserve explicit attach_to_project=false (never use `.attach_to_project // true`).
+    bootstrap_sh = (out_dir / "bootstrap" / "bootstrap-hub-project.sh").read_text(encoding="utf-8")
+    assert "templates pull" in bootstrap_sh and "--to " in bootstrap_sh
+    assert "templates pull \"$name\" --out" not in bootstrap_sh
+    assert ".attach_to_project // true" not in bootstrap_sh

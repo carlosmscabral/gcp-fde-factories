@@ -161,6 +161,107 @@ No Scion, a comunicação multi-agente combina **três canais complementares**:
 > [!WARNING]
 > **Padrão do Preston (`eng-manager/agents.md`):** mesmo quando `--message-mode project` está ativo, **workers (`developer`, `code-reviewer`) não conversam diretamente entre si**. O `eng-manager` (ou *issue owner*) lê o relatório do revisor e repassa achados objetivos com `arquivo:linha` ao desenvolvedor. Isso preserva a revisão cega e evita debates infinitos entre dois agentes sem autoridade de decisão.
 
+### 2.3 Anatomia Completa do Filesystem no Scion (Mounts, Backing Storage e Isolamento)
+
+Uma dúvida frequente ao operar múltiplos agentes em paralelo é: **"onde cada arquivo mora fisicamente, como o harness enxerga esses mounts e qual container consegue ler o arquivo de outro container?"**
+
+No Scion, **os harnesses (`claude`, `gemini`, `antigravity`) não montam nada por conta própria**. Quem monta o filesystem antes de iniciar o container é o **Runtime Broker**, combinando áreas privadas, áreas compartilhadas e proteções em modo read-only/máscara (`local/workspace.md` e `local/workspaces-and-sharing.md`).
+
+![Anatomia do Filesystem no Scion v0.4 — O Que Cada Container Monta, Enxerga e Isola](assets/scion_filesystem_anatomy.png)
+
+**Mapa exato do que existe dentro de cada container (exemplo com `dev-billing` e `dev-plans` rodando juntos):**
+
+| Caminho no Container | O Que Está Por Baixo (Backing Storage) | Tipos de Arquivo Que Vivem Ali | Quem Enxerga e Por Quê |
+| :--- | :--- | :--- | :--- |
+| **`/home/scion`** *(Agent Home)* | Bind-mount local no host em Docker/Workstation (`~/.scion/.../agents/<nome>/home/`). Em GKE/Cloud Run exige NFS/PVC para persistir sessões (ou RAM efêmera se `persistence: ephemeral`). | Sessão do harness (`.claude/`, `.gemini/settings.json` usada por `--continue`/`--resume`), skills montadas (`.claude/skills/`, `.gemini/skills/`), `.scion/task.md`, JWT `.scion/scion-token` (10 h), `.scion/harness/provision.py`, anexos recebidos em `.scion/inbox/<msg>/` (retenção 7 dias), `.tmux.conf`, `.gitconfig` pessoal e cache Playwright (`~/.cache/ms-playwright`). | **Somente aquele agente (`RW`).** `dev-billing` nunca acessa o token, o histórico ou o inbox de `dev-plans`. |
+| **`/workspace`** *(em `clone-per-agent`, `shared-plain` ou `empty-per-agent`)* | Em `clone-per-agent`: pasta privada por agente (`<nfs>/<proj>/agents/<nome>/workspace` ou disco do broker). O Broker impõe `nfsBindScope` para que cada container monte apenas a própria subpasta. | Código-fonte clonado via HTTPS no branch `scion/<nome>` (`depth=1` por padrão — rode `git fetch --unshallow` se precisar de histórico completo). | **Somente aquele agente (`RW`)** em `clone-per-agent` e `empty-per-agent`. **Todos os agentes (`RW`)** em `shared-plain` (sem isolamento). |
+| **`/repo-root/.scion/agents/<nome>/workspace`** *(em `worktree-per-agent`)* | Linked git worktree (`git >= 2.48`) do checkout do host ou do clone-base compartilhado no Broker. **Atenção:** `/workspace` não é montado nesse modo — scripts devem usar `$PWD` ou `git rev-parse --show-toplevel`. | Working tree isolado do agente sobre o histórico Git compartilhado. | **Working tree privado (`RW`)** por agente, mas **objetos/branches Git são compartilhados**. |
+| **`/repo-root/.git`** *(em `worktree-per-agent`)* | Diretório `.git` do repositório compartilhado, com camadas cirúrgicas de montagem. | Metadados Git. A **raiz `.git` é montada `RO`** (impede criar `.git/commondir` ou hooks maliciosos no host). Apenas `objects/`, `refs/`, `logs/`, `lfs/` e `worktrees/<agente>/` são reabertos em `RW`. Em Docker/Podman, `.git/config` é uma **cópia privada `RO` redatada** sem `credential.*`, `http.extraheader` ou senhas em URL, e com `gc.auto=0`. | **Compartilhado com proteção estrita.** Comandos que reescrevem `packed-refs` na raiz (`git gc`, `git fetch --prune`, deletar tag) falham de forma segura dentro do container. |
+| **`.scion/` e `.scion/agents/`** *(dentro do workspace)* | Pasta de configuração do projeto no repositório. | `settings.yaml`, templates locais. `.scion/` entra **`RO`** e **`.scion/agents/` é mascarado com um `tmpfs` vazio**. | **Configuração `RO` e demais agentes invisíveis.** Impede que um agente altere a configuração do projeto no host ou leia o worktree de outro agente. |
+| **`/scion-volumes/<nome>`** ou **`/workspace/.scion-volumes/<nome>`** *(Shared Directories)* | Pasta no host (Workstation/Docker), export **NFS/Filestore** (`server.project_storage.backend: nfs`) em multi-broker/Cloud Run, ou **PVC `ReadWriteMany`** em GKE. | **`scratchpad`** (criado automaticamente por padrão: anexos de threads em `.attachments/`, `.<agente>-state.md`, trocas de relatórios), além de volumes extras (`scion shared-dir create build-cache` ou `knowledge --in-workspace --read-only`). | **Todos os agentes do projeto (em TODOS os modos, inclusive `clone-per-agent`!).** Atravessam propositalmente o isolamento do workspace — trate como storage concorrente. Também visíveis na aba **Shared Directories** da Web UI. |
+
+**Quatro regras práticas do filesystem que evitam horas de debug:**
+
+1. **Bloqueio de paths de controle do Broker (`control_path_mount`):** o Runtime Broker recusa qualquer mount (`volumes:`, `--workspace` ou shared-dir), mesmo em modo `:ro`, cujo caminho real no host (após resolver symlinks) alcance `/`, `~` ou arquivos de controle em `~/.scion/` (`hub.db`, `dev-token`, `broker-credentials.json`, `hub-credentials/`, `settings.yaml`, `plugins/`, `runtime-broker-state/`).
+2. **Quando alterações de `harness-config` chegam ao `/home/scion` (`reference/harness-settings.md`):** arquivos em `home/` (ex.: `.claude/settings.json`, `.tmux.conf`) são copiados **apenas na criação** (ou em `scion reincarnate`), enquanto `provision.py` e `config.yaml` rodam de novo em todo `scion start`.
+3. **Nunca use `git clean -fdx` dentro de um agente:** use sempre **`git clean -fd`** (respeita `.gitignore` e preserva metadados `.scion/` e arquivos de estado ignorados).
+4. **Quando usar Shared Directory vs. Git vs. Hub Artifact?**
+   - **Código e testes versionados:** branch Git com *durability push* contínuo (lembre: `scion delete --preserve-branch` só preserva no clone local, não faz push!).
+   - **Caches pesados, binários intermediários ou `.<agente>-state.md`:** Shared Directory (`/scion-volumes/build-cache` ou `/scion-volumes/scratchpad`).
+   - **Specs, Design Docs, ADRs e relatórios HTML para revisão humana:** **Hub Artifacts** (seção 2.4 abaixo), que vivem no Hub fora do filesystem do container.
+
+### 2.4 Specs, Design Docs, ADRs e Decisões Nativas no Scion (`v0.4.0-preview.3`)
+
+Em vez de espalhar especificações e ADRs como blocos longos de texto solto no chat ou arquivos esquecidos em branches de container, o Scion `v0.4.0-preview.3` oferece **duas primitivas nativas do Hub** pensadas exatamente para engenharia orientada a specs e decisões arquiteturais (`hosted/user/artifacts.md` e `hosted/user/messaging.md`):
+
+![Specs, Design Docs, ADRs e Decisões Nativas no Scion v0.4.0-preview.3](assets/scion_artifacts_and_decisions.png)
+
+#### A. Native Artifacts (`hub.artifacts` + `web.artifact_review_editor`) — Specs & ADRs com Track Changes
+
+Um **Artifact** é um arquivo ou pasta (ex.: uma spec Markdown, um `ADR-001.md` ou um relatório HTML completo) armazenado no próprio **Hub** com referência imutável **`scion://artifact/<uuid>`** (versões `@1`, `@2`, `@3`). Como os bytes vivem no Hub, qualquer usuário autorizado ou agente em **outro Runtime Broker** lê o documento sem precisar montar o workspace do autor.
+
+**Fluxo real no nosso Smoke Test (`gecx-architect` ↔ Humano):**
+
+```bash
+# 1. O gecx-architect publica o ADR-001 / Spec da arquitetura Telecom_Support_Center (v1)
+scion artifact publish .design/adr-001-telecom.md \
+  --title "ADR-001: Auth Callback e Topologia Telecom_Support_Center" \
+  --key adr-001-telecom
+# Saida: scion://artifact/5f1c2d3e-... (v1)
+
+# 2. Envia no chat como chip clicavel (nao duplica copia!)
+scion message @tech-lead "ADR-001 pronto para revisao humana." \
+  --artifact scion://artifact/5f1c2d3e-...
+```
+
+3. **Você revisa na Web UI com Track Changes nativo:** abra o chip no chat e clique em **Review**. Com `web.artifact_review_editor` ligado, o editor abre em modo **Graphical** (Track Changes sempre ativo) — você edita parágrafos, tabelas e listas direto no documento renderizado e aperta `Ctrl+Alt+M` (`Cmd+Alt+M` no macOS) para comentar. O Scion salva uma versão do tipo `review` em [CriticMarkup](https://github.com/CriticMarkup/CriticMarkup-toolkit) (`{~~antigo~>novo~~}`, `{>>comentário<<}`), coloca o selo **`Review pending`** e avisa se outra pessoa já estiver revisando (`409 review_open`).
+4. **O `gecx-architect` aplica suas revisões sem parsear marcação na mão e gera a `v2`:**
+   ```bash
+   scion artifact comments scion://artifact/5f1c2d3e-...                # lista comentarios/sugestoes
+   scion artifact get scion://artifact/5f1c2d3e-... --accept > .design/adr-001-telecom.md
+   scion artifact publish .design/adr-001-telecom.md \
+     --version-of scion://artifact/5f1c2d3e-... \
+     --note "Revisoes de auth_guard e callback_tests aplicadas"
+   ```
+5. **Governança de acesso (*Stewards*):** agentes **nunca** podem compartilhar artefatos para fora do projeto. Apenas os *stewards* humanos (quem delegou o agente ou `project-owner`) criam grants (`read`, `review`, `write`, `admin`) ou links temporários (`scion artifact share <ref> --ttl 3d`). Com `hub.artifact_sponsor_review_grant`, o humano que iniciou o agente já recebe *Can review* automaticamente.
+
+#### B. Native Decisions (`web.decisions`) — ADRs Estruturados com Fila e Auditoria
+
+Na `v0.4.0-preview.3`, as antigas escolhas de chat foram promovidas a **Decisions** nativas: um sistema de perguntas estruturadas com chaves versionadas (`D1`, `D2`, `v1`/`v2`), páginas dedicadas em **Project Decisions** (`/projects/:id/decisions`) e **Profile Decisions** (agrupando todos os seus projetos), e log pesquisável de decisões tomadas (**Made**) com proveniência (`direct`, `interpreted`, `confirmed`, `overridden`).
+
+**Exemplo prático no `Telecom_Support_Center` (o agente envia 1 a 10 decisões por card):**
+
+```bash
+# Enviado pelo gecx-architect (somente agentes podem usar --decisions!)
+scion message @lead@cliente.com "Preciso de 2 decisoes antes de fechar o ADR-001:" --decisions '[
+  {
+    "id": "D1",
+    "question": "Onde impor o bloqueio de autenticacao antes de fetch_invoice?",
+    "default": "callback",
+    "choices": [
+      {"id": "callback", "label": "Callback Python auth_guard", "description": "Deterministico, 0 tokens extras"},
+      {"id": "prompt", "label": "Instrucao no prompt", "description": "Mais simples, sujeito a drift do modelo"}
+    ]
+  },
+  {
+    "id": "D2",
+    "question": "Como tratar a transferencia CCaaS no REQ-103 durante o Sandbox?",
+    "default": "flag_nv",
+    "choices": [
+      {"id": "flag_nv", "label": "Marcar not-verifiable-in-sandbox", "description": "Gera veredito honesto com revisao humana"},
+      {"id": "defer", "label": "Deixar transferencia para Fase 2", "description": "Escopo 100% live-gcp-verified agora"}
+    ]
+  }
+]'
+```
+
+- **Resposta no clique ou em texto livre:** você responde clicando no card no Chat ou na aba **Decisions → Waiting on you** (`direct`). Se preferir responder em texto livre (*"vamos de callback na D1 e not-verifiable na D2"*), o agente registra formalmente com `scion decisions record --from <message-id> D1=callback D2=flag_nv` (gravado como `interpreted`, que você pode confirmar ou sobrescrever depois!).
+- **Atualização e limpeza:** o agente pode revisar uma decisão com `--update` (gera `v2` e marca `v1` como `replaced`) ou cancelar dúvidas que caducaram com `scion decisions withdraw D2 --reason "Movido para Fase 2"`.
+- **Consulta humana a qualquer momento:** `scion decisions list --all-projects` (pendentes) ou `scion decisions list --made -q "auth"` (histórico auditado de ADRs).
+
+> [!IMPORTANT]
+> **Ativando no seu Scion Hub (`v0.4.0-preview.3`):** tanto Artifacts quanto Decisions vêm **desligados por padrão** como experimentos. Para habilitá-los no Hub (via **Admin → Server Config → Experiments** ou `scion hub experiments enable`), ligue `hub.artifacts`, `web.artifact_review_editor`, `hub.artifact_sponsor_review_grant` e `web.decisions`.
+
 ---
 
 ## Parte 3 — Imagens Docker dos Agentes: Upstream, Atualizações e Tools Específicas de Projeto
@@ -511,7 +612,8 @@ Nunca altere `packs/gecx` para regras de um único cliente (tom de voz, fluxos p
 ### 7.3 Referências Oficiais (`GoogleCloudPlatform/scion@v0.4.0-preview.3` & `agent-team`)
 
 - **Arquitetura & Modos:** [Overview](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/overview.md), [Choosing a Mode](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/choosing-a-mode.md) e [Core Concepts & Agent State Model](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/concepts.md).
-- **Tutorial & Uso Diário:** [Tutorial](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/getting-started/tutorial.md), [Connecting to a Hub](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/hosted-user.md), [Workspaces & Sharing](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/workspaces-and-sharing.md) e [Interactive Tmux](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/tmux.md).
+- **Tutorial, Workspaces & Filesystem:** [Tutorial](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/getting-started/tutorial.md), [Connecting to a Hub](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/hosted-user.md), [About Workspaces & Host Git Safety](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/workspace.md), [Workspaces & Sharing Modes](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/workspaces-and-sharing.md), [Volume Source Restrictions](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/orchestrator-settings.md) e [Interactive Tmux](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/tmux.md).
+- **Specs, ADRs, Artifacts & Decisions Nativas:** [Using Artifacts & Track-Changes Reviews](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/artifacts.md), [Artifacts Reference](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/artifacts.md) e [Decisions (`web.decisions`)](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/messaging.md).
 - **Templates, Skills & Imagens:** [Templates & Roles](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/templates.md), [Agent Config Reference](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/agent-config.md), [Skills Authoring](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/skills.md), [Skill Registry & Federation](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/single-node/skill-registry.md), [Building Custom Images](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/custom-images.md) e [Harness Settings](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/harness-settings.md).
 - **Comunicação, Dashboard & Segurança:** [Web Dashboard](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/workstation/dashboard.md), [Messaging & Notifications](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/messaging.md), [Messaging Authorization](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/messaging-authorization.md), [Permissions & AK1 Kernel](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/permissions-policy.md), [Agent Lifecycle & Triage](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/agent-lifecycle.md) e [Coding Agent CLI](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/coding-agent-cli.md).
 - **Estratégia do Preston (`scion-frontiers/agent-team`):** [Repositório @ `08faf48`](https://github.com/scion-frontiers/agent-team/tree/08faf48269da7d8dd0a20c4e5ca5093afb37495d) e [Software Engineering Process (`SKILL.md`)](https://github.com/scion-frontiers/agent-team/blob/08faf48269da7d8dd0a20c4e5ca5093afb37495d/skills/software-engineering-process/SKILL.md).
