@@ -10,10 +10,11 @@ resource "google_compute_instance" "scion_hub_vm" {
 
   boot_disk {
     initialize_params {
-      image = "ubuntu-os-cloud/ubuntu-2204-lts"
+      image = var.boot_image
       size  = 100
       type  = "pd-balanced"
     }
+    kms_key_self_link = var.boot_disk_kms_key_self_link
   }
 
   network_interface {

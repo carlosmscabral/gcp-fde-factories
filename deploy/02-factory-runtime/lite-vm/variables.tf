@@ -61,3 +61,15 @@ variable "hub_public_url" {
     error_message = "hub_public_url must be empty (loopback mode) or start with https://."
   }
 }
+
+variable "boot_image" {
+  description = "OS image for the Hub VM boot disk. Override with a customer corporate golden image when compute.trustedImageProjects is enforced."
+  type        = string
+  default     = "ubuntu-os-cloud/ubuntu-2204-lts"
+}
+
+variable "boot_disk_kms_key_self_link" {
+  description = "Optional Cloud KMS key self_link for CMEK boot disk encryption when gcp.restrictNonCmekServices is enforced."
+  type        = string
+  default     = null
+}
