@@ -68,7 +68,7 @@ step_2() {
 
 step_3() {
   pause_step "STEP 3: Build Offline Release Kit (./build.sh --release-kit)" \
-    "Composes 5 prefix-isolated templates (zero external URIs, zero hardcoded models) and 5 Hub Skill Bank directories into $KIT_OUT."
+    "Composes 15 prefix-isolated templates (13 agent-team roles + 2 GECX Sandbox specialists, zero external URIs, zero hardcoded models) and 10 Hub Skill Bank directories into $KIT_OUT."
   cd "$REPO_ROOT"
   ./build.sh --release-kit packs/gecx --out "$KIT_OUT"
   echo "--- Generated templates (notice gecx- prefix, no model key) ---"

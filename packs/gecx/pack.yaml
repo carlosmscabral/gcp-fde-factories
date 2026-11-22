@@ -1,13 +1,14 @@
 # Pilot 1 Factory Pack manifest for Google Cloud CX Agent Studio (GECX / CES).
-# Incorporates all Gate 0 Argolis Spike findings (thin Foundry adapter, split-SA runner, fail-closed REST gate).
+# Incorporates Preston's full 13-role agent-team hierarchy (Small Depth-1 and Chunky/Large Depth-3)
+# plus the 2 split-SA GECX Sandbox specialists (15 offline prefix-scoped templates, 10 Hub Skill Bank skills).
 schema_version: "1"
 
 pack:
   name: "gecx"
   prefix: "gecx"
-  version: "0.1.0"
+  version: "0.2.0"
   status: "pilot"
-  description: "Google Cloud Customer Engagement Suite (GECX / CES) autonomous software factory pack supporting text and synthetic BidiRunSession audio verification."
+  description: "Google Cloud Customer Engagement Suite (GECX / CES) autonomous software factory pack with full 13-role SEP hierarchy and split-SA Sandbox verification."
 
 upstream:
   agent_team_repo: "scion-frontiers/agent-team"
@@ -15,11 +16,47 @@ upstream:
   skills_lock: "skills.lock"
 
 specialist_templates:
+  # --- Orchestration tier (--role full: can create and supervise child agents) ---
   - name: "coordinator"
     base_role: "coordinator"
     delta_dir: "templates/coordinator"
     hub_role: "full"
     sandbox_sa_slot: "worker"
+    role_skills:
+      - "software-engineering-process"
+      - "agent-state-continuity"
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  - name: "eng-manager"
+    base_role: "eng-manager"
+    delta_dir: "templates/eng-manager"
+    hub_role: "full"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "software-engineering-process"
+      - "agent-state-continuity"
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  # --- Discovery, architecture, implementation, review, and security (--role baseline) ---
+  - name: "architect"
+    base_role: "architect"
+    delta_dir: "templates/architect"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  - name: "investigator"
+    base_role: "investigator"
+    delta_dir: "templates/investigator"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
+      - "software-engineering-process"
     strip_hardcoded_model: true
 
   - name: "developer"
@@ -27,6 +64,8 @@ specialist_templates:
     delta_dir: "templates/developer"
     hub_role: "baseline"
     sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
     strip_hardcoded_model: true
 
   - name: "code-reviewer"
@@ -34,13 +73,37 @@ specialist_templates:
     delta_dir: "templates/code-reviewer"
     hub_role: "baseline"
     sandbox_sa_slot: "worker"
+    role_skills:
+      - "code-review"
+      - "software-engineering-process"
     strip_hardcoded_model: true
 
+  - name: "test-engineer"
+    base_role: "test-engineer"
+    delta_dir: "templates/test-engineer"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  - name: "security-auditor"
+    base_role: "security-auditor"
+    delta_dir: "templates/security-auditor"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  # --- GECX split-SA Sandbox verification lane (--role baseline) ---
   - name: "gecx-deployer"
     base_role: "developer"
     delta_dir: "templates/gecx-deployer"
     hub_role: "baseline"
     sandbox_sa_slot: "deployer"
+    role_skills:
+      - "artifact-durability"
     strip_hardcoded_model: true
 
   - name: "gecx-eval-tester"
@@ -48,29 +111,106 @@ specialist_templates:
     delta_dir: "templates/gecx-eval-tester"
     hub_role: "baseline"
     sandbox_sa_slot: "evaluator"
+    role_skills:
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  # --- Supporting roles inherited cleanly from pinned agent-team@08faf48 ---
+  - name: "qa-tester"
+    base_role: "qa-tester"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  - name: "researcher"
+    base_role: "researcher"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  - name: "doc-writer"
+    base_role: "doc-writer"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  - name: "release-notes"
+    base_role: "release-notes"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
+      - "release-notes-daily"
+    strip_hardcoded_model: true
+
+  - name: "web-builder"
+    base_role: "web-builder"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
     strip_hardcoded_model: true
 
 project_skills:
+  # Attached project-wide to every agent (guardrails + GECX foundry contract)
   - name: "gcp-fde-guardrails"
     local_dir: "core-gcp-fde/skills/gcp-fde-guardrails"
-    version: "0.1.0"
+    version: "0.2.0"
     scope: "global"
+    attach_to_project: true
   - name: "gcp-sandbox-contract"
     local_dir: "core-gcp-fde/skills/gcp-sandbox-contract"
-    version: "0.1.0"
+    version: "0.2.0"
     scope: "global"
+    attach_to_project: true
   - name: "gcp-kaizen-light"
     local_dir: "core-gcp-fde/skills/gcp-kaizen-light"
-    version: "0.1.0"
+    version: "0.2.0"
     scope: "global"
+    attach_to_project: true
   - name: "gecx-foundry-adapter"
     local_dir: "packs/gecx/skills/gecx-foundry-adapter"
-    version: "0.1.0"
+    version: "0.2.0"
     scope: "global"
+    attach_to_project: true
   - name: "gecx-domain-guardrails"
     local_dir: "packs/gecx/skills/gecx-domain-guardrails"
-    version: "0.1.0"
+    version: "0.2.0"
     scope: "global"
+    attach_to_project: true
+
+  # Published to Hub Skill Bank (offline) and mounted selectively via role_skills
+  - name: "software-engineering-process"
+    local_dir: "vendor/agent-team/skills/software-engineering-process"
+    version: "0.2.0"
+    scope: "global"
+    attach_to_project: false
+  - name: "agent-state-continuity"
+    local_dir: "vendor/agent-team/skills/agent-state-continuity"
+    version: "0.2.0"
+    scope: "global"
+    attach_to_project: false
+  - name: "artifact-durability"
+    local_dir: "vendor/agent-team/skills/artifact-durability"
+    version: "0.2.0"
+    scope: "global"
+    attach_to_project: false
+  - name: "code-review"
+    local_dir: "vendor/agent-team/skills/code-review"
+    version: "0.2.0"
+    scope: "global"
+    attach_to_project: false
+  - name: "release-notes-daily"
+    local_dir: "vendor/agent-team/skills/release-notes-daily"
+    version: "0.2.0"
+    scope: "global"
+    attach_to_project: false
 
 vendored_image_assets:
   - name: "cxas-agent-foundry"

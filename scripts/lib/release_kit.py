@@ -1,8 +1,10 @@
-"""Offline Release Kit builder composing specialist forks and localizing all skills.
+"""Offline Release Kit builder composing Preston's 13 agent-team roles plus domain specialists.
 
 Produces a self-contained customer handoff directory with:
 - Zero external gh:// or GitHub URLs in generated templates.
-- Hardcoded upstream model/harness_config keys stripped so diversity happens at spawn.
+- Real upstream agents.md and system-prompt.md merged from vendored agent-team@SHA-40 plus pack deltas.
+- Role-scoped Hub Skill Bank URIs (skill://scion/global/<name>) for SEP/process skills.
+- Hardcoded upstream model/harness_config and environment keys omitted so diversity happens at spawn.
 - Prefix-isolated template names (<pack.prefix>-<role>) synced from local dirs.
 - Hub Skill Bank skill directories whose basename equals the skill name.
 - Closed compat.yaml, skills.lock, NOTICE, manifest.json, and Stage 03 bootstrap scripts.
@@ -24,26 +26,34 @@ def _prefixed_name(pack_prefix: str, name: str) -> str:
     return name if name.startswith(f"{pack_prefix}-") else f"{pack_prefix}-{name}"
 
 
+def _read_optional_text(path: pathlib.Path) -> str:
+    """Reads UTF-8 text from path if it exists, or returns an empty string."""
+    return path.read_text(encoding="utf-8").strip() if path.exists() else ""
+
+
 def compose_specialist_template(
+    repo_root: pathlib.Path,
     out_tpl_dir: pathlib.Path,
     pack_prefix: str,
     tpl_spec: dict[str, Any],
-    delta_md_path: pathlib.Path,
+    delta_md_path: pathlib.Path | None,
     agent_team_commit: str,
 ) -> dict[str, Any]:
-    """Composes a single deterministic Scion v0.4 specialist template without external URIs.
+    """Composes a deterministic offline Scion v0.4 template by merging upstream base role and pack delta.
 
     Follows official Scion v0.4 template rules:
     - Directory basename is the template name (omits redundant name key).
     - Keeps job keys only (omits image, resources, volumes, kubernetes, hub, telemetry).
     - Omits model and harness_config so diversity_profile controls selection at spawn.
     - Separates persona (system-prompt.md) from operational rules (agents.md).
+    - References role-specific skills exclusively via local Hub Skill Bank URIs.
     """
     out_tpl_dir.mkdir(parents=True, exist_ok=True)
     full_name = _prefixed_name(pack_prefix, str(tpl_spec["name"]))
     base_role = str(tpl_spec["base_role"])
     hub_role = str(tpl_spec["hub_role"])
     sa_slot = str(tpl_spec["sandbox_sa_slot"])
+    role_skills = [str(s) for s in tpl_spec.get("role_skills", [])]
 
     description = (
         f"{full_name} specialist (base: {base_role}, hub role: {hub_role}, SA slot: {sa_slot})"
@@ -53,7 +63,7 @@ def compose_specialist_template(
         "description": description,
         "agent_instructions": "agents.md",
         "system_prompt": "system-prompt.md",
-        "skills": [],
+        "skills": [{"uri": f"skill://scion/global/{skill_name}"} for skill_name in role_skills],
     }
     header = (
         f"# Composed offline Scion v0.4 template for {full_name}.\n"
@@ -65,32 +75,51 @@ def compose_specialist_template(
         encoding="utf-8",
     )
 
-    # Keep system-prompt.md focused on persona and authority boundaries.
-    system_prompt = (
-        f"# Role Persona: {full_name}\n\n"
-        f"You act as the `{full_name}` specialist composed from upstream role `{base_role}` "
-        f"(pinned commit `{agent_team_commit}`).\n\n"
-        f"- Required Hub role at spawn: `{hub_role}`.\n"
-        f"- Required Sandbox SA slot at spawn: `{sa_slot}`.\n"
-        "- Follow every pack and overlay skill mounted in your harness skills directory.\n"
-    )
-    (out_tpl_dir / "system-prompt.md").write_text(system_prompt, encoding="utf-8")
+    # Merge upstream persona with explicit factory authority boundaries.
+    upstream_dir = repo_root / "vendor" / "agent-team" / "templates" / base_role
+    upstream_sys = _read_optional_text(upstream_dir / "system-prompt.md")
+    sys_sections = [
+        f"# Role Persona: {full_name}",
+        (
+            f"Composed from upstream role `{base_role}` (pinned commit `{agent_team_commit}`).\n"
+            f"- Required Hub role at spawn: `{hub_role}`.\n"
+            f"- Required Sandbox SA slot at spawn: `{sa_slot}`.\n"
+            "- Follow every pack, role, and overlay skill mounted in your harness skills directory."
+        ),
+    ]
+    if upstream_sys:
+        sys_sections.append(f"## Upstream Base Persona (`{base_role}`)\n\n{upstream_sys}")
+    (out_tpl_dir / "system-prompt.md").write_text("\n\n".join(sys_sections) + "\n", encoding="utf-8")
 
-    # Place operational rules in agents.md so Scion prepends its Mandatory Instruction Preamble.
-    delta_text = delta_md_path.read_text(encoding="utf-8").strip()
-    agents_md = (
-        f"# Operational Instructions: {full_name}\n\n"
-        "Scion prepends platform workspace orientation and `sciontool status` signals automatically.\n"
-        "Apply the pack rules below on every task.\n\n"
-        f"{delta_text}\n"
-    )
-    (out_tpl_dir / "agents.md").write_text(agents_md, encoding="utf-8")
+    # Merge upstream operational instructions with pack delta (pack rules override upstream defaults).
+    upstream_agents = _read_optional_text(upstream_dir / "agents.md")
+    delta_text = _read_optional_text(delta_md_path) if delta_md_path else ""
+
+    agent_sections = [
+        f"# Operational Instructions: {full_name}",
+        (
+            "Scion prepends platform workspace orientation and `sciontool status` signals automatically.\n"
+            "When spawning sibling or child roles, always use the prefix-scoped `gecx-*` template names."
+        ),
+    ]
+    if delta_text:
+        agent_sections.append(
+            "## Pack Override Rules (Precedence over Upstream Base)\n\n" + delta_text
+        )
+    if upstream_agents:
+        agent_sections.append(
+            f"## Upstream Role Instructions (`scion-frontiers/agent-team/{base_role}` @ `{agent_team_commit[:7]}`)\n\n"
+            + upstream_agents
+        )
+    (out_tpl_dir / "agents.md").write_text("\n\n".join(agent_sections) + "\n", encoding="utf-8")
 
     return {
         "name": full_name,
         "base_role": base_role,
         "hub_role": hub_role,
         "sandbox_sa_slot": sa_slot,
+        "role_skills": role_skills,
+        "has_pack_delta": bool(delta_text),
         "system_prompt_sha256": sha256_file(out_tpl_dir / "system-prompt.md"),
         "agents_md_sha256": sha256_file(out_tpl_dir / "agents.md"),
     }
@@ -108,13 +137,19 @@ def build_release_kit(repo_root: pathlib.Path, pack_dir: pathlib.Path, out_dir: 
     prefix = str(pack_cfg["pack"]["prefix"])
     agent_team_commit = str(pack_cfg["upstream"]["agent_team_commit"])
 
-    # 1. Compose prefix-scoped specialist templates locally (zero external URIs).
+    # 1. Compose all prefix-scoped templates locally (zero external URIs).
     templates_meta: list[dict[str, Any]] = []
     for tpl in pack_cfg["specialist_templates"]:
         full_name = _prefixed_name(prefix, str(tpl["name"]))
-        delta_md = pack_dir / tpl["delta_dir"] / "delta.md"
+        delta_dir_rel = tpl.get("delta_dir")
+        delta_md = (pack_dir / str(delta_dir_rel) / "delta.md") if delta_dir_rel else None
         meta = compose_specialist_template(
-            out_dir / "templates" / full_name, prefix, tpl, delta_md, agent_team_commit
+            repo_root,
+            out_dir / "templates" / full_name,
+            prefix,
+            tpl,
+            delta_md,
+            agent_team_commit,
         )
         templates_meta.append(meta)
 
@@ -128,6 +163,7 @@ def build_release_kit(repo_root: pathlib.Path, pack_dir: pathlib.Path, out_dir: 
             "name": item["name"],
             "version": item["version"],
             "scope": item["scope"],
+            "attach_to_project": bool(item.get("attach_to_project", True)),
             "sha256": sha256_file(dst / "SKILL.md"),
         })
 

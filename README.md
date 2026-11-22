@@ -4,7 +4,7 @@ Reusable autonomous software factory packs built on Google Cloud Scion (`v0.4.0-
 
 ## Scope (Phase 1a)
 
-- **Active Pilot Pack:** `packs/gecx` (Google Cloud Customer Engagement Suite / CX Agent Studio, text and synthetic `BidiRunSession` audio).
+- **Active Pilot Pack (`v0.2.0`):** `packs/gecx` (Google Cloud Customer Engagement Suite / CX Agent Studio, text and synthetic `BidiRunSession` audio) with Preston's complete 13-role `agent-team` hierarchy plus 2 split-SA Sandbox specialists (**15 offline prefix-scoped templates**, **10 Hub Skill Bank skills**).
 - **Frozen Skeletons:** `packs/adk` and `packs/agent-platform` remain frozen until `packs/gecx` completes Phase 1b live validation in Argolis.
 - **Template Starter:** `packs/_template-pack` defines the canonical skeleton for future domain packs.
 

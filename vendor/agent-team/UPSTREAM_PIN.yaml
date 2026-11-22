@@ -1,0 +1,5 @@
+# Verbatim Apache-2.0 snapshot of scion-frontiers/agent-team templates and SEP skills.
+# Upstream scion-agent.yaml files are omitted because release_kit.py composes offline Hub Skill Bank URIs.
+repository: scion-frontiers/agent-team
+commit: 08faf48269da7d8dd0a20c4e5ca5093afb37495d
+license: Apache-2.0

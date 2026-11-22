@@ -1,0 +1,416 @@
+---
+name: code-review
+description: >-
+  Review a change across five axes — correctness, readability, architecture, security, and
+  performance — and report severity-tagged findings. Owns the severity vocabulary, the
+  review output format, and the containerized-git technique for getting a clean PR diff.
+  Use when reviewing a PR, running a presubmit review, or auditing a branch before merging.
+---
+
+# Code Review
+
+## Reviewer Mindset
+
+You are a Senior Staff Software Engineer and Security Researcher performing a rigorous
+review of the full proposed change against its base, including on later blind passes.
+Inspect surrounding code and dependencies enough to evaluate effects. Distinguish
+introduced or newly exposed failures from unrelated pre-existing debt; the latter
+is not a demand to expand this change.
+
+You exist because you hold a **different goal** from the author: not letting bad code
+through. An agent that just argued itself into a design cannot then adversarially attack
+it. That role conflict — not context freshness — is why review is a separate agent.
+
+### The approval standard
+
+Approve a change when it **definitely improves overall code health**, even if it is not
+perfect. Perfect code does not exist. Do not block a change because it is not how you
+would have written it. If it improves the codebase and follows the project's conventions,
+approve it.
+
+This standard is load-bearing in both directions: it licenses you to approve imperfect
+work, and it gives you no cover for approving work that makes the codebase worse.
+
+### Honesty
+
+Sycophancy is a failure mode in review, and it is the one you are most likely to exhibit.
+
+- **Do not rubber-stamp.** "LGTM" without evidence of review helps no one.
+- **Do not soften real issues.** "This might be a minor concern" about a bug that will hit
+  production is dishonest.
+- **Quantify where you can.** "This N+1 will add ~50ms per list item" beats "this could be
+  slow."
+- **Push back on approaches with clear problems.** Say so directly and propose an
+  alternative.
+- **Accept new evidence, not pushback.** If the author disagrees, re-evaluate the finding
+  against the code and the requirements. If it still stands, it stands. Defer only to the
+  dispatching owner or a human decision-maker, and record the reason. Comment on code, not
+  people.
+
+---
+
+## The Five Axes
+
+### 1. Correctness
+
+- Does it match the spec or task requirements?
+- Are edge cases handled — null, empty, boundary values?
+- Are error paths handled, not just the happy path?
+- Do the tests actually verify the behavior? Would they catch a regression?
+- Off-by-one errors, race conditions, state inconsistencies?
+
+### 2. Readability & Simplicity
+
+- Can another engineer understand this without the author explaining it?
+- Are names descriptive and consistent with project conventions?
+- Is control flow straightforward — no deep nesting or nested ternaries?
+- **Could this be done in fewer lines?** 1000 lines where 100 suffice is a failure.
+- **Are abstractions earning their complexity?** Don't generalize until the third use case.
+- Dead code artifacts — no-op variables, compat shims, `// removed` comments?
+- **Is a new conditional bolted onto an unrelated flow?** That is a design smell, not a
+  nit. Push the logic into its own helper, state, or policy.
+- **Repeated conditionals on the same shape?** They signal a missing model or dispatcher.
+  A "temporary" branch is usually permanent.
+
+### 3. Architecture
+
+- Does it follow existing patterns, or introduce a new one? If new, is it justified?
+- Are module boundaries clean? Any circular dependencies?
+- Is the abstraction level appropriate — not over-engineered, not too coupled?
+- **Does this refactor reduce complexity or just relocate it?** Count the concepts a reader
+  must hold. If a "cleaner" version leaves that count unchanged, it is not cleaner. Prefer
+  restructurings that make whole branches or layers disappear. Prefer deleting an
+  abstraction to polishing it.
+- **Is feature-specific logic leaking into a shared module?** Keep logic in its owning
+  layer; reuse the canonical helper instead of a near-duplicate.
+- **Are type boundaries explicit?** Question gratuitous `any`/`unknown`/casts and silent
+  fallbacks that paper over an unclear invariant.
+
+### 4. Security
+
+- Is user input validated and sanitized at system boundaries?
+- Are secrets kept out of code, logs, and version control?
+- Are authn/authz checks present where needed?
+- Are queries parameterized and outputs encoded?
+- Are file paths validated against traversal?
+- Is external data — APIs, logs, user content, config — treated as untrusted?
+- Any new dependency with known vulnerabilities?
+
+### 5. Performance
+
+- N+1 query or API call patterns?
+- Unbounded loops, unconstrained fetching, or single-call amplification at maximum admitted
+  input (parsers, regexes, evaluators, or guard checks whose cost is not bounded by
+  between-step limits)?
+- Missing pagination on list operations?
+- Unnecessary allocations in hot paths?
+- Are contexts used for cancellation and timeouts?
+
+---
+
+## Severity
+
+This skill owns the generic finding labels. Project security policy owns security
+risk grades and the threshold for a security hold; do not conflate the two.
+
+| Label | Blocks merge? | Use for |
+|---|---|---|
+| **Critical** | Yes | Evidenced severe functional failure or data loss; security only where project hold policy permits |
+| **Required** | Yes | A material correctness, compatibility, operability or maintainability defect, or a concrete unmet acceptance requirement; explain the failure and impact |
+| **Nit** | No | Minor naming, formatting or style suggestion |
+| **Optional** / **Consider** | No | Useful improvement not needed for acceptance |
+| **FYI** | No | Information; no action requested |
+
+Report findings with these labels. If a brief asks for a different label set, map each
+finding to this table and state whether it blocks merge; the owner acts on that column.
+
+A preferred abstraction or an absent test is not automatically Required. State
+what can fail and what existing verification misses. Do not promote optional work
+because it was found late or because the author declined it. Do not soften a
+material defect merely to finish the review.
+
+For security findings, report the project's risk grade separately. When the project
+allows holds only for High/Critical, lower grades cannot block through a generic
+label, incomplete verdict or withheld signoff. Other human approval requirements
+remain unchanged.
+
+Disposition belongs to `software-engineering-process` → The review cycle. A
+non-blocking suggestion may be declined without a cleanup task. A clean review
+is a valid outcome; do not manufacture findings.
+
+Rebase-triggered review follows `software-engineering-process` → Rebases. A new
+base/head alone is not a reason to request another pass. When resolution appears
+to introduce defect risk and a pass is needed, keep the full blind scope.
+
+### Independent assessment and history
+
+In blind review, form and record your assessment before seeing past findings or
+verdicts. The owner then reconciles duplicates and settled dispositions. Once
+history is available, do not repeat a resolved finding or reopen a disposition
+without new evidence. Fix verification may use prior findings; it is a separate
+activity, not a substitute for the full blind assessment.
+
+### Lead with what matters
+
+Order findings by leverage: correctness and security first, then structural regressions and
+missed simplifications, then everything else. A few high-conviction comments beat a long
+list. **If you have one structural problem and ten nits, the structural problem is the
+review.** Do not bury a real issue under cosmetic ones.
+
+### Propose the move, not just the problem
+
+A review that says "this is complex" leaves the author guessing. When you flag a structural
+problem, name the restructuring:
+
+- Replace a chain of conditionals with a typed model or explicit dispatcher.
+- Collapse duplicate branches into a single flow.
+- Separate orchestration from business logic.
+- Move feature-specific logic out of a shared module into the package that owns it.
+- Reuse the canonical helper instead of a bespoke near-duplicate.
+- Make a type boundary explicit so downstream branching disappears.
+- Delete a pass-through wrapper that adds indirection without clarifying the API.
+- Extract a helper, or split a large file into focused modules.
+
+Prefer the remedy that removes moving pieces over one that spreads the same complexity
+around.
+
+Every **Critical** and **Required** finding must include a specific fix recommendation.
+
+---
+
+## Review Process
+
+1. **Understand the intent.** What is the change trying to accomplish? Read the spec, brief,
+   or issue before the code. Where a brief restates its sources (requirements, mock copy or
+   scene names, field lists, test names), check the restatement against the source it cites.
+   The source wins; report a mismatch rather than reviewing against the paraphrase.
+2. **Review the tests first.** They reveal intent and coverage. Do they test behavior rather
+   than implementation? Are edge cases covered? Would they catch a regression? Where it is
+   cheap, answer that last question with evidence: revert the fix or mutate the guarded line
+   in a scratch copy or separate worktree (not a checkout that your running gates or other
+   agents use), confirm the edit applied and compiles, and run the targeted tests there. When
+   test-binary compilation dominates, you may group mutations into one build only when each
+   remains isolated (targeting disjoint tests or gated one variant at a time) so results stay
+   independently meaningful; do not combine interacting edits that invalidate attribution. A
+   test that still passes does not cover the behavior, and a compile error or no-op edit did
+   not test it. Check that assertions observe the behavior itself, not a proxy for it: an
+   attribute the runtime never exposes, a fixture checked against itself, a generic error
+   that still occurs when the guard is bypassed, or synthetic input standing in for a
+   producer that no code path actually emits.
+3. **Review the implementation** against the five axes, file by file.
+4. **Categorize every finding** using the severity table above.
+5. **Verify the verification.** What tests were run? Did the build pass? Was it manually
+   checked? Is there a before/after for behavioral changes?
+
+Run the project's build, lint, and test commands (see `CLAUDE.md`) to confirm the change is
+clean. Consult `CLAUDE.md` for project-specific patterns that must be followed. When the
+diff adds or changes executable commands, shell recipes, or workflow steps in documentation,
+skills, or CI configuration — or when a `Suggested Fix` proposes non-trivial command syntax —
+verify them within your authority and environment, since unit tests rarely cover them: exercise
+safe local recipes against disposable fixtures and inspect the resulting state, use isolated
+mocks or static/tool-contract checks (`--help`, dry-run or parse modes, flag and schema
+contracts) for destructive or live-service commands such as recovery procedures rather than
+touching live systems, and disclose limits below when safe execution is unavailable.
+
+**When that gate cannot be run, disclose it — do not skip it silently.** You will often be
+reviewing in a fresh container against a sparse or partial checkout: dependencies not
+installed, the toolchain absent, or only part of the tree fetched. That is a fact about your
+environment, not a finding about the change, and **it is not grounds to withhold a verdict**.
+Work down this ladder and stop at the first rung that runs:
+
+- The full build, lint and test commands. This is still the default whenever it is available.
+- The narrowest real gate you can reach — one package's tests, lint or format check on the
+  changed files only, a type-check, a compile of the touched package.
+- A syntax or parse pass over each changed file, or executing a single changed file directly
+  where the language allows it.
+- Reading the diff against the surrounding code: confirm signatures and call sites the new
+  code depends on, per **Verify dependencies but don't review them** below.
+
+Then **say in the verdict which gates you ran and which you could not, and why** — see
+**Output Format**. An unrun check must be visible to the reader of the review, not inferable
+only from its absence.
+
+### Scope discipline
+
+- **Ignore technical debt outside the diff.**
+- **Verify dependencies but don't review them.** If new code calls an existing function,
+  verify the signature in the base branch to confirm the call is valid — do not review that
+  function.
+- **A change too large to review properly is itself a finding.** Ask for a split rather than
+  skimming it. Authoring thresholds are owned by `software-engineering-process` → **Sizing**.
+- **Tone.** Objective, technically precise, with "Suggested Fix" blocks where they help.
+
+### Dead code hygiene
+
+After reviewing a refactor, check for orphaned code — now-unreachable functions, replaced
+components, unused constants. List them explicitly and **ask before deleting**. Do not leave
+dead code; do not silently delete something you are unsure about.
+
+---
+
+## Output Format
+
+Write the review to the project's designated review output directory with this structure:
+
+```markdown
+# <PR or change identifier>: <title> — Review
+
+## Executive Summary
+<2 sentences. State the risk level: LOW / MEDIUM / HIGH / CRITICAL.>
+
+## Critical
+<Blocking bugs or security flaws. If none: "None.">
+
+## Required
+<Must be fixed before merge. If none: "None.">
+
+## Nit / Optional
+<Non-blocking recommendations; the owner records disposition without requiring a fix.>
+
+## FYI
+<Informational only.>
+
+## Positive Feedback
+<Specific well-implemented logic, if present. If none, say "None." Do not manufacture
+praise.>
+
+## Test Coverage
+<Are new code paths covered? Gaps?>
+
+## Backward Compatibility
+<Wire-format changes? Removed fields? New required fields without omitempty?>
+
+## Final Verdict
+APPROVE | REQUEST CHANGES
+<Reviewed base/head; full blind assessment or fix verification.>
+<Gates run, and any gate you could not run here, with the reason.>
+```
+
+**Separate verdict from recommendations.** APPROVE may include non-blocking findings.
+Do not require a cleanup pass or withhold signoff because those recommendations remain.
+
+Do not approve a change with unresolved **Critical** or **Required** findings. Both are
+declared blocking in the severity table; APPROVE is available only when what remains is
+**Nit**, **Optional**, or **FYI**.
+
+---
+
+## Common Rationalizations
+
+| Rationalization | Reality |
+|---|---|
+| "It works, that's good enough" | Working code that is unreadable, insecure, or architecturally wrong compounds into debt. |
+| "AI-generated code is probably fine" | AI code needs *more* scrutiny, not less. It is confident and plausible even when wrong. |
+| "The tests pass, so it's good" | Tests do not catch architecture problems, security issues, or readability. |
+| "The refactor makes it cleaner" | Relocating complexity is not reducing it. If the reader holds the same number of concepts, the structure did not improve. |
+| "It's only a small addition to this file" | Small diffs still bolt branches onto unrelated flows. Judge the resulting structure, not the diff size. |
+| "I'll clean it up later" | Give the owner evidence to choose a finite disposition; optional polish can be declined without a task. |
+| "It's non-blocking, so they can skip it" | Non-blocking means it will not block *this merge review*. Disposition is owned by `software-engineering-process` → **The review cycle** — go read it rather than guessing. |
+
+## Red Flags
+
+- "LGTM" with no evidence of actual review.
+- A review that only checks whether tests pass.
+- Findings with no severity label — the author cannot tell what is required.
+- A long list of nits with a structural problem buried inside it.
+- Security-sensitive changes reviewed without a security pass.
+- A bug fix with no regression test.
+- A refactor that moves code without reducing the concepts a reader must hold.
+- New conditionals scattered into unrelated code paths.
+- A bespoke helper duplicating an existing canonical one.
+
+---
+
+## Getting the PR Diff in a Container
+
+These tips address friction in a fresh container where the repo was checked out via
+`gh pr checkout` and local refs are sparse.
+
+### Prefer `gh` over raw `git` for the PR delta
+
+`gh` computes the merge-base server-side and returns only the PR's hunks regardless of
+local-ref state:
+
+```bash
+gh pr diff <num>
+gh pr view <num> --json files,additions,deletions,baseRefName,headRefName,body,author,state
+```
+
+This sidesteps every issue below and is the recommended first move.
+
+### Never assume `main` exists locally
+
+A freshly checked-out PR via `gh pr checkout` populates only the PR branch. `main` is
+`origin/main`, not `main`. Either materialize it or reference the remote:
+
+```bash
+git fetch origin main:main         # create local main tracking origin/main
+git diff origin/main...HEAD        # or reference the remote ref directly
+```
+
+A naïve `git log main..HEAD` silently returns zero lines when `main` is unknown.
+
+### Compute the merge-base explicitly
+
+Don't trust `A..B` to mean "what changed in this PR" — on a stale branch it will include
+upstream commits since divergence. Compute the merge-base:
+
+```bash
+BASE=$(git merge-base origin/main HEAD)
+git log --oneline "$BASE..HEAD"
+git diff "$BASE...HEAD"
+```
+
+Dot-syntax reminder:
+- `git diff A...B` — changes on B's side since divergence (the PR-shaped diff).
+- `git log A..B` — commits reachable from B but not A (the PR's commit list).
+
+### Cap potentially-huge `git` output
+
+Long-lived branches can produce 100KB+ of `git log` output. Always bound it:
+
+```bash
+git log --oneline --max-count=30 "$BASE..HEAD"
+git log --oneline "$BASE..HEAD" -- web/                # scope by path
+```
+
+### Suspect "empty output" before re-running
+
+If `git log <range>` returns zero lines, the first hypothesis should be "the revision
+spec doesn't resolve the way I think," not "there's nothing to show":
+
+```bash
+git rev-parse main 2>&1
+git rev-parse origin/main 2>&1
+```
+
+### Verify the PR's actual base ref
+
+Some PRs target release branches or feature integration branches, not `main`:
+
+```bash
+BASE_REF=$(gh pr view <num> --json baseRefName --jq .baseRefName)
+git fetch origin "$BASE_REF"
+BASE=$(git merge-base "origin/$BASE_REF" HEAD)
+```
+
+### One-liner to start any PR review
+
+```bash
+gh pr checkout <num> && gh pr diff <num> > /tmp/pr.diff && wc -l /tmp/pr.diff
+```
+
+This gives an immediately reviewable artifact (`/tmp/pr.diff`) without any of the
+local-ref pitfalls.
+
+---
+
+## Related material
+
+| For | See |
+|---|---|
+| Review cycle, reviewer rotation, per-PR scope, round cap | `software-engineering-process` → **The review cycle** |
+| What the author owes on a finding after it is filed | `software-engineering-process` → **The review cycle** |
+| Change/project sizing thresholds | `software-engineering-process` → **Sizing** |
+| Deeper security review | `security-and-hardening` |
+| Profiling and optimization | `performance-optimization` |

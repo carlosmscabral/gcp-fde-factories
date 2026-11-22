@@ -125,19 +125,21 @@ do_apply() {
     fi
   fi
 
-  # Publish pack skills to Hub Skill Bank (directory basename defines skill name in Scion v0.4).
-  local pack_ver existing_skills
-  pack_ver="$(jq -r '.pack_version' "$KIT_DIR/manifest.json")"
+  # Publish all pack and SEP skills to Hub Skill Bank.
+  # Attach only attach_to_project=true skills project-wide; role-specific SEP skills mount via template skills[].
+  local existing_skills
   existing_skills="$(scion project skills list --hub "$HUB_URL" 2>/dev/null || true)"
-  for skill_dir in "$KIT_DIR"/skills/*; do
+  while IFS=$'\t' read -r sname sver sattach; do
+    [[ -n "$sname" ]] || continue
+    local skill_dir="$KIT_DIR/skills/$sname"
     [[ -d "$skill_dir" ]] || continue
-    local sname
-    sname="$(basename "$skill_dir")"
-    scion skills publish "$skill_dir" --scope global --version "$pack_ver" --hub "$HUB_URL"
-    if ! grep -Fq "skill://${sname}" <<< "$existing_skills"; then
-      scion project skills add "skill://${sname}" --hub "$HUB_URL"
+    scion skills publish "$skill_dir" --scope global --version "$sver" --hub "$HUB_URL"
+    if [[ "$sattach" == "true" ]]; then
+      if ! grep -Fq "$sname" <<< "$existing_skills"; then
+        scion project skills add "skill://scion/global/${sname}" --hub "$HUB_URL"
+      fi
     fi
-  done
+  done < <(jq -r '.skills[] | [.name, .version, ((.attach_to_project // true) | tostring)] | @tsv' "$KIT_DIR/manifest.json")
 
   # Sync local templates only (stores zero upstream source URL, blocking accidental Refresh clobber).
   for tpl_dir in "$KIT_DIR"/templates/*; do

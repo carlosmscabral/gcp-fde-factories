@@ -1,11 +1,12 @@
-"""Total context budget, skill collision detector, and WORKAROUNDS.yaml 90-day TTL gate.
+"""Total context budget, skill collision detector, lockfile digest verifier, and TTL gate.
 
-Enforces three invariants:
-1. Total lines per role across Layer 0 (agent-team) + Layer 1 (core skills) + Layer 2 (pack skills + delta)
+Enforces four invariants:
+1. Total lines per role across vendored upstream template + role skills + project-attached skills + delta
    stay below pack.yaml context_budget.max_total_lines_per_role.
-2. Pack skill files stay <= max_lines_per_pack_skill, directory basename matches skill name,
-   and no two skills share a colliding name across project, pack, or customer overlay.
-3. No WORKAROUNDS.yaml entry exceeds max_age_days (90 days) without explicit review.
+2. Authored pack/core skills stay <= max_lines_per_pack_skill, vendored upstream skills match skills.lock
+   SHA-256 digests, and directory basenames match skill names for scion skills publish.
+3. No two skills share a colliding name across pack, vendored, or customer overlay skills.
+4. No WORKAROUNDS.yaml entry exceeds max_age_days (90 days) without explicit review.
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ import pathlib
 import re
 from typing import Any
 
-from scripts.lib.io_utils import load_yaml
+from scripts.lib.io_utils import load_yaml, sha256_file
 
 NUMBERED_RULE_RE = re.compile(r"^\s*\d+\.\s+")
 
@@ -29,12 +30,25 @@ def count_delta_rules(delta_md: pathlib.Path) -> int:
     return sum(1 for line in delta_md.read_text(encoding="utf-8").splitlines() if NUMBERED_RULE_RE.match(line))
 
 
+def _upstream_template_lines(repo_root: pathlib.Path, base_role: str) -> int:
+    """Counts lines in vendored upstream agents.md and system-prompt.md when present."""
+    tpl_dir = repo_root / "vendor" / "agent-team" / "templates" / base_role
+    if not tpl_dir.is_dir():
+        return 0
+    total = 0
+    for fname in ("agents.md", "system-prompt.md"):
+        fpath = tpl_dir / fname
+        if fpath.exists():
+            total += count_lines(fpath)
+    return total
+
+
 def check_context_budget(
     repo_root: pathlib.Path,
     pack_dir: pathlib.Path,
     overlay_hub_project: pathlib.Path | None = None,
 ) -> tuple[list[str], dict[str, Any]]:
-    """Checks total context budgets across Layers 0+1+2 and detects skill name collisions."""
+    """Checks total context budgets across Layers 0+1+2, verifies vendored digests, and detects collisions."""
     errors: list[str] = []
     pack_cfg = load_yaml(pack_dir / "pack.yaml")
     lock_cfg = load_yaml(repo_root / pack_cfg["upstream"]["skills_lock"])
@@ -44,17 +58,22 @@ def check_context_budget(
     max_skill_lines = int(budget["max_lines_per_pack_skill"])
     max_delta_rules = int(budget["max_delta_rules"])
 
-    layer0_map: dict[str, int] = {k: int(v) for k, v in lock_cfg.get("layer0_baseline_lines", {}).items()}
+    layer0_fallback: dict[str, int] = {k: int(v) for k, v in lock_cfg.get("layer0_baseline_lines", {}).items()}
+    lock_sha_by_name: dict[str, str] = {
+        str(entry["name"]): str(entry["sha256"]) for entry in lock_cfg.get("skills", [])
+    }
 
-    # Validate project_skills names, directory basenames (Scion v0.4 Skill Bank rule), and line limits.
+    # Validate skill basenames, authored line budgets, and vendored SHA-256 integrity.
     seen_skills: set[str] = set()
-    shared_skill_lines = 0
-    skill_report: dict[str, int] = {}
+    attached_skill_lines = 0
+    skill_lines_by_name: dict[str, int] = {}
 
     for item in pack_cfg.get("project_skills", []):
         name = str(item["name"])
-        local_dir = repo_root / item["local_dir"]
+        local_rel = str(item["local_dir"])
+        local_dir = repo_root / local_rel
         skill_md = local_dir / "SKILL.md"
+        attach_to_project = bool(item.get("attach_to_project", True))
 
         if name in seen_skills:
             errors.append(f"Duplicate skill name in pack project_skills: '{name}'.")
@@ -69,9 +88,21 @@ def check_context_budget(
             continue
 
         lines = count_lines(skill_md)
-        skill_report[name] = lines
-        shared_skill_lines += lines
-        if lines > max_skill_lines:
+        skill_lines_by_name[name] = lines
+        if attach_to_project:
+            attached_skill_lines += lines
+
+        if local_rel.startswith("vendor/"):
+            expected_sha = lock_sha_by_name.get(name)
+            if not expected_sha:
+                errors.append(f"Vendored skill '{name}' is missing an entry in skills.lock.")
+            else:
+                actual_sha = sha256_file(skill_md)
+                if actual_sha != expected_sha:
+                    errors.append(
+                        f"Vendored skill '{name}' SHA-256 mismatch: got {actual_sha}, expected {expected_sha}."
+                    )
+        elif lines > max_skill_lines:
             errors.append(f"Skill '{name}' has {lines} lines, exceeding max_lines_per_pack_skill ({max_skill_lines}).")
 
     # Detect collisions between pack skills and optional customer overlay skills.
@@ -86,35 +117,53 @@ def check_context_budget(
                     f"Overlay skill '{ov_name}' collides with active pack skill. Add '{ov_name}' to exclude_skills or rename it."
                 )
 
-    # Measure total context per specialist role across Layers 0 + 1 + 2.
+    # Measure total context per specialist role across vendored base + role skills + project skills + delta.
     role_report: dict[str, dict[str, int]] = {}
     for tpl in pack_cfg.get("specialist_templates", []):
         role_name = str(tpl["name"])
         base_role = str(tpl["base_role"])
-        delta_md = pack_dir / tpl["delta_dir"] / "delta.md"
-        if not delta_md.exists():
-            errors.append(f"Missing specialist delta file: {delta_md}.")
-            continue
+        delta_dir_rel = tpl.get("delta_dir")
 
-        delta_lines = count_lines(delta_md)
-        delta_rules = count_delta_rules(delta_md)
-        l0 = layer0_map.get(base_role, 200)
-        total = l0 + shared_skill_lines + delta_lines
+        delta_lines = 0
+        delta_rules = 0
+        if delta_dir_rel:
+            delta_md = pack_dir / str(delta_dir_rel) / "delta.md"
+            if not delta_md.exists():
+                errors.append(f"Missing specialist delta file: {delta_md}.")
+                continue
+            delta_lines = count_lines(delta_md)
+            delta_rules = count_delta_rules(delta_md)
+            if delta_rules > max_delta_rules:
+                errors.append(
+                    f"Specialist '{role_name}' defines {delta_rules} rules, exceeding max_delta_rules ({max_delta_rules})."
+                )
+
+        role_skills_lines = 0
+        for rskill in tpl.get("role_skills", []):
+            if rskill not in skill_lines_by_name:
+                errors.append(f"Specialist '{role_name}' references unknown role_skill '{rskill}'.")
+                continue
+            role_skills_lines += skill_lines_by_name[rskill]
+
+        base_lines = _upstream_template_lines(repo_root, base_role)
+        if base_lines == 0:
+            base_lines = layer0_fallback.get(base_role, 200)
+
+        total = base_lines + role_skills_lines + attached_skill_lines + delta_lines
         role_report[role_name] = {
-            "layer0_lines": l0,
-            "shared_skills_lines": shared_skill_lines,
+            "upstream_template_lines": base_lines,
+            "role_skills_lines": role_skills_lines,
+            "project_skills_lines": attached_skill_lines,
             "delta_lines": delta_lines,
             "delta_rules": delta_rules,
             "total_lines": total,
         }
-        if delta_rules > max_delta_rules:
-            errors.append(f"Specialist '{role_name}' defines {delta_rules} rules, exceeding max_delta_rules ({max_delta_rules}).")
         if total > max_role_lines:
             errors.append(
                 f"Specialist '{role_name}' totals {total} lines (Layers 0+1+2), exceeding max_total_lines_per_role ({max_role_lines})."
             )
 
-    return errors, {"skills": skill_report, "roles": role_report}
+    return errors, {"skills": skill_lines_by_name, "roles": role_report}
 
 
 def check_workarounds_ttl(
