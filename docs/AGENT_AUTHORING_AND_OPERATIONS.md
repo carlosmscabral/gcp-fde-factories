@@ -113,6 +113,47 @@ scion delete teste-1 --preserve-branch
 - **Promoção de DM para Thread:** promova uma conversa 1-para-1 com `@coordinator` para uma thread compartilhada do time com um clique.
 - **Display Timezone:** configure `America/Sao_Paulo` no seu perfil (altera apenas a exibição das horas na tela, nunca o `TZ` interno dos containers).
 
+### 1.6 O Que São as *Roles* dos Agentes (`--role none | readonly | baseline | full`)?
+
+Um ponto que costuma confundir quem chega no Scion é o uso da palavra **"role"** em três camadas diferentes e totalmente independentes:
+
+1. **Papel cognitivo (Template):** ex. `gecx-developer`, `gecx-eng-manager`, `gecx-code-reviewer`. Define *como o agente pensa e trabalha* (`agents.md` + `system-prompt.md`), mas **não dá nenhuma permissão na API do Hub** (o antigo campo `hubAccess.scopes` no template foi removido na v0.4).
+2. **Agent Authorization Role (`--role` no Hub):** define **o que o container pode chamar na API do Scion Hub** (traduzido para os escopos do JWT `~/.scion/scion-token`).
+3. **Identidade GCP (`--service-account`):** define **o que o container pode chamar na nuvem GCP** (Vertex AI, CX Agent Studio Sandbox). É ortogonal à role do Hub.
+
+#### Os 4 Níveis de Agent Authorization Role (`hosted/ha/permissions.md`)
+
+| `--role` | Escopos JWT Concedidos no Hub | O Que o Agente Pode Fazer na Prática | Quem Usa em `packs/gecx` |
+| :--- | :--- | :--- | :--- |
+| **`none`** | *(nenhum)* | Executa completamente desconectado da API do Hub (sem claims de autorização). | Scripts isolados ou tarefas batch sem interação com o Hub. |
+| **`readonly`** | `project:read`, `agent:status:update` | Consulta estado do projeto e reporta o próprio status. **Não** renova token, **não** abre port-forward, **não** envia notificações e **não** gerencia outros agentes. | Consultas curtas somente leitura sem necessidade de refresh de token. |
+| **`baseline`** | `project:read`, `agent:status:update`, `agent:token:refresh`, `project:agent:notify`, `agent:port:forward` | Trabalho padrão de longa duração: reporta status, renova o próprio JWT de 10 h, envia notificações e abre port-forward. **Não** pode criar sub-agentes, atribuir SAs GCP, suspender/deletar outros agentes ou ler secrets do projeto. | **13 dos 15 papéis** (`developer`, `code-reviewer`, `architect`, `investigator`, `security-auditor`, `test-engineer`, `gecx-deployer`, `gecx-eval-tester` e papéis de apoio). |
+| **`full`** | Tudo do `baseline` + `project:agent:create`, `project:agent:sa_assign`, `project:agent:lifecycle`, `project:secret:read` | Controle completo de orquestração no projeto: cria filhos (`scion start`), atribui Service Accounts GCP aos filhos (`--service-account`), suspende/retoma/deleta filhos e lê secrets do projeto. | **Apenas os 2 papéis orquestradores:** `gecx-coordinator` (incluindo *Issue Owner*) e `gecx-eng-manager`. |
+
+#### Regra de Teto e Anti-Escalação (*No-Escalation*, Fail-Closed)
+
+O Scion calcula a role efetiva no momento da criação sem nunca permitir que um agente escale privilégios por conta própria:
+
+- **Disparo feito por usuário humano:** `role efetiva = min(role pedida no --role, max_agent_role do projeto)`.
+- **Disparo feito por agente pai (sub-agente):** `role efetiva = min(role pedida, role do pai, max_agent_role do projeto)`.
+- **Tentativa de escalação retorna `403 Forbidden`:** um agente `baseline` nunca consegue criar filhos, e um pai nunca consegue dar ao filho uma role maior que a sua (em `scion reincarnate --role`, um agente só pode **rebaixar** a própria role, nunca subir). Se o registro do pai falhar na consulta ao banco, o Hub falha fechado para `baseline`.
+- **Re-derivação no refresh de token:** ao renovar o JWT (`RefreshAgentToken`), o Hub sempre recalcula os escopos a partir da role armazenada no banco (nunca copia escopos antigos cegamente).
+
+> [!CAUTION]
+> **Pegadinha importante da v0.4 (`default_agent_role`):** no upstream do Scion, o fallback padrão quando `--role` é omitido passou de `baseline` para **`full`**. Em ambientes corporativos, configure `scion.io/default-agent-role = baseline` no projeto (ou passe `--role baseline` explicitamente em todo worker) e reserve `--role full` somente para `gecx-coordinator` e `gecx-eng-manager`.
+
+#### Exemplo Concreto: Os 4 Eixos Ortogonais no `Telecom_Support_Center`
+
+| Agente Vivo | Template (Trabalho) | `--role` (Hub API) | `--service-account` (GCP API) | `--message-mode` (Chat) | Por Que Essa Combinação Existe |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`coordinator`** | `gecx-coordinator` | **`full`** | `factory-worker` (só Vertex) | `project` | Cria `gecx-eng-manager` e Issue Owners no Hub, mas não consegue tocar em apps do Sandbox no GCP. |
+| **`em-telecom`** | `gecx-eng-manager` | **`full`** | `factory-worker` (só Vertex) | `project` | Spawna `N` devs (`baseline`), suspende devs no review (`lifecycle`) e passa `--service-account gecx-deployer` ao deployer (`sa_assign`). |
+| **`dev-billing`** | `gecx-developer` | **`baseline`** | `factory-worker` (só Vertex) | `project` | Mesmo sofrendo prompt injection, recebe `403 Forbidden` se tentar spawnar filhos, ler secrets do projeto ou dar `cxas push`. |
+| **`dep-pr12`** | `gecx-deployer` | **`baseline`** | **`gecx-deployer`** (CES push) | `branch` | Tem poder no **GCP Sandbox** para `cxas push`, mas zero poder no **Hub** para spawnar ou alterar outros agentes. |
+
+> [!NOTE]
+> **Roles de Usuário vs. Roles de Agente + Cadeia de Ancestralidade:** usuários humanos têm duas roles separadas — uma **Hub Role** (`admin`, `member` que pode criar projetos, ou `viewer`) e uma **Project Role** por projeto (`project-owner`, `project-admin`, `project-member`, `project-viewer`). Quando você cria o `coordinator` raiz, o Scion grava a cadeia de ancestralidade (`você → coordinator → em-telecom → dev-billing`): você ganha **acesso transitivo** para inspecionar (`scion look`), dar `attach` ou parar qualquer descendente da sua árvore, mesmo que outro membro do projeto não consiga dar `attach` nos seus agentes.
+
 ---
 
 ## Parte 2 — Onde Ficam as Skills e Como os Agentes Se Comunicam
@@ -615,5 +656,5 @@ Nunca altere `packs/gecx` para regras de um único cliente (tom de voz, fluxos p
 - **Tutorial, Workspaces & Filesystem:** [Tutorial](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/getting-started/tutorial.md), [Connecting to a Hub](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/hosted-user.md), [About Workspaces & Host Git Safety](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/workspace.md), [Workspaces & Sharing Modes](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/workspaces-and-sharing.md), [Volume Source Restrictions](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/orchestrator-settings.md) e [Interactive Tmux](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/tmux.md).
 - **Specs, ADRs, Artifacts & Decisions Nativas:** [Using Artifacts & Track-Changes Reviews](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/artifacts.md), [Artifacts Reference](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/artifacts.md) e [Decisions (`web.decisions`)](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/messaging.md).
 - **Templates, Skills & Imagens:** [Templates & Roles](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/templates.md), [Agent Config Reference](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/agent-config.md), [Skills Authoring](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/skills.md), [Skill Registry & Federation](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/single-node/skill-registry.md), [Building Custom Images](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/custom-images.md) e [Harness Settings](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/harness-settings.md).
-- **Comunicação, Dashboard & Segurança:** [Web Dashboard](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/workstation/dashboard.md), [Messaging & Notifications](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/messaging.md), [Messaging Authorization](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/messaging-authorization.md), [Permissions & AK1 Kernel](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/permissions-policy.md), [Agent Lifecycle & Triage](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/agent-lifecycle.md) e [Coding Agent CLI](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/coding-agent-cli.md).
+- **Comunicação, Dashboard & Segurança:** [Web Dashboard](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/workstation/dashboard.md), [Messaging & Notifications](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/messaging.md), [Messaging Authorization](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/messaging-authorization.md), [Permissions, Roles & Ancestry (`hosted/ha/permissions.md`)](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/ha/permissions.md), [Permissions & AK1 Kernel](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/permissions-policy.md), [Agent Lifecycle & Triage](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/agent-lifecycle.md) e [Coding Agent CLI](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/coding-agent-cli.md).
 - **Estratégia do Preston (`scion-frontiers/agent-team`):** [Repositório @ `08faf48`](https://github.com/scion-frontiers/agent-team/tree/08faf48269da7d8dd0a20c4e5ca5093afb37495d) e [Software Engineering Process (`SKILL.md`)](https://github.com/scion-frontiers/agent-team/blob/08faf48269da7d8dd0a20c4e5ca5093afb37495d/skills/software-engineering-process/SKILL.md).
