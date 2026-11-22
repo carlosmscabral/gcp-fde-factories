@@ -1,0 +1,54 @@
+# Continuous integration workflow for gcp-fde-factories.
+# Runs static pack checks, Release Kit generation, pytest unit suite, bash syntax checks,
+# and Terraform validation across all three deployment stages on every push and PR.
+name: Factory Catalog CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-catalog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install catalog tooling
+        run: python3 -m pip install -e ".[dev]"
+
+      - name: Run static pack, lock, budget, TTL, and clean-room checks
+        run: ./build.sh --check packs/gecx
+
+      - name: Build offline Release Kit
+        run: ./build.sh --release-kit packs/gecx --out /tmp/gecx-kit-ci
+
+      - name: Run unit tests
+        run: ./build.sh --test
+
+      - name: Verify cxas CLI contract snapshot
+        run: python3 canaries/gecx/check_cli_contract.py
+
+      - name: Validate shell script syntax
+        run: |
+          for f in build.sh deploy/03-hub-bootstrap/*.sh packs/gecx/scripts/*.sh; do
+            bash -n "$f"
+          done
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Validate Terraform stages
+        run: |
+          for dir in deploy/01-landing-zone deploy/02-factory-runtime/lite-vm deploy/02-factory-runtime/ha-gke; do
+            terraform -chdir="$dir" init -backend=false -input=false
+            terraform -chdir="$dir" validate
+          done

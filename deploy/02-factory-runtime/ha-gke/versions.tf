@@ -1,0 +1,17 @@
+# Stage 02 (Factory Runtime — HA GKE) provider constraints.
+
+terraform {
+  required_version = ">= 1.6.0"
+
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = ">= 6.10.0, < 7.0.0"
+    }
+  }
+}
+
+provider "google" {
+  project = var.hub_project_id
+  region  = var.region
+}

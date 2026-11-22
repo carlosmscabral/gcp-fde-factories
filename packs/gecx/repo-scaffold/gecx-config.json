@@ -1,0 +1,5 @@
+{
+  "app_dir": "cxas_app/Customer_Support_Agent",
+  "location": "us",
+  "sandbox_env_file": "environment.sandbox.json"
+}

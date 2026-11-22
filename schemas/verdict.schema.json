@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gcp-fde-factories.local/schemas/verdict.schema.json",
+  "title": "Verifiable Factory Verdict (Contract 5)",
+  "description": "Anti-forgery PR verdict record checked against the live CES evaluationRuns API in CI.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "pr_number",
+    "commit_sha",
+    "diversity_profile",
+    "evals_tree_sha256",
+    "gates_executed",
+    "gates_skipped",
+    "verdict",
+    "created_at_utc"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "const": "1" },
+    "pr_number": { "type": "integer", "minimum": 1 },
+    "commit_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "diversity_profile": { "type": "string", "enum": ["cross-vendor", "cross-model", "single-family"] },
+    "ephemeral_app_name": {
+      "type": ["string", "null"],
+      "pattern": "^projects/[a-z0-9-]+/locations/[a-z0-9-]+/apps/[A-Za-z0-9-]+$"
+    },
+    "evaluation_run_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^projects/[a-z0-9-]+/locations/[a-z0-9-]+/apps/[A-Za-z0-9-]+/evaluationRuns/[A-Za-z0-9-]+$"
+      },
+      "default": []
+    },
+    "expected_evaluator_sa": { "type": ["string", "null"] },
+    "evals_tree_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "gates_executed": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "gates_skipped": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "not_verifiable_surfaces": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "live-gcp-verified",
+        "not-verifiable-in-sandbox",
+        "unit-test-verified",
+        "static-check-only",
+        "verifier-blocked",
+        "verifier-failed"
+      ]
+    },
+    "created_at_utc": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "verdict": { "const": "live-gcp-verified" } } },
+      "then": {
+        "required": ["ephemeral_app_name", "evaluation_run_ids", "expected_evaluator_sa"],
+        "properties": {
+          "ephemeral_app_name": { "type": "string" },
+          "evaluation_run_ids": { "type": "array", "minItems": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "verdict": { "const": "not-verifiable-in-sandbox" } } },
+      "then": {
+        "required": ["not_verifiable_surfaces"],
+        "properties": {
+          "not_verifiable_surfaces": { "type": "array", "minItems": 1 }
+        }
+      }
+    }
+  ]
+}

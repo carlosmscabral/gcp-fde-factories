@@ -1,0 +1,115 @@
+# Contract 3 & 5 anti-forgery PR verification workflow for customer GECX repositories.
+# Enforces AGENTS/CLAUDE/GEMINI parity, evals/ tamper guard, PII scan, live CES evaluationRuns
+# provenance verification, and deterministic `if: always()` Janitor cleanup of the [CI] app.
+name: GECX Verdict Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: read
+
+jobs:
+  verify-pr-verdict:
+    runs-on: ubuntu-latest
+    env:
+      VERDICT_FILE: ".factory/verdicts/pr-${{ github.event.pull_request.number }}.json"
+      SANDBOX_PROJECT: "${{ vars.GECX_SANDBOX_PROJECT_ID }}"
+      EVALUATOR_SA: "${{ vars.GECX_EVALUATOR_SA_EMAIL }}"
+      JANITOR_SA: "${{ vars.GECX_JANITOR_SA_EMAIL }}"
+      WIF_PROVIDER: "${{ vars.GCP_WIF_PROVIDER }}"
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce AGENTS.md, CLAUDE.md, and GEMINI.md parity
+        run: |
+          cmp -s AGENTS.md CLAUDE.md
+          cmp -s AGENTS.md GEMINI.md
+
+      - name: Block combined cxas_app and evals edits without human label
+        env:
+          BASE_SHA: "${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
+          PR_LABELS: "${{ join(github.event.pull_request.labels.*.name, ',') }}"
+        run: |
+          CHANGED="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          if grep -q '^cxas_app/' <<< "$CHANGED" && grep -q '^evals/' <<< "$CHANGED"; then
+            if ! grep -qw 'eval-change-approved' <<< "$PR_LABELS"; then
+              echo "::error::PR edits both cxas_app/ and evals/ without human label 'eval-change-approved'."
+              exit 1
+            fi
+          fi
+
+      - name: Scan evals/ for synthetic-data PII violations
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+          patterns = {
+              "cpf": re.compile(r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b"),
+              "credit_card": re.compile(r"\b(?:\d{4}[- ]?){3}\d{4}\b"),
+              "corp_email": re.compile(r"\b[A-Za-z0-9._%+-]+@google\.com\b", re.I),
+          }
+          hits = []
+          for p in sorted(pathlib.Path("evals").rglob("*")):
+              if not p.is_file():
+                  continue
+              txt = p.read_text(encoding="utf-8", errors="ignore")
+              for label, pat in patterns.items():
+                  if pat.search(txt):
+                      hits.append(f"{p}: matched {label}")
+          if hits:
+              print("\n".join(hits), file=sys.stderr)
+              sys.exit(1)
+          print("PII scan clean.")
+          PY
+
+      - name: Authenticate to Sandbox Evaluator SA via WIF (when Verdict claims live-gcp-verified)
+        if: hashFiles(env.VERDICT_FILE) != '' && env.WIF_PROVIDER != ''
+        id: auth-eval
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: "${{ env.WIF_PROVIDER }}"
+          service_account: "${{ env.EVALUATOR_SA }}"
+          token_format: access_token
+
+      - name: Verify Verdict provenance against live CES evaluationRuns API
+        if: hashFiles(env.VERDICT_FILE) != ''
+        env:
+          EVAL_ACCESS_TOKEN: "${{ steps.auth-eval.outputs.access_token }}"
+          PR_HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
+        run: |
+          python3 scripts/verify-verdict.py \
+            --verdict "$VERDICT_FILE" \
+            --expected-commit "$PR_HEAD_SHA" \
+            --evals-dir evals \
+            --sandbox-project "$SANDBOX_PROJECT" \
+            --expected-evaluator-sa "$EVALUATOR_SA"
+
+      - name: Authenticate to Sandbox Janitor SA for always() teardown
+        if: always() && hashFiles(env.VERDICT_FILE) != '' && env.WIF_PROVIDER != '' && env.JANITOR_SA != ''
+        id: auth-janitor
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: "${{ env.WIF_PROVIDER }}"
+          service_account: "${{ env.JANITOR_SA }}"
+          token_format: access_token
+
+      - name: Delete ephemeral [CI] app after CI readback (if always)
+        if: always() && steps.auth-janitor.outputs.access_token != ''
+        env:
+          JANITOR_TOKEN: "${{ steps.auth-janitor.outputs.access_token }}"
+        run: |
+          APP_RES="$(jq -r '.ephemeral_app_name // empty' "$VERDICT_FILE")"
+          if [[ -n "$APP_RES" ]]; then
+            curl -fsS -X DELETE \
+              -H "Authorization: Bearer ${JANITOR_TOKEN}" \
+              -H "x-goog-user-project: ${SANDBOX_PROJECT}" \
+              "https://ces.googleapis.com/v1beta/${APP_RES}?force=true" >/dev/null || true
+          fi

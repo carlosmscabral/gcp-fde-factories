@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""Thin CLI orchestrating static pack checks and offline Release Kit generation."""
+from __future__ import annotations
+
+import argparse
+import json
+import pathlib
+import sys
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.lib.budget_engine import check_context_budget, check_workarounds_ttl
+from scripts.lib.lock_verifier import scan_for_floating_uris, verify_skills_lock
+from scripts.lib.release_kit import build_release_kit
+from scripts.lib.sanitizer import scan_repository
+from scripts.lib.schema_validator import validate_yaml_file
+
+
+def run_check(pack_rel: str) -> int:
+    """Runs all static contract, lockfile, budget, TTL, and sanitization checks."""
+    pack_dir = (REPO_ROOT / pack_rel).resolve()
+    schemas_dir = REPO_ROOT / "schemas"
+    errors: list[str] = []
+
+    errors.extend(validate_yaml_file(pack_dir / "pack.yaml", schemas_dir / "pack.schema.json"))
+    errors.extend(validate_yaml_file(REPO_ROOT / "compat.yaml", schemas_dir / "compat.schema.json"))
+
+    overlay_cfg = pack_dir / "repo-scaffold" / ".factory" / "hub-project.yaml"
+    if overlay_cfg.exists():
+        errors.extend(validate_yaml_file(overlay_cfg, schemas_dir / "hub-project.schema.json"))
+
+    errors.extend(verify_skills_lock(REPO_ROOT / "skills.lock"))
+    errors.extend(scan_for_floating_uris(pack_dir))
+    errors.extend(scan_for_floating_uris(REPO_ROOT / "core-gcp-fde"))
+
+    budget_errs, report = check_context_budget(REPO_ROOT, pack_dir, overlay_cfg if overlay_cfg.exists() else None)
+    errors.extend(budget_errs)
+    errors.extend(check_workarounds_ttl(REPO_ROOT / "WORKAROUNDS.yaml"))
+    errors.extend(scan_repository(REPO_ROOT))
+
+    # Enforce AGENTS.md, CLAUDE.md, and GEMINI.md byte parity inside repo-scaffold/.
+    scaffold = pack_dir / "repo-scaffold"
+    if (scaffold / "AGENTS.md").exists():
+        base = (scaffold / "AGENTS.md").read_bytes()
+        for sibling in ("CLAUDE.md", "GEMINI.md"):
+            sib_path = scaffold / sibling
+            if not sib_path.exists() or sib_path.read_bytes() != base:
+                errors.append(f"Scaffold parity failure: {sib_path} differs from AGENTS.md.")
+
+    if errors:
+        print(f"CHECK FAILED ({len(errors)} error(s)):", file=sys.stderr)
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
+        return 1
+
+    print(f"CHECK PASSED for {pack_rel}.")
+    print(json.dumps(report, indent=2))
+    return 0
+
+
+def run_release_kit(pack_rel: str, out_path: str) -> int:
+    """Validates pack first, then generates a self-contained offline Release Kit."""
+    rc = run_check(pack_rel)
+    if rc != 0:
+        return rc
+
+    pack_dir = (REPO_ROOT / pack_rel).resolve()
+    out_dir = pathlib.Path(out_path).resolve()
+    manifest = build_release_kit(REPO_ROOT, pack_dir, out_dir)
+
+    # Verify zero floating or external URIs exist inside generated templates.
+    uri_errs = scan_for_floating_uris(out_dir / "templates")
+    if uri_errs:
+        print("RELEASE KIT FAILED: external URIs detected in generated templates:", file=sys.stderr)
+        for err in uri_errs:
+            print(f"  - {err}", file=sys.stderr)
+        return 1
+
+    print(f"RELEASE KIT READY: {out_dir}")
+    print(f"  Pack:      {manifest['pack']}@{manifest['pack_version']}")
+    print(f"  Templates: {len(manifest['templates'])}")
+    print(f"  Skills:    {len(manifest['skills'])}")
+    return 0
+
+
+def main() -> int:
+    """Parses CLI subcommands and dispatches check or release-kit builds."""
+    parser = argparse.ArgumentParser(description="Build and check gcp-fde-factories packs.")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_check = sub.add_parser("check")
+    p_check.add_argument("--pack", required=True)
+
+    p_kit = sub.add_parser("release-kit")
+    p_kit.add_argument("--pack", required=True)
+    p_kit.add_argument("--out", required=True)
+
+    args = parser.parse_args()
+    if args.cmd == "check":
+        return run_check(args.pack)
+    return run_release_kit(args.pack, args.out)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

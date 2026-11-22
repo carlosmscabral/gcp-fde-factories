@@ -1,0 +1,18 @@
+[project]
+name = "gcp-fde-factories"
+version = "0.1.0"
+description = "Reusable, empirically validated Scion software factory packs for Google Cloud FDEs."
+requires-python = ">=3.12"
+dependencies = [
+  "pyyaml>=6.0.2",
+  "jsonschema>=4.23.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

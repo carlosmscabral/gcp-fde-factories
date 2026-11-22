@@ -1,0 +1,41 @@
+# Optional internal Cloud Build pipeline for strict SecOps or Binary Authorization customers.
+# Rebuilds the core base image and packs/gecx layer directly inside the customer Hub project.
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+substitutions:
+  _AR_URL: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/gecx-factory-images"
+  _PACK_VERSION: "0.1.0"
+  _CXAS_VERSION: "1.11.0"
+  _FOUNDRY_COMMIT: "f55e877638dfc07879aad4082abc35c34f18359c"
+
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    id: "build-core-base"
+    args:
+      - "build"
+      - "-f"
+      - "core-gcp-fde/images/base.Dockerfile"
+      - "-t"
+      - "${_AR_URL}/core-gcp-fde-base:${_PACK_VERSION}"
+      - "."
+
+  - name: "gcr.io/cloud-builders/docker"
+    id: "build-gecx-layer"
+    args:
+      - "build"
+      - "-f"
+      - "packs/gecx/Dockerfile"
+      - "--build-arg"
+      - "CORE_BASE_IMAGE=${_AR_URL}/core-gcp-fde-base:${_PACK_VERSION}"
+      - "--build-arg"
+      - "CXAS_VERSION=${_CXAS_VERSION}"
+      - "--build-arg"
+      - "FOUNDRY_COMMIT=${_FOUNDRY_COMMIT}"
+      - "-t"
+      - "${_AR_URL}/scion-gecx-runtime:${_PACK_VERSION}"
+      - "."
+
+images:
+  - "${_AR_URL}/core-gcp-fde-base:${_PACK_VERSION}"
+  - "${_AR_URL}/scion-gecx-runtime:${_PACK_VERSION}"

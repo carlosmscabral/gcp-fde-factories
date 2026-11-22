@@ -1,0 +1,28 @@
+# Python & test artifacts
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Build & release outputs
+dist/
+.backups/
+
+# Terraform local state & provider cache
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfvars
+!**/*.tfvars.example
+!**/example.tfvars
+**/landing-zone-outputs.json
+**/runtime-outputs.json
+
+# Local GCP isolated config & secrets (never commit credentials)
+.gcp/
+*.key
+*.pem
+*token*
+
+# Internal Cloudtop-only gate files (strictly prohibited in Git)
+.internal-denylist*

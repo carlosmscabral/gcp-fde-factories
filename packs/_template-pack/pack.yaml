@@ -1,0 +1,42 @@
+# Starter skeleton for creating new domain Factory Packs.
+# Copy this directory to packs/<domain>/, fill in pack.yaml, and validate with ./build.sh --check.
+schema_version: "1"
+
+pack:
+  name: "example-pack"
+  prefix: "example"
+  version: "0.1.0"
+  status: "skeleton"
+  description: "Template skeleton for a reusable Google Cloud FDE Factory Pack."
+
+upstream:
+  agent_team_repo: "scion-frontiers/agent-team"
+  agent_team_commit: "08faf48269da7d8dd0a20c4e5ca5093afb37495d"
+  skills_lock: "skills.lock"
+
+specialist_templates:
+  - name: "coordinator"
+    base_role: "coordinator"
+    delta_dir: "templates/coordinator"
+    hub_role: "full"
+    sandbox_sa_slot: "worker"
+    strip_hardcoded_model: true
+
+project_skills: []
+
+runtime_image:
+  dockerfile: "Dockerfile"
+  harness_configs:
+    - "core-gcp-fde/harness-configs/claude-vertex.yaml"
+    - "core-gcp-fde/harness-configs/antigravity-vertex.yaml"
+
+context_budget:
+  max_total_lines_per_role: 1800
+  max_lines_per_pack_skill: 300
+  max_delta_rules: 15
+
+verification:
+  level1_offline_commands:
+    - "pytest -q"
+  level2_sandbox_runner: "scripts/sandbox-runner.sh"
+  not_verifiable_in_sandbox: []

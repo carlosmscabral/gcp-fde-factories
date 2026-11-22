@@ -1,0 +1,88 @@
+#cloud-config
+# Cloud-init for Stage 02 Lite Single-VM Scion Hub (pinned release + SHA256SUMS verification).
+# Enforces gcp_iam_check_mode=enforce, gcp_iam_deny_unknown_policy=fail-closed, and default block identity.
+# Binds 127.0.0.1 when hub_public_url is empty because Scion v0.4 --hosted rejects 0.0.0.0 without HTTPS.
+
+package_update: true
+
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - jq
+  - sqlite3
+
+write_files:
+  - path: /etc/systemd/system/scion-hub.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Scion Hub (Lite Single-VM)
+      After=network-online.target docker.service
+      Requires=docker.service
+
+      [Service]
+      Type=simple
+      User=scion
+      Group=scion
+      WorkingDirectory=/home/scion
+      EnvironmentFile=/home/scion/.scion/hub.env
+      ExecStart=/opt/scion/current/scion server start --foreground --hosted --enable-hub --enable-web --host ${hub_public_url != "" ? "0.0.0.0" : "127.0.0.1"} --web-port 8080 --enable-runtime-broker
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - mkdir -p /etc/apt/keyrings
+  - |
+    if [ ! -f /etc/apt/keyrings/docker.gpg ]; then
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    fi
+  - |
+    if [ ! -f /etc/apt/sources.list.d/docker.list ]; then
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
+    fi
+  - apt-get update
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  - systemctl enable --now docker
+  - id scion >/dev/null 2>&1 || useradd -m -U -s /bin/bash scion
+  - usermod -aG docker scion
+  - mkdir -p /opt/scion/releases/${scion_version} /home/scion/.scion/plugins/broker /home/scion/.scion/workspace-storage
+  - |
+    cd /tmp
+    BASE_URL="https://github.com/GoogleCloudPlatform/scion/releases/download/${scion_version}"
+    curl -fsSLO "$BASE_URL/scion-linux-amd64.tar.gz"
+    curl -fsSLO "$BASE_URL/SHA256SUMS"
+    grep "scion-linux-amd64.tar.gz" SHA256SUMS | sha256sum -c -
+    tar -xzf scion-linux-amd64.tar.gz -C /opt/scion/releases/${scion_version}
+    ln -sfn /opt/scion/releases/${scion_version} /opt/scion/current
+    ln -sfn /opt/scion/current/scion /usr/local/bin/scion
+    rm -f scion-linux-amd64.tar.gz SHA256SUMS
+  - |
+    if [ ! -f /home/scion/.scion/hub.env ]; then
+      SECRET="$(head -c 32 /dev/urandom | base64 | tr -d '\n')"
+      printf "SCION_SERVER_SESSION_SECRET=%s\nSCION_GCP_PROJECT_ID=%s\nGOOGLE_CLOUD_PROJECT=%s\n" "$SECRET" "${hub_project_id}" "${hub_project_id}" > /home/scion/.scion/hub.env
+      chmod 600 /home/scion/.scion/hub.env
+    fi
+  - |
+    if [ ! -f /home/scion/.scion/settings.yaml ]; then
+      cat > /home/scion/.scion/settings.yaml <<'EOF'
+    schema_version: "1"
+    image_registry: "${artifact_registry_url}"
+    default_gcp_identity_mode: "block"
+    server:
+      hub:
+        gcp_iam_check_mode: "enforce"
+        gcp_iam_deny_unknown_policy: "fail-closed"
+%{ if hub_public_url != "" ~}
+        public_url: "${hub_public_url}"
+%{ endif ~}
+    EOF
+    fi
+  - chown -R scion:scion /home/scion/.scion
+  - systemctl daemon-reload
+  - systemctl enable --now scion-hub.service
+
+final_message: "Scion Lite Single-VM Hub bootstrap complete"

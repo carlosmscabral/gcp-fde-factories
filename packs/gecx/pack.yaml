@@ -1,0 +1,106 @@
+# Pilot 1 Factory Pack manifest for Google Cloud CX Agent Studio (GECX / CES).
+# Incorporates all Gate 0 Argolis Spike findings (thin Foundry adapter, split-SA runner, fail-closed REST gate).
+schema_version: "1"
+
+pack:
+  name: "gecx"
+  prefix: "gecx"
+  version: "0.1.0"
+  status: "pilot"
+  description: "Google Cloud Customer Engagement Suite (GECX / CES) autonomous software factory pack supporting text and synthetic BidiRunSession audio verification."
+
+upstream:
+  agent_team_repo: "scion-frontiers/agent-team"
+  agent_team_commit: "08faf48269da7d8dd0a20c4e5ca5093afb37495d"
+  skills_lock: "skills.lock"
+
+specialist_templates:
+  - name: "coordinator"
+    base_role: "coordinator"
+    delta_dir: "templates/coordinator"
+    hub_role: "full"
+    sandbox_sa_slot: "worker"
+    strip_hardcoded_model: true
+
+  - name: "developer"
+    base_role: "developer"
+    delta_dir: "templates/developer"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    strip_hardcoded_model: true
+
+  - name: "code-reviewer"
+    base_role: "code-reviewer"
+    delta_dir: "templates/code-reviewer"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    strip_hardcoded_model: true
+
+  - name: "gecx-deployer"
+    base_role: "developer"
+    delta_dir: "templates/gecx-deployer"
+    hub_role: "baseline"
+    sandbox_sa_slot: "deployer"
+    strip_hardcoded_model: true
+
+  - name: "gecx-eval-tester"
+    base_role: "qa-tester"
+    delta_dir: "templates/gecx-eval-tester"
+    hub_role: "baseline"
+    sandbox_sa_slot: "evaluator"
+    strip_hardcoded_model: true
+
+project_skills:
+  - name: "gcp-fde-guardrails"
+    local_dir: "core-gcp-fde/skills/gcp-fde-guardrails"
+    version: "0.1.0"
+    scope: "global"
+  - name: "gcp-sandbox-contract"
+    local_dir: "core-gcp-fde/skills/gcp-sandbox-contract"
+    version: "0.1.0"
+    scope: "global"
+  - name: "gcp-kaizen-light"
+    local_dir: "core-gcp-fde/skills/gcp-kaizen-light"
+    version: "0.1.0"
+    scope: "global"
+  - name: "gecx-foundry-adapter"
+    local_dir: "packs/gecx/skills/gecx-foundry-adapter"
+    version: "0.1.0"
+    scope: "global"
+  - name: "gecx-domain-guardrails"
+    local_dir: "packs/gecx/skills/gecx-domain-guardrails"
+    version: "0.1.0"
+    scope: "global"
+
+vendored_image_assets:
+  - name: "cxas-agent-foundry"
+    target_path: "/opt/gecx-foundry"
+    upstream_repo: "GoogleCloudPlatform/cxas-scrapi"
+    commit: "f55e877638dfc07879aad4082abc35c34f18359c"
+    license: "Apache-2.0"
+
+runtime_image:
+  dockerfile: "packs/gecx/Dockerfile"
+  harness_configs:
+    - "core-gcp-fde/harness-configs/claude-vertex.yaml"
+    - "core-gcp-fde/harness-configs/antigravity-vertex.yaml"
+
+context_budget:
+  max_total_lines_per_role: 1800
+  max_lines_per_pack_skill: 300
+  max_delta_rules: 15
+
+verification:
+  level1_offline_commands:
+    - "cxas --no-input lint --app-dir cxas_app/<App>"
+    - "python /opt/gecx-foundry/scripts/sync-callbacks.py --from-local cxas_app/<App>"
+    - "cxas --no-input test-callbacks --app-dir evals/callback_tests"
+    - "pytest tests/ -q"
+  level2_sandbox_runner: "packs/gecx/scripts/gecx-eval-runner.sh"
+  not_verifiable_in_sandbox:
+    - "sip-trunk-routing"
+    - "sbc-media-negotiation"
+    - "audiocodes-vaic-connector"
+    - "carrier-8khz-audio-codecs"
+    - "dtmf-telephony-signaling"
+    - "ccaas-live-agent-transfer"

@@ -1,0 +1,7 @@
+{
+  "sandbox_project_id": "REPLACE_SANDBOX_PROJECT_ID",
+  "audio_evals_gcs_bucket": "gs://REPLACE_SANDBOX_STAGING_BUCKET",
+  "mock_endpoints": {
+    "crm_api": "https://sandbox-mock.internal/crm"
+  }
+}

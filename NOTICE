@@ -1,0 +1,30 @@
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+
+This repository and its generated Release Kits reference or bundle artifacts
+from the following open-source projects, all under permissive MIT or Apache-2.0
+licenses. No files are copied from repositories without an explicit license.
+
+1. GoogleCloudPlatform/scion
+   - License: Apache-2.0
+   - Version: v0.4.0-preview.3
+   - URL: https://github.com/GoogleCloudPlatform/scion
+
+2. scion-frontiers/agent-team
+   - License: Apache-2.0
+   - Commit: 08faf48269da7d8dd0a20c4e5ca5093afb37495d
+   - URL: https://github.com/scion-frontiers/agent-team
+
+3. GoogleCloudPlatform/cxas-scrapi (including cxas-agent-foundry scripts, references, and assets)
+   - License: Apache-2.0
+   - Version: 1.11.0 (Commit f55e877638dfc07879aad4082abc35c34f18359c)
+   - URL: https://github.com/GoogleCloudPlatform/cxas-scrapi
+
+4. addyosmani/agent-skills
+   - License: MIT
+   - Commit: 8c99fa36d90068c82d547f7c12a9d67a3e95f4ee
+   - URL: https://github.com/addyosmani/agent-skills
+
+5. microsoft/playwright-cli
+   - License: Apache-2.0
+   - Commit: c872a33cec77fa03c28fa7c6d1ad99d15d04ce42
+   - URL: https://github.com/microsoft/playwright-cli

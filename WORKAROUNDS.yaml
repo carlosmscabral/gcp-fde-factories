@@ -1,0 +1,41 @@
+# Tracked SDK and platform workarounds with mandatory 90-day TTL and removal tests.
+# scripts/budget-check.py fails CI if any entry exceeds max_age_days without review.
+schema_version: "1"
+max_age_days: 90
+
+workarounds:
+  - id: "WK-001"
+    component: "cxas-scrapi==1.11.0"
+    added_date: "2026-11-22"
+    expires_date: "2027-02-20"
+    summary: "Avoid combining --eval-type with --min-pass-rate or --runs in cxas run."
+    reason: "cxas_scrapi/cli/main.py line 596 omits eval_type when min_pass_rate or runs is set, causing ValueError."
+    mitigation: "packs/gecx/scripts/gecx_sandbox_gate.py calls cxas run --eval-type all --wait and enforces pass thresholds via CES REST evaluationRuns."
+    removal_test: "Run 'cxas run --app-name <app> --eval-type all --wait --min-pass-rate 0.5' on next cxas-scrapi version and confirm it triggers without ValueError."
+
+  - id: "WK-002"
+    component: "cxas-scrapi==1.11.0"
+    added_date: "2026-11-22"
+    expires_date: "2027-02-20"
+    summary: "Avoid cxas ci-test and --display-name-prefix empty-match fail-open behavior."
+    reason: "cxas ci-test uses one SA, skips teardown, passes --filter-auto-metrics, and exits 0 when zero evaluations match."
+    mitigation: "Split deployer push and evaluator run across separate SAs and fail closed when REST evaluationRuns totalCount equals 0."
+    removal_test: "Verify upstream cxas ci-test supports split SAs, automatic teardown, and non-zero exit on zero evaluations."
+
+  - id: "WK-003"
+    component: "scion==v0.4.0-preview.3"
+    added_date: "2026-11-22"
+    expires_date: "2027-02-20"
+    summary: "Run external Delta Watcher instead of alpha hub.github_triggers."
+    reason: "GitHub webhook triggers are alpha and cannot traverse an IAP-protected Scion Hub."
+    mitigation: "scripts/delta-watcher polls GitHub outside the LLM and wakes coordinator only on new events."
+    removal_test: "Verify GA GitHub App polling or IAP-safe webhook relay in future Scion release."
+
+  - id: "WK-004"
+    component: "scion==v0.4.0-preview.3"
+    added_date: "2026-11-22"
+    expires_date: "2027-02-20"
+    summary: "Explicitly set server.hub.gcp_iam_deny_unknown_policy to fail-closed during bootstrap."
+    reason: "Scion v0.4.0-preview.3 defaults gcp_iam_deny_unknown_policy to fail-open."
+    mitigation: "deploy/03-hub-bootstrap/bootstrap-hub-project.sh enforces fail-closed and default_gcp_identity_mode=block."
+    removal_test: "Inspect default value of server.hub.gcp_iam_deny_unknown_policy on clean future Hub install."

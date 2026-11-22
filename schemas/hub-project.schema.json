@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gcp-fde-factories.local/schemas/hub-project.schema.json",
+  "title": "Hub Project Declarative Overlay (Contract 2)",
+  "description": "Declares customer overlay settings reconciled by deploy/03-hub-bootstrap/bootstrap-hub-project.sh.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "pack",
+    "pack_version",
+    "mode",
+    "diversity_profile",
+    "limits",
+    "overlay_skills"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "const": "1" },
+    "pack": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+    "pack_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "mode": { "type": "string", "enum": ["sandbox-direct", "ci-only"] },
+    "diversity_profile": { "type": "string", "enum": ["cross-vendor", "cross-model", "single-family"] },
+    "limits": {
+      "type": "object",
+      "required": ["default_max_duration", "default_max_turns", "auto_suspend_idle"],
+      "additionalProperties": false,
+      "properties": {
+        "default_max_duration": { "type": "string", "pattern": "^[0-9]+(m|h)$" },
+        "default_max_turns": { "type": "integer", "minimum": 10, "maximum": 200 },
+        "default_max_model_calls": { "type": "integer", "minimum": 10, "maximum": 500 },
+        "auto_suspend_idle": { "type": "boolean" }
+      }
+    },
+    "exclude_skills": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+      "default": []
+    },
+    "overlay_skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["dir", "version"],
+        "additionalProperties": false,
+        "properties": {
+          "dir": { "type": "string", "pattern": "^skills/[a-z0-9-]+$" },
+          "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" }
+        }
+      }
+    }
+  }
+}
