@@ -28,6 +28,12 @@ Reusable autonomous software factory packs built on Google Cloud Scion (`v0.4.0-
    ./build.sh --release-kit packs/gecx --out /tmp/gecx-kit
    ```
 
+## Guides & Specifications
+
+- **Agent Authoring & Day-2 Operations:** [docs/AGENT_AUTHORING_AND_OPERATIONS.md](docs/AGENT_AUTHORING_AND_OPERATIONS.md) (how specialists are composed, how to create/edit agents, and how to run `packs/gecx` end-to-end to build a GECX agent).
+- **Infrastructure & Release Kit Walkthrough:** [docs/HANDS_ON_WALKTHROUGH.md](docs/HANDS_ON_WALKTHROUGH.md) + `./scripts/hands-on-walkthrough.sh`.
+- **Customer Landing Zone Requirements (including Org Policies & VPC-SC):** [docs/CUSTOMER_LANDING_ZONE_REQUIREMENTS.md](docs/CUSTOMER_LANDING_ZONE_REQUIREMENTS.md).
+
 ## Three-Stage Customer Deployment
 
 1. **Stage 01 (`deploy/01-landing-zone`):** Customer Platform/SecOps provisions networking (custom or Shared VPC), Artifact Registry, 6 Service Accounts with additive IAM, 3 explicit non-wildcard CES Custom Roles, and the Inference Project budget. Exports `landing-zone-outputs.json`.

@@ -31,43 +31,68 @@ def compose_specialist_template(
     delta_md_path: pathlib.Path,
     agent_team_commit: str,
 ) -> dict[str, Any]:
-    """Composes a single deterministic specialist template directory without external URIs."""
+    """Composes a single deterministic Scion v0.4 specialist template without external URIs.
+
+    Follows official Scion v0.4 template rules:
+    - Directory basename is the template name (omits redundant name key).
+    - Keeps job keys only (omits image, resources, volumes, kubernetes, hub, telemetry).
+    - Omits model and harness_config so diversity_profile controls selection at spawn.
+    - Separates persona (system-prompt.md) from operational rules (agents.md).
+    """
     out_tpl_dir.mkdir(parents=True, exist_ok=True)
     full_name = _prefixed_name(pack_prefix, str(tpl_spec["name"]))
+    base_role = str(tpl_spec["base_role"])
+    hub_role = str(tpl_spec["hub_role"])
+    sa_slot = str(tpl_spec["sandbox_sa_slot"])
 
-    # Deliberately omit model and harness_config so diversity_profile controls selection at spawn.
+    description = (
+        f"{full_name} specialist (base: {base_role}, hub role: {hub_role}, SA slot: {sa_slot})"
+    )
     agent_yaml: dict[str, Any] = {
         "schema_version": "1",
-        "name": full_name,
-        "metadata": {
-            "composed_from_base_role": tpl_spec["base_role"],
-            "agent_team_commit": agent_team_commit,
-            "hub_role_hint": tpl_spec["hub_role"],
-            "sandbox_sa_slot": tpl_spec["sandbox_sa_slot"],
-        },
+        "description": description,
+        "agent_instructions": "agents.md",
+        "system_prompt": "system-prompt.md",
         "skills": [],
     }
+    header = (
+        f"# Composed offline Scion v0.4 template for {full_name}.\n"
+        f"# Base upstream role: {base_role} @ {agent_team_commit}.\n"
+        "# Model, harness_config, and environment keys are omitted for spawn-time diversity.\n"
+    )
     (out_tpl_dir / "scion-agent.yaml").write_text(
-        "# Composed offline template. Model and harness_config are intentionally omitted for spawn-time diversity.\n"
-        + yaml.safe_dump(agent_yaml, sort_keys=False),
+        header + yaml.safe_dump(agent_yaml, sort_keys=False, width=120),
         encoding="utf-8",
     )
 
-    delta_text = delta_md_path.read_text(encoding="utf-8").strip()
+    # Keep system-prompt.md focused on persona and authority boundaries.
     system_prompt = (
-        f"# Specialist Role: {full_name}\n\n"
-        f"Base upstream role: `{tpl_spec['base_role']}` (pinned commit `{agent_team_commit}`).\n"
-        f"Required Hub role at spawn: `{tpl_spec['hub_role']}`.\n"
-        f"Required SA slot at spawn: `{tpl_spec['sandbox_sa_slot']}`.\n\n"
-        f"{delta_text}\n"
+        f"# Role Persona: {full_name}\n\n"
+        f"You act as the `{full_name}` specialist composed from upstream role `{base_role}` "
+        f"(pinned commit `{agent_team_commit}`).\n\n"
+        f"- Required Hub role at spawn: `{hub_role}`.\n"
+        f"- Required Sandbox SA slot at spawn: `{sa_slot}`.\n"
+        "- Follow every pack and overlay skill mounted in your harness skills directory.\n"
     )
     (out_tpl_dir / "system-prompt.md").write_text(system_prompt, encoding="utf-8")
+
+    # Place operational rules in agents.md so Scion prepends its Mandatory Instruction Preamble.
+    delta_text = delta_md_path.read_text(encoding="utf-8").strip()
+    agents_md = (
+        f"# Operational Instructions: {full_name}\n\n"
+        "Scion prepends platform workspace orientation and `sciontool status` signals automatically.\n"
+        "Apply the pack rules below on every task.\n\n"
+        f"{delta_text}\n"
+    )
+    (out_tpl_dir / "agents.md").write_text(agents_md, encoding="utf-8")
+
     return {
         "name": full_name,
-        "base_role": tpl_spec["base_role"],
-        "hub_role": tpl_spec["hub_role"],
-        "sandbox_sa_slot": tpl_spec["sandbox_sa_slot"],
-        "prompt_sha256": sha256_file(out_tpl_dir / "system-prompt.md"),
+        "base_role": base_role,
+        "hub_role": hub_role,
+        "sandbox_sa_slot": sa_slot,
+        "system_prompt_sha256": sha256_file(out_tpl_dir / "system-prompt.md"),
+        "agents_md_sha256": sha256_file(out_tpl_dir / "agents.md"),
     }
 
 
