@@ -145,11 +145,20 @@ def parse_adk_eval_output(stdout: str, stderr: str) -> tuple[bool, int, int]:
     return (passed > 0 and failed == 0), passed, failed
 
 
+def _resolve_agent_dir(repo: pathlib.Path, requested: str) -> str:
+    """Resolves the ADK agent directory, preferring native agents-cli app/ with legacy agent/ fallback."""
+    if requested.strip():
+        return requested.strip()
+    if (repo / "app").is_dir():
+        return "app"
+    return "agent"
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parses CLI flags for the split-SA ADK + GE verification gate."""
     p = argparse.ArgumentParser(description="Run ADK Level 1 + Level 2 verification and GE export check.")
     p.add_argument("--repo-dir", required=True, type=pathlib.Path)
-    p.add_argument("--agent-dir", default="agent")
+    p.add_argument("--agent-dir", default="", help="ADK agent package dir (auto-detects app/ then agent/).")
     p.add_argument("--ge-manifest", default="ge_manifest.json")
     p.add_argument("--ge-export-out", type=pathlib.Path, default=None)
     p.add_argument("--pr-number", required=True, type=int)
@@ -380,9 +389,10 @@ def main(argv: list[str] | None = None) -> int:
             if os.environ.get(passthrough):
                 eval_env[passthrough] = os.environ[passthrough]
         cfg_path = evals_dir / "eval_config.json"
+        agent_dir = _resolve_agent_dir(repo, args.agent_dir)
         total_passed = 0
         for es in evalsets:
-            cmd = ["adk", "eval", args.agent_dir, str(es), "--print_detailed_results"]
+            cmd = ["adk", "eval", agent_dir, str(es), "--print_detailed_results"]
             if cfg_path.is_file():
                 cmd.extend(["--config_file_path", str(cfg_path)])
             try:

@@ -2,5 +2,12 @@ dist/
 __pycache__/
 *.pyc
 .pytest_cache/
+.ruff_cache/
 .venv/
+.env
+.adk/
 .scion/agents/
+.google-agents-cli/
+/artifacts/
+/.agents-cli-original/
+deployment_metadata.json.lock

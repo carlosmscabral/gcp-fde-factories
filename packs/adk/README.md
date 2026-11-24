@@ -6,14 +6,14 @@ Reusable autonomous software factory pack for **Google Cloud Agent Development K
 
 ## 1. Deployment & Dual Gemini Enterprise (`GE App`) Export Topology
 
-Every ADK agent repository ships a root `Dockerfile` running `adk api_server` under a non-root user so the exact same container builds and deploys consistently across **Vertex AI Agent Engine Runtime**, **Cloud Run**, and **GKE**, then exports cleanly to **Gemini Enterprise** via Discovery Engine `v1alpha`.
+Every ADK agent repository follows the native **`google-agents-cli` (`adk_python`)** layout (ADR-014) with a non-root `Dockerfile` running `uvicorn app.fast_api_app:app` so one container serves **ADK HTTP** (`/apps/app/...`, `/run_sse`), **dynamic A2A** (`/a2a/app/.well-known/agent-card.json` + `/a2a/app` JSON-RPC v0.3/v1.0), and **Agent Engine Playground** (`/api/reasoning_engine`, `/api/stream_reasoning_engine`) across **Vertex AI Agent Engine Runtime**, **Cloud Run**, and **GKE**, then exports cleanly to **Gemini Enterprise** via Discovery Engine `v1alpha`.
 
 ```mermaid
 flowchart LR
-    subgraph REPO["Customer ADK Repository"]
-        PKG["agent/ (Modular <=250L root)<br/>agent.py • config.py • prompts.py • tools.py"]
-        DF["Root Dockerfile<br/>non-root USER + adk api_server"]
-        MAN["ge_manifest.json<br/>(schemas/ge-export.schema.json)"]
+    subgraph REPO["Customer ADK Repository (Native agents-cli + Factory Overlay)"]
+        PKG["app/ (Modular <=250L root)<br/>agent.py • config.py • prompts.py • tools.py<br/>fast_api_app.py • app_utils/"]
+        DF["Root Dockerfile + pyproject.toml<br/>non-root USER + uvicorn app.fast_api_app:app"]
+        MAN["agents-cli-manifest.yaml<br/>+ ge_manifest.json"]
         EVALS["evals/synthetic/*.evalset.json<br/>+ tests/test_*.py"]
     end
 
@@ -24,8 +24,8 @@ flowchart LR
     end
 
     subgraph TARGETS["Container Runtime Targets (agents-cli deploy)"]
-        AE["Vertex AI Agent Engine<br/>(agent_runtime)"]
-        CR["Cloud Run / GKE<br/>(A2A /.well-known/agent-card.json)"]
+        AE["Vertex AI Agent Engine<br/>(agent_runtime + /api/reasoning_engine)"]
+        CR["Cloud Run / GKE<br/>(Dynamic /a2a/app/.well-known/agent-card.json)"]
     end
 
     subgraph GE["Gemini Enterprise (Discovery Engine v1alpha)"]

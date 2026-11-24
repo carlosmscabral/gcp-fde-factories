@@ -82,10 +82,11 @@ def test_stage02_vm_and_gke_runtime_contracts_hc01() -> None:
 
 
 def test_adk_scaffold_defaults_and_kaizen_graphql_limit() -> None:
-    """Locks in F16, F28, F30, and F31 across packs and Kaizen collector."""
-    cfg = (REPO_ROOT / "packs/adk/repo-scaffold/agent/config.py").read_text(encoding="utf-8")
+    """Locks in F16, F28, F30, F31, and ADR-014 across packs and Kaizen collector."""
+    cfg = (REPO_ROOT / "packs/adk/repo-scaffold/app/config.py").read_text(encoding="utf-8")
     assert '"gemini-4-neon"' in cfg
     assert "gemini-4-neon-high" not in cfg
+    assert '"app"' in cfg
 
     gcloudignore = (REPO_ROOT / "packs/adk/repo-scaffold/.gcloudignore").read_text(encoding="utf-8")
     assert ".agents/" in gcloudignore

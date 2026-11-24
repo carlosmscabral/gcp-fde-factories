@@ -142,14 +142,15 @@ Each gate uses a binary first-pass check (`first_pass: true` or `false`) and an 
 
 ## Additive Gates: `additive_gates.v5_brownfield_interview_and_coexistence` (Planned for `HC-05`)
 
-`HC-05` qualifies hostile brownfield onboarding, simulated `/grill-me` interviews, legacy hook isolation, and `.factory/Dockerfile.customer` builds on repositories without `repo-scaffold`:
+`HC-05` qualifies hostile brownfield onboarding, simulated `/grill-me` interviews, legacy hook isolation, `.factory/Dockerfile.customer` builds, and live execution of the native `google-agents-cli` (`adk_python`) scaffold (ADR-014):
 
-| Metric ID | Additive Gate | Verification Requirement (`HC-05` Hostile Brownfield and Interview) | Target |
+| Metric ID | Additive Gate | Verification Requirement (`HC-05` Hostile Brownfield, Interview, and Native ADK Scaffold) | Target |
 | :--- | :--- | :--- | :--- |
 | **M2.7** | Simulated `/grill-me` PO interview (`factory-onboard`) | Multi-turn harness runs `factory-onboard` against a vague synthetic PO, executes `scan` first, challenges weak answers, passes `check`, and emits `.factory/` cleanly | `PASS (0 redundant questions, ready=true)` |
 | **M2.8** | Legacy AI files, hooks, and skills coexistence | Scanner detects diverging `AGENTS.md` and `CLAUDE.md`, Git hooks, harness hooks, and local skills, isolates untrusted workspace hooks, and reconciles CI parity without clobber | `PASS (0 clobber, hooks isolated)` |
 | **M1.4** | Live `.factory/Dockerfile.customer` image build | `factory_onboard.py emit` generates `.factory/Dockerfile.customer` for detected `missing_binaries`, Cloud Build builds the image, and a live agent executes the added tools | `PASS (custom image built and verified)` |
 | **M3.6** | Raw brownfield PR under absorbed conventions | Autonomous agent edits the raw brownfield repository (without `repo-scaffold`), obeys absorbed rules and overlay skills, preserves legacy files, and passes the Verdict CI gate | `PASS (PR green, legacy preserved)` |
+| **M4.8** | Native `google-agents-cli` (`adk_python`) scaffold live proof (`ADR-014`) | New `packs/adk/repo-scaffold` (`app/fast_api_app.py` + `uv` non-root `Dockerfile`, zero `deployment/terraform/`) deploys to authenticated Cloud Run with `APP_URL`, serves dynamic HTTPS `/a2a/app/.well-known/agent-card.json` (v0.3 compat), executes live JSON-RPC `message/send` as `eval` SA, exposes `/api/reasoning_engine`, and passes keyless WIF Verdict Gate + Janitor | `PASS (live ADK HTTP + dynamic A2A + Playground + WIF)` |
 
 ## Wave 2 Preview (Deferred Until Wave 1 = 100%)
 

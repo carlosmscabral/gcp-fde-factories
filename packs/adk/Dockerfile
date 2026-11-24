@@ -13,10 +13,12 @@ ARG PYTEST_VERSION=9.2.0
 
 ENV ADK_FACTORY_DIR=/opt/adk-factory
 
-# Install resolved ADK runtime with [eval,a2a] extras, google-agents-cli, Vertex AI SDK, and test tools.
+# Install resolved ADK runtime with [eval,a2a] extras, google-agents-cli, Agent Platform adapter, Vertex AI SDK, and test tools.
 RUN uv pip install --python "${VIRTUAL_ENV}/bin/python" --no-cache \
       "google-adk[eval,a2a]==${ADK_VERSION}" \
       "google-cloud-aiplatform==${AIPLATFORM_VERSION}" \
+      "google-cloud-agentplatform[agent-engines]==${AIPLATFORM_VERSION}" \
+      "fastapi<0.142.0" \
       "a2a-sdk==${A2A_SDK_VERSION}" \
       "google-agents-cli==${AGENTS_CLI_VERSION}" \
       "pytest==${PYTEST_VERSION}"

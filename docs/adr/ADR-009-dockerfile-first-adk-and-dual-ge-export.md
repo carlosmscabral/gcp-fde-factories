@@ -1,6 +1,6 @@
 # ADR-009: Dockerfile-First ADK and Dual Gemini Enterprise Export
 
-- **Status:** Accepted
+- **Status:** Accepted (amended by [ADR-014](ADR-014-agents-cli-native-adk-scaffold.md))
 - **Date:** 2026-11-24
 - **Invariants:** [INV-13](../INVARIANTS.md#inv-13-dockerfile-first-adk-packaging-and-dual-ge-export)
 
@@ -8,17 +8,18 @@
 
 Python pickle serialization (`cloudpickle`) creates brittle runtime dependencies, breaks across Python minor versions, and fails enterprise security reviews.
 Enterprise customers using Google Agent Development Kit (ADK) need portable container artifacts that deploy cleanly to Vertex AI Agent Engine or Cloud Run.
-Customers also vary in how they register agents inside Gemini Enterprise: some prefer UI ZIP uploads while others automate via Discovery Engine REST APIs.
+Customers also vary in how they register agents inside Gemini Enterprise.
+Some teams prefer UI ZIP uploads, while others automate via Discovery Engine REST APIs.
 
 ## Decision
 
-1. Standardize `packs/adk` on Dockerfile-first container packaging (`packs/adk/repo-scaffold/Dockerfile` with pinned `packs/adk/repo-scaffold/requirements.txt`, running as non-root UID 1000).
+1. Standardize `packs/adk` on Dockerfile-first container packaging (`packs/adk/repo-scaffold/Dockerfile` with `uv` + `pyproject.toml`, running as non-root UID 1000 via `uvicorn app.fast_api_app:app` per [ADR-014](ADR-014-agents-cli-native-adk-scaffold.md)).
 2. Avoid `cloudpickle` serialization by default across `packs/adk` templates, skills, scaffolds, and documentation.
-3. Require modular ADK agent structure (`packs/adk/repo-scaffold/agent/agent.py` composition root plus `packs/adk/repo-scaffold/agent/config.py`, `packs/adk/repo-scaffold/agent/prompts.py`, and `packs/adk/repo-scaffold/agent/tools.py`).
+3. Require modular ADK agent structure (`packs/adk/repo-scaffold/app/agent.py` composition root plus `app/config.py`, `app/prompts.py`, `app/tools.py`, `app/fast_api_app.py`, and `app/app_utils/`).
 4. Provide `packs/adk/scripts/ge_export.py` (backed by `packs/adk/scripts/lib/ge_payload.py` and validated by `schemas/ge-export.schema.json`) to generate structured Gemini Enterprise handoff outputs from `ge_manifest.json`:
    - `ge_export_manifest.json` containing the Discovery Engine `v1alpha` endpoint URL, an inline `dry_run_curl` command, and a SHA-256 integrity digest.
    - `ge_registration_payload.json` containing the validated `adkAgentDefinition` or `a2aAgentDefinition` JSON body.
-5. Default `packs/adk/repo-scaffold/agent/config.py` to a valid Vertex AI global publisher model ID (`gemini-4-neon`) instead of harness thinking-level aliases, and include `.gcloudignore` to exclude `.agents/` and `.git/` from Cloud Build archives.
+5. Default `packs/adk/repo-scaffold/app/config.py` to a valid Vertex AI global publisher model ID (`gemini-4-neon`) instead of harness thinking-level aliases, and include `.gcloudignore` to exclude `.agents/` and `.git/` from Cloud Build archives.
 6. Keep `packs/adk/scripts/adk_sandbox_gate.py` and `scripts/verify-verdict.py` aligned to Contract 5 so ADK PRs produce auditable Verdicts tied to Vertex AI Agent Engine and Gemini Enterprise resources.
 
 ## Consequences

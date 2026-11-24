@@ -1,0 +1,22 @@
+name: "starter-adk-agent"
+acli_version: "1.15.0"
+agent_directory: "app"
+region: "us-central1"
+base_template: "adk_python"
+language: "python"
+framework: "google-adk"
+create_params:
+  # Keep root_agent_name aligned with app/config.py so telemetry and agents-cli report one canonical name.
+  root_agent_name: "starter_adk_agent"
+  # Keep app_name identical to agent_directory ("app") so ADK /apps/app and /a2a/app routes resolve cleanly.
+  app_name: "app"
+  deployment_target: "agent_runtime"
+  session_type: "in_memory"
+  cicd_runner: "skip"
+  is_a2a: true
+  agent_gateway: false
+  agent_guidance_filename: "AGENTS.md"
+  agent_runtime:
+    identity_default: "service_account"
+  cloud_run:
+    identity_default: "service_account"

@@ -20,7 +20,7 @@ If a change breaks an invariant, fix the code or update the linked ADR before me
 | INV-10 | Fail-closed Claude on Vertex preflight validation | [ADR-006](adr/ADR-006-vertex-ai-generic-tiers-and-fail-closed-claude.md) | `deploy/03-hub-bootstrap/parse_hub_project.py`, `deploy/03-hub-bootstrap/bootstrap-hub-project.sh` | `tests/test_release_kit_build.py` |
 | INV-11 | Zero-token Kaizen collection and human-gated PRs | [ADR-007](adr/ADR-007-closed-loop-zero-token-kaizen-engine.md) | `core-gcp-fde/scripts/kaizen_collect.py`, `scripts/lib/kaizen_verifier.py` | `tests/test_kaizen_v030.py` |
 | INV-12 | Non-destructive brownfield onboarding and config schema | [ADR-008](adr/ADR-008-adopt-first-brownfield-onboarding.md) | `core-gcp-fde/scripts/factory_onboard.py`, `schemas/factory-profile.schema.json` | `tests/test_brownfield_onboard_v040.py` |
-| INV-13 | Dockerfile-first ADK packaging and dual GE export | [ADR-009](adr/ADR-009-dockerfile-first-adk-and-dual-ge-export.md) | `packs/adk/repo-scaffold/Dockerfile`, `packs/adk/scripts/ge_export.py` | `tests/test_adk_pack_and_ge_export.py` |
+| INV-13 | Native `agents-cli` Dockerfile-first ADK packaging and dual GE export | [ADR-009](adr/ADR-009-dockerfile-first-adk-and-dual-ge-export.md), [ADR-014](adr/ADR-014-agents-cli-native-adk-scaffold.md) | `packs/adk/repo-scaffold/Dockerfile`, `packs/adk/repo-scaffold/app/`, `packs/adk/scripts/ge_export.py` | `tests/test_adk_pack_and_ge_export.py` |
 | INV-14 | Pinned Scion release and fail-closed Hub IAM | [ADR-010](adr/ADR-010-scion-hardening-and-pinned-supply-chain.md) | `compat.yaml`, `deploy/02-factory-runtime/lite-vm/cloud-init.tftpl` | `tests/test_schemas_and_lock.py`, `tests/test_terraform_and_scaffold_parity.py` |
 | INV-15 | Public clean-room sanitization and secret denylist | [ADR-011](adr/ADR-011-public-clean-room-and-runtime-denylist.md) | `scripts/sanitize-public-check.py`, `scripts/lib/sanitizer.py` | `tests/test_sanitizer.py` |
 | INV-16 | Functional E2E qualification and verified teardown | [ADR-012](adr/ADR-012-functional-hillclimbing-e2e-qualification.md) | `docs/HILLCLIMBING_CHARTER.md` | Live E2E Hillclimbing Scorecard |
@@ -91,7 +91,7 @@ All generated `.factory/factory-profile.yaml` and `.factory/hub-project.yaml` fi
 
 ### INV-13: Dockerfile-First ADK Packaging and Dual GE Export
 
-`packs/adk` must package agents via a non-root `Dockerfile` and must not default to `cloudpickle` serialization.
+`packs/adk` must package agents via a non-root `Dockerfile` following the native `google-agents-cli` (`adk_python`) layout (`app/`, `agents-cli-manifest.yaml`, `pyproject.toml`, `uvicorn app.fast_api_app:app`) and must not default to `cloudpickle` serialization.
 `packs/adk/scripts/ge_export.py` must emit `ge_export_manifest.json` (with `dry_run_curl` and SHA-256 digest) and `ge_registration_payload.json` targeting Discovery Engine `v1alpha`.
 
 ### INV-14: Pinned Scion Release and Hardened Hub IAM

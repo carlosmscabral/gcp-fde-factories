@@ -53,7 +53,26 @@ def test_adk_pack_budget_schemas_dockerfile_and_scaffold_parity() -> None:
 
     scaffold = REPO_ROOT / "packs/adk/repo-scaffold"
     assert (scaffold / "Dockerfile").is_file()
-    assert "adk api_server" in (scaffold / "Dockerfile").read_text(encoding="utf-8")
+    dockerfile_text = (scaffold / "Dockerfile").read_text(encoding="utf-8")
+    assert "uvicorn app.fast_api_app:app" in dockerfile_text
+    assert "USER appuser" in dockerfile_text
+    assert (scaffold / "agents-cli-manifest.yaml").is_file()
+    assert (scaffold / "pyproject.toml").is_file()
+    assert not (scaffold / "deployment").exists(), "Stage 01 owns infra; omit duplicate deployment/terraform/."
+    assert not (scaffold / "agent").exists(), "ADR-014 replaced legacy agent/ with native agents-cli app/."
+    for rel in (
+        "app/__init__.py",
+        "app/agent.py",
+        "app/config.py",
+        "app/prompts.py",
+        "app/tools.py",
+        "app/fast_api_app.py",
+        "app/app_utils/__init__.py",
+        "app/app_utils/a2a.py",
+        "app/app_utils/services.py",
+        "app/app_utils/reasoning_engine_adapter.py",
+    ):
+        assert (scaffold / rel).is_file(), f"Missing ADR-014 scaffold file: {rel}"
     agents = (scaffold / "AGENTS.md").read_bytes()
     assert (scaffold / "CLAUDE.md").read_bytes() == agents
     assert (scaffold / "GEMINI.md").read_bytes() == agents

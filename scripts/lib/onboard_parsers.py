@@ -100,9 +100,11 @@ def detect_binaries_and_commands(repo: pathlib.Path) -> tuple[list[str], dict[st
     if (repo / "cxas_app").is_dir() or (repo / "gecx-config.json").is_file():
         stacks.add("gecx")
         binaries.add("cxas")
-    if (repo / "ge_manifest.json").is_file():
+    if (repo / "ge_manifest.json").is_file() or (repo / "agents-cli-manifest.yaml").is_file():
         stacks.add("adk")
         binaries.add("adk")
+    if (repo / "agents-cli-manifest.yaml").is_file():
+        binaries.add("agents-cli")
 
     pkg_json = repo / "package.json"
     if pkg_json.is_file():

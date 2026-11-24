@@ -42,15 +42,39 @@ class TestHC03FactoryOpsRegressions(unittest.TestCase):
         self.assertNotIn('"run.services.create"', block)
         self.assertNotIn('"run.services.delete"', block)
 
-    def test_adk_repo_scaffold_ships_valid_a2a_agent_json(self) -> None:
-        """Verifies HC03-F4: packs/adk/repo-scaffold/agent/agent.json exists with A2A v0.3.0 fields."""
-        card_path = REPO_ROOT / "packs/adk/repo-scaffold/agent/agent.json"
-        self.assertTrue(card_path.is_file(), "Starter agent/agent.json is required for adk api_server --a2a.")
-        card = json.loads(card_path.read_text(encoding="utf-8"))
-        self.assertEqual(card["protocolVersion"], "0.3.0")
-        self.assertTrue(card["url"].endswith("/a2a/agent"))
-        self.assertGreaterEqual(len(card["skills"]), 1)
-        self.assertIn("tags", card["skills"][0])
+    def test_adk_repo_scaffold_ships_dynamic_agents_cli_a2a_surface(self) -> None:
+        """Verifies HC03-F4 evolved via ADR-014: dynamic A2A v0.3 compat via app/fast_api_app.py without static agent.json."""
+        scaffold = REPO_ROOT / "packs/adk/repo-scaffold"
+        a2a_py = (scaffold / "app/app_utils/a2a.py").read_text(encoding="utf-8")
+        fast_api_py = (scaffold / "app/fast_api_app.py").read_text(encoding="utf-8")
+        adapter_py = (scaffold / "app/app_utils/reasoning_engine_adapter.py").read_text(encoding="utf-8")
+        manifest_text = (scaffold / "agents-cli-manifest.yaml").read_text(encoding="utf-8")
+
+        self.assertIn("AgentCardBuilder", a2a_py)
+        self.assertIn("enable_v0_3_compat=True", a2a_py)
+        self.assertIn('protocol_version="0.3"', a2a_py)
+        self.assertIn("APP_URL", a2a_py)
+        self.assertIn("attach_a2a_routes", fast_api_py)
+        self.assertIn("attach_reasoning_engine_routes", fast_api_py)
+        self.assertIn("/api/reasoning_engine", adapter_py)
+        self.assertIn("/api/stream_reasoning_engine", adapter_py)
+        self.assertIn("is_a2a: true", manifest_text)
+        self.assertIn('app_name: "app"', manifest_text)
+        self.assertFalse((scaffold / "agent/agent.json").exists())
+
+        # Verify brownfield fallback in adk_sandbox_gate.py and agents-cli detection in onboard_parsers.py.
+        from packs.adk.scripts.adk_sandbox_gate import _resolve_agent_dir
+        from scripts.lib.onboard_parsers import detect_binaries_and_commands
+
+        self.assertEqual(_resolve_agent_dir(scaffold, ""), "app")
+        bins, _, stacks, _ = detect_binaries_and_commands(scaffold)
+        self.assertIn("adk", stacks)
+        self.assertIn("agents-cli", bins)
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = pathlib.Path(tmp)
+            (legacy / "agent").mkdir()
+            self.assertEqual(_resolve_agent_dir(legacy, ""), "agent")
+            self.assertEqual(_resolve_agent_dir(scaffold, "custom_pkg"), "custom_pkg")
 
     def test_verdict_checker_supports_live_cloud_run_a2a_service_provenance(self) -> None:
         """Verifies HC03-F5: verdict.schema.json and verdict_checker verify Cloud Run /services/ with PR/commit labels."""
