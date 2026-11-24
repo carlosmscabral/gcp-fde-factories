@@ -1,0 +1,12 @@
+# Exclude local VCS, agent runtime metadata, tests, and scratch files from Cloud Build archives (HC-01 F31).
+.git/
+.gitignore
+.agents/
+.scion/
+.factory/
+.venv/
+__pycache__/
+*.pyc
+tests/
+evals/
+knowledge-plane/

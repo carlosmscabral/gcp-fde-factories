@@ -15,10 +15,11 @@ Customers also vary in how they register agents inside Gemini Enterprise: some p
 1. Standardize `packs/adk` on Dockerfile-first container packaging (`packs/adk/repo-scaffold/Dockerfile` with pinned `packs/adk/repo-scaffold/requirements.txt`, running as non-root UID 1000).
 2. Avoid `cloudpickle` serialization by default across `packs/adk` templates, skills, scaffolds, and documentation.
 3. Require modular ADK agent structure (`packs/adk/repo-scaffold/agent/agent.py` composition root plus `packs/adk/repo-scaffold/agent/config.py`, `packs/adk/repo-scaffold/agent/prompts.py`, and `packs/adk/repo-scaffold/agent/tools.py`).
-4. Provide `packs/adk/scripts/ge_export.py` (backed by `packs/adk/scripts/lib/ge_payload.py` and validated by `schemas/ge-export.schema.json`) to generate dual Gemini Enterprise handoff outputs from `ge_manifest.json`:
-   - `ge-console-bundle.zip` for UI console registration.
-   - `register_agent.sh` calling the Discovery Engine `v1alpha` API with idempotent upsert semantics.
-5. Keep `packs/adk/scripts/adk_sandbox_gate.py` and `scripts/verify-verdict.py` aligned to Contract 5 so ADK PRs produce auditable Verdicts tied to Vertex AI Agent Engine and Gemini Enterprise resources.
+4. Provide `packs/adk/scripts/ge_export.py` (backed by `packs/adk/scripts/lib/ge_payload.py` and validated by `schemas/ge-export.schema.json`) to generate structured Gemini Enterprise handoff outputs from `ge_manifest.json`:
+   - `ge_export_manifest.json` containing the Discovery Engine `v1alpha` endpoint URL, an inline `dry_run_curl` command, and a SHA-256 integrity digest.
+   - `ge_registration_payload.json` containing the validated `adkAgentDefinition` or `a2aAgentDefinition` JSON body.
+5. Default `packs/adk/repo-scaffold/agent/config.py` to a valid Vertex AI global publisher model ID (`gemini-4-neon`) instead of harness thinking-level aliases, and include `.gcloudignore` to exclude `.agents/` and `.git/` from Cloud Build archives.
+6. Keep `packs/adk/scripts/adk_sandbox_gate.py` and `scripts/verify-verdict.py` aligned to Contract 5 so ADK PRs produce auditable Verdicts tied to Vertex AI Agent Engine and Gemini Enterprise resources.
 
 ## Consequences
 

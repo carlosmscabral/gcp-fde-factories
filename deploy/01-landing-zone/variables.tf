@@ -81,7 +81,19 @@ variable "enable_gecx_sandbox_roles" {
 }
 
 variable "enable_adk_sandbox_roles" {
-  description = "If true, enables Discovery Engine API and adds explicit non-wildcard ADK Agent Engine and Gemini Enterprise Sandbox custom roles."
+  description = "If true, enables Discovery Engine and Cloud Run APIs and adds explicit non-wildcard ADK Agent Engine, Cloud Run, and Gemini Enterprise Sandbox custom roles."
+  type        = bool
+  default     = false
+}
+
+variable "enable_agent_engine_re_ar_reader" {
+  description = "If true, grants roles/artifactregistry.reader on hub_project_id to the sandbox Reasoning Engine service agent (gcp-sa-aiplatform-re) once materialized."
+  type        = bool
+  default     = false
+}
+
+variable "enable_gke_api" {
+  description = "If true, enables container.googleapis.com on hub_project_id for the HA GKE runtime profile."
   type        = bool
   default     = false
 }

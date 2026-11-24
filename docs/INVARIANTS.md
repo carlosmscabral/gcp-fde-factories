@@ -41,17 +41,17 @@ Stage 02 and Stage 03 must read explicit Stage 01 JSON outputs instead of relyin
 
 Every custom role in `deploy/01-landing-zone/iam.tf` must list explicit permissions only.
 No custom role may contain `*`, `contactcenterinsights.*`, or `ces.conversations.*`.
-The Sandbox Evaluator role must use explicit `aiplatform.endpoints.predict` instead of broad `roles/aiplatform.user`.
+Worker, Deployer, and Evaluator Service Accounts must use explicit `aiplatform.endpoints.predict` (`vertexInferencePredict`) on `inference_project_id` instead of broad `roles/aiplatform.user`.
 
 ### INV-04: Split SA Separation and Janitor Exclusion
 
 The factory must separate Worker, Deployer, Evaluator, and Janitor duties across distinct Service Accounts.
-The Scion Hub Service Account must never receive `roles/iam.serviceAccountTokenCreator` on `sandbox_janitor`.
+The Scion Hub Service Account must never receive `roles/iam.serviceAccountTokenCreator` or GKE `roles/iam.workloadIdentityUser` on `sandbox_janitor`.
 `deploy/03-hub-bootstrap/bootstrap-hub-project.sh` must never register `sandbox_janitor` as an assignable Hub identity.
 
 ### INV-05: Offline Release Kit Integrity and SHA-256 Checksums
 
-Every built Release Kit must contain a valid `manifest.json` and a verifiable `SHA256SUMS` file covering all kit files.
+Every built Release Kit must contain a valid `manifest.json` with embedded per-file SHA-256 hashes and a verifiable `skills.lock`.
 Every kit must pass `./build.sh --check` without missing templates, skills, or schemas.
 
 ### INV-06: Digest-Pinned Runtime and Harness Images
@@ -92,12 +92,12 @@ All generated `.factory/factory-profile.yaml` and `.factory/hub-project.yaml` fi
 ### INV-13: Dockerfile-First ADK Packaging and Dual GE Export
 
 `packs/adk` must package agents via a non-root `Dockerfile` and must not default to `cloudpickle` serialization.
-`packs/adk/scripts/ge_export.py` must emit both `ge-console-bundle.zip` and an idempotent `register_agent.sh` targeting Discovery Engine `v1alpha`.
+`packs/adk/scripts/ge_export.py` must emit `ge_export_manifest.json` (with `dry_run_curl` and SHA-256 digest) and `ge_registration_payload.json` targeting Discovery Engine `v1alpha`.
 
-### INV-14: Pinned Scion Release and Fail-Closed Hub IAM
+### INV-14: Pinned Scion Release and Hardened Hub IAM
 
 `compat.yaml` and Stage 02 templates must pin an exact Scion release tag and SHA-256 checksum.
-Every Hub runtime must configure `default_gcp_identity_mode=block`, `gcp_iam_check_mode=enforce`, and `gcp_iam_deny_unknown_policy=fail-closed`.
+Every Hub runtime must enable `policytroubleshooter.googleapis.com` and configure `default_gcp_identity_mode=block`, `default_agent_role=baseline`, `gcp_iam_check_mode=enforce`, and `gcp_iam_deny_unknown_policy=fail-open` for project-scoped Hub SAs (or `fail-closed` with org-level `roles/iam.denyReviewer`).
 
 ### INV-15: Public Clean-Room Sanitization and Secret Denylist
 

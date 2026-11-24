@@ -1,7 +1,8 @@
 #cloud-config
 # Cloud-init for Stage 02 Lite Single-VM Scion Hub (pinned release + pinned SHA-256 verification).
-# Enforces gcp_iam_check_mode=enforce, gcp_iam_deny_unknown_policy=fail-closed, and default block identity.
-# Binds 127.0.0.1 when hub_public_url is empty because Scion v0.4 --hosted rejects 0.0.0.0 without HTTPS.
+# Enforces gcp_iam_check_mode=enforce, default_gcp_identity_mode=block, and default_agent_role=baseline.
+# Binds 0.0.0.0 on the VPC-private VM (zero public IP) with container_hub_endpoint=http://scion-hub.internal:8080
+# so Docker agents run on bridge networking with isolated metadata interception (HC-01 F6/F7/F14/F19).
 
 package_update: true
 
@@ -27,7 +28,7 @@ write_files:
       Group=scion
       WorkingDirectory=/home/scion
       EnvironmentFile=/home/scion/.scion/hub.env
-      ExecStart=/opt/scion/current/scion server start --foreground --hosted --enable-hub --enable-web --host ${hub_public_url != "" ? "0.0.0.0" : "127.0.0.1"} --web-port 8080 --enable-runtime-broker
+      ExecStart=/opt/scion/current/scion server start --foreground --hosted --enable-hub --enable-web --host 0.0.0.0 --web-port 8080 --enable-runtime-broker
       Restart=always
       RestartSec=5
 
@@ -49,6 +50,14 @@ runcmd:
   - systemctl enable --now docker
   - id scion >/dev/null 2>&1 || useradd -m -U -s /bin/bash scion
   - usermod -aG docker scion
+  - |
+    # Expose snap gcloud Docker credential helper on standard systemd PATH (HC-01 F6).
+    if [ -x /snap/bin/docker-credential-gcloud ]; then
+      ln -sfn /snap/bin/docker-credential-gcloud /usr/local/bin/docker-credential-gcloud
+    fi
+    if command -v gcloud >/dev/null 2>&1; then
+      su - scion -c "gcloud auth configure-docker ${region}-docker.pkg.dev --quiet" || true
+    fi
   - mkdir -p /opt/scion/releases/${scion_version} /home/scion/.scion/plugins/broker /home/scion/.scion/workspace-storage
   - |
     cd /tmp
@@ -62,7 +71,9 @@ runcmd:
   - |
     if [ ! -f /home/scion/.scion/hub.env ]; then
       SECRET="$(head -c 32 /dev/urandom | base64 | tr -d '\n')"
-      printf "SCION_SERVER_SESSION_SECRET=%s\nSCION_GCP_PROJECT_ID=%s\nGOOGLE_CLOUD_PROJECT=%s\n" "$SECRET" "${hub_project_id}" "${hub_project_id}" > /home/scion/.scion/hub.env
+      BASE_URL="${hub_public_url != "" ? hub_public_url : "https://${name_prefix}-hub-vm.internal:8080"}"
+      printf "SCION_SERVER_SESSION_SECRET=%s\nSCION_GCP_PROJECT_ID=%s\nGOOGLE_CLOUD_PROJECT=%s\nSCION_SERVER_BASE_URL=%s\n" \
+        "$SECRET" "${hub_project_id}" "${hub_project_id}" "$BASE_URL" > /home/scion/.scion/hub.env
       chmod 600 /home/scion/.scion/hub.env
     fi
   - |
@@ -71,12 +82,34 @@ runcmd:
     schema_version: "1"
     image_registry: "${artifact_registry_url}"
     default_gcp_identity_mode: "block"
+    default_agent_role: "baseline"
     server:
       hub:
         gcp_iam_check_mode: "enforce"
-        gcp_iam_deny_unknown_policy: "fail-closed"
+        gcp_iam_deny_unknown_policy: "${gcp_iam_deny_unknown_policy}"
 %{ if hub_public_url != "" ~}
         public_url: "${hub_public_url}"
+%{ endif ~}
+%{ if length(admin_emails) > 0 ~}
+        admin_emails:
+%{ for email in admin_emails ~}
+          - "${email}"
+%{ endfor ~}
+%{ endif ~}
+      broker:
+        container_hub_endpoint: "http://scion-hub.internal:8080"
+%{ if length(oidc_allowed_domains) > 0 ~}
+      federation:
+        enabled: true
+        trusted_issuers:
+          - issuer_url: "https://accounts.google.com"
+            jwks_url: "https://www.googleapis.com/oauth2/v3/certs"
+            issuer_type: "user"
+            expected_audience: "32555940559.apps.googleusercontent.com"
+            allowed_domains:
+%{ for dom in oidc_allowed_domains ~}
+              - "${dom}"
+%{ endfor ~}
 %{ endif ~}
     EOF
     fi

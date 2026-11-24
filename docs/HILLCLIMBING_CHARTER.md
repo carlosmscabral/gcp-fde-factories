@@ -1,7 +1,8 @@
 # Hillclimbing Qualification Charter (Functional-First)
 
 This charter defines the empirical qualification program for `gcp-fde-factories`.
-The program uses a practical, functional-first Hillclimbing loop: prove that real factories deploy, bootstrap, author, publish, verify, and tear down cleanly in live Google Cloud projects before optimizing latency or token throughput.
+The program uses a practical, functional-first Hillclimbing loop.
+Each round proves that real factories deploy, bootstrap, author, publish, verify, and tear down cleanly in live Google Cloud projects before optimizing latency or throughput.
 
 ## Qualification Strategy
 
@@ -12,10 +13,33 @@ flowchart LR
   W2 --> W3["Level 3\nAutonomous Agent\nAuthoring via Scion"]
   W3 --> W4["Level 4\nLive Agent Publish &\nFunctional Smoke Tests"]
   W4 --> W5["Level 5\nNegative IAM, Kaizen\n& Clean Teardown"]
-  W5 -->|"Friction found"| FIX["Patch Catalog + Tests\n& Re-run Gate"]
+  W5 -->|"Friction found"| FIX["Patch Catalog + Tests\n& Update Ledger"]
   FIX --> W0
-  W5 -->|"100% Wave 1 PASS"| WAVE2["Wave 2 (Future)\nLatency, Cost & Throughput"]
+  W5 -->|"100% Core + Additive PASS"| WAVE2["Wave 2 (Future)\nLatency, Cost & Throughput"]
 ```
+
+## Single Source of Truth and Progression Ledger
+
+Every qualification round appends one JSON object to [docs/hillclimbing-runs.jsonl](hillclimbing-runs.jsonl).
+Run `python3 scripts/render-hillclimbing-report.py` after each round to regenerate [docs/hillclimbing-dashboard.html](hillclimbing-dashboard.html) deterministically from the ledger.
+Publish the same HTML file to the team Artifacts dashboard so repository history and visual reports never drift.
+
+## Ledger Structure: Immutable Core vs. Versioned Extensions
+
+The qualification ledger separates metrics into two blocks to preserve apples-to-apples comparisons across releases:
+
+1. **`core_v1` (Immutable Baseline, 18 gates `M0.1` to `M5.3`):** Every round scores the exact same 18 functional gates across Levels 0 through 5. Never remove, rename, or weaken a `core_v1` gate.
+2. **`additive_gates` (Versioned Extensions for `HC-02+`):** New qualification horizons (such as 3-project cross-project topologies or HA failover) add versioned blocks without mutating `core_v1` scores.
+
+## Cross-Round Evolution Metrics
+
+Each round computes three longitudinal metrics over `core_v1` (and tracks separate totals for active `additive_gates` blocks):
+
+| Evolution Metric | Formula | Purpose | Wave 1 Target |
+| :--- | :--- | :--- | :--- |
+| **Cold-Start First-Pass Rate (%)** | `gates_passed_on_attempt_1_without_workarounds / total_gates * 100` | Measures out-of-the-box reliability on brand-new projects | `>= 90%` (toward `100%`) |
+| **Manual Friction Count (#)** | `showstoppers_count` + `minor_count` (tracked separately) | Quantifies operator effort required during live execution | `0` Showstoppers, `<= 2` Minor |
+| **Mock-to-Reality Escape Rate (#)** | Count of live failures that passed offline `pytest`, `./build.sh --check`, and `terraform validate` | Measures blind spots in offline unit tests and mocks | `0` escapes |
 
 ## Wave 1 Scope: Functional and Operational Qualification
 
@@ -23,24 +47,24 @@ Wave 1 executes two parallel live qualification tracks in brand-new, ephemeral G
 
 | Track | Runtime Profile | Domain Pack | Target Published Artifact | Target Live Verification |
 | :--- | :--- | :--- | :--- | :--- |
-| **Track A (VM + GECX)** | Stage 01 + Stage 02 Lite Single-VM (`e2-standard-4`, Cloud NAT, IAP SSH) | `packs/gecx` | Live CES App (`[CI]` prefixed) with agent, tool, guardrail, and golden eval | `cxas push`, `cxas push-eval`, `cxas test-tools`, `cxas run --eval-type all --wait`, Contract 5 `verify-verdict.py`, `sandbox-janitor.py` |
-| **Track B (GKE + ADK)** | Stage 01 + GKE Cluster (Workload Identity, Shielded Nodes) + Scion Hub Helm Chart (`hub-gke` image) | `packs/adk` | Live Dockerfile-first ADK agent container deployed to Cloud Run / Vertex AI Agent Engine + Gemini Enterprise export bundle | Live HTTP `/list-apps` and `/run` smoke tests, `adk eval`, `ge_export.py`, Contract 5 `verify-verdict.py`, `sandbox_janitor.py` |
+| **Track A (VM + GECX)** | Stage 01 + Stage 02 Lite Single-VM (`e2-standard-4`, Cloud NAT, IAP SSH) | `packs/gecx` | Live CES App (`[CI]` prefixed) with agent, tool, and eval | `cxas push`, live `v1beta` `runSession` tool execution, Contract 5 `verify-verdict.py`, `sandbox_janitor.py` |
+| **Track B (GKE + ADK)** | Stage 01 + GKE Cluster (Workload Identity, Shielded Nodes) + Scion Hub Helm Chart (`hub-gke` image) | `packs/adk` | Live Dockerfile-first ADK agent container on Cloud Run / Vertex AI Agent Engine + Gemini Enterprise export bundle | Live HTTP `/list-apps` and `/run` smoke tests, `ge_export.py`, Contract 5 `verify-verdict.py`, `sandbox_janitor.py` |
 
-NOTE: Wave 1 explicitly excludes p95 inference latency, token-per-second micro-benchmarks, and multi-replica HA load testing.
+NOTE: Wave 1 excludes p95 inference latency, token-per-second micro-benchmarks, and multi-replica HA load testing.
 Those metrics belong to Wave 2 after every Level 0 through Level 5 functional metric reaches 100%.
 
-## Functional Hillclimbing Metrics (Levels 0 to 5)
+## Immutable `core_v1` Functional Gates (18 Gates, Levels 0 to 5)
 
-Each metric uses an objective, binary or pass-rate measurement so Hillclimbing iterations produce comparable scores.
+Each gate uses a binary first-pass check (`first_pass: true` or `false`) and an end-of-round verification status (`PASS`, `PARTIAL`, or `FAIL`).
 
 ### Level 0: Static Catalog and Offline Kit Integrity
 
 | Metric ID | Metric | Measurement Formula | Wave 1 Target |
 | :--- | :--- | :--- | :--- |
 | **M0.1** | Unit and contract suite pass rate | `passed_tests / total_tests` via `./build.sh --test` | `100%` |
-| **M0.2** | Clean-room sanitizer compliance | `0` forbidden patterns via `scripts/sanitizer_check.py` | `PASS (0 hits)` |
-| **M0.3** | Diagram and Terraform syntax validity | `validate-diagrams.sh` + `terraform validate` across all modules | `100%` |
-| **M0.4** | Offline Release Kit checksum integrity | `sha256sum -c SHA256SUMS` on `gecx` and `adk` kits | `100%` |
+| **M0.2** | Clean-room sanitizer compliance | `0` forbidden patterns via `scripts/sanitize-public-check.py` | `PASS (0 hits)` |
+| **M0.3** | Diagram and Terraform syntax validity | Static check plus `terraform validate` across all modules | `100%` |
+| **M0.4** | Offline Release Kit checksum integrity | Embedded SHA-256 verification in `manifest.json` and `skills.lock` on `gecx` and `adk` kits | `100%` |
 
 ### Level 1: Cold-Start Provisioning on Brand-New GCP Projects
 
@@ -62,28 +86,41 @@ Each metric uses an objective, binary or pass-rate measurement so Hillclimbing i
 
 | Metric ID | Metric | Measurement Formula | Wave 1 Target |
 | :--- | :--- | :--- | :--- |
-| **M3.1** | Real Scion agent spawn on VM (Docker) and GKE (K8s Pod) | `scion start` launches a real container/pod with Vertex AI credentials via minted `worker` SA token | `2/2 tracks spawn` |
+| **M3.1** | Real Scion agent spawn on VM (Docker) and GKE (K8s Pod) | `scion start` launches a real container/pod with Vertex AI credentials via minted or Workload Identity `worker` SA | `2/2 tracks spawn` |
 | **M3.2** | End-to-end autonomous task completion | Agent edits target repo, passes local unit tests, and commits/pushes a clean feature branch | `2/2 tracks produce valid PR code` |
 
 ### Level 4: Live Agent Publish and Functional Smoke Tests
 
 | Metric ID | Metric | Measurement Formula | Wave 1 Target |
 | :--- | :--- | :--- | :--- |
-| **M4.1** | Live GECX publish and evaluation (Track A) | Deployer pushes `[CI]` CES app + evals, and Evaluator runs `test-tools` plus `run --eval-type all --wait` with `pass_rate == 1.0` | `PASS (live-gcp-verified)` |
-| **M4.2** | Live ADK container build, deploy, and smoke test (Track B) | Dockerfile builds via Cloud Build, deploys live ADK runtime, passes HTTP `/list-apps` + `/run` + `adk eval` + `ge_export.py` | `PASS (live smoke + export)` |
+| **M4.1** | Live GECX publish and evaluation (Track A) | Deployer pushes `[CI]` CES app, and Evaluator runs live `runSession` tool execution with verified responses | `PASS (live-gcp-verified)` |
+| **M4.2** | Live ADK container build, deploy, and smoke test (Track B) | Dockerfile builds via Cloud Build, deploys live ADK runtime, passes HTTP `/list-apps` + `/run` + `ge_export.py` | `PASS (live smoke + export)` |
 | **M4.3** | Independent Contract 5 Verdict verification | `verify-verdict.py` validates `.factory/verdicts/pr-*.json` against commit SHA and live GCP readback | `2/2 tracks verified` |
 
 ### Level 5: Security Boundaries, Kaizen Collection, and Clean Teardown
 
 | Metric ID | Metric | Measurement Formula | Wave 1 Target |
 | :--- | :--- | :--- | :--- |
-| **M5.1** | Negative IAM boundary enforcement | Live probes prove Evaluator gets `403` on writes and `conversations.list`, and Worker gets `403` on Sandbox mutations | `100% expected 403s` |
+| **M5.1** | Negative IAM boundary enforcement | Live probes prove Evaluator gets `403` on writes and Insights, and Worker gets `403` on Sandbox mutations | `100% expected 403s` |
 | **M5.2** | Zero-token Kaizen collection (`INV-11`) | `kaizen_collect.py` runs against live Hub and writes valid `.factory/kaizen-snapshot.json` with `0` LLM calls | `2/2 tracks collected` |
-| **M5.3** | Ephemeral Janitor and full project teardown (`INV-08`, `INV-16`) | Janitor removes `[CI]` apps, `terraform destroy` succeeds, ephemeral projects enter `DELETE_REQUESTED`, and temp GitHub repos are deleted | `100% clean teardown ($0 residual)` |
+| **M5.3** | Ephemeral Janitor and full project teardown (`INV-08`, `INV-16`) | Janitor removes `[CI]` apps, ephemeral projects enter `DELETE_REQUESTED`, and temp repos are cleaned up | `100% clean teardown ($0 residual)` |
+
+## Additive Gates: `additive_gates.v2_cross_project` (Planned for `HC-02`)
+
+`HC-02` qualifies the production-grade unified 3-project topology (`hub` + `inf` + `sbx`) across both Lite VM and GKE runtimes while keeping all 18 `core_v1` gates unchanged.
+`HC-02` adds five versioned extension gates under `additive_gates.v2_cross_project`:
+
+| Metric ID | Additive Gate | Verification Requirement (`HC-02` 3-Project Topology) | Target |
+| :--- | :--- | :--- | :--- |
+| **M2.4** | Non-Owner operator enforcement | A human or service principal listed in `factory_operator_members` (without `roles/owner`) spawns agents under `gcp_iam_check_mode=enforce` | `PASS (0 Owner grants)` |
+| **M3.3** | Multi-persona live turns on both runtimes | All three assignable personas (`worker`, `deployer`, `eval`) execute a real Vertex AI LLM turn on both Lite VM and GKE | `6/6 persona-runtime turns PASS` |
+| **M4.4** | Cross-project boundary proof (`hub` / `inf` / `sbx`) | Workloads pull images from `hub` Artifact Registry, bill LLM inference strictly to `inf` Vertex AI, and mutate apps strictly inside `sbx` | `100% cross-project isolation` |
+| **M4.5** | Live Agent Engine deploy and Gemini Enterprise App lifecycle | Deployer publishes the Dockerfile-first ADK agent to live Vertex AI Agent Engine and runs real register, readback, and delete in a Gemini Enterprise App via `packs/adk/scripts/ge_export.py` | `PASS (live AE + GE CRUD)` |
+| **M5.4** | Stateful GKE Hub pod restart resilience | Deleting the running `scion-hub` pod on GKE recovers with zero loss of projects, secrets, templates, schedules, or RoleBindings | `0 state loss after pod recycle` |
 
 ## Wave 2 Preview (Deferred Until Wave 1 = 100%)
 
-Once Wave 1 reaches `100%` across Levels 0 to 5 with zero manual workarounds, Wave 2 introduces efficiency metrics:
+Once `core_v1` and `additive_gates.v2_cross_project` reach `100%` with zero Showstoppers, Wave 2 introduces efficiency metrics:
 - Time-to-first-agent (`TTFA`): minutes from empty project to first healthy Scion agent pod.
 - Token budget per merged PR: Vertex AI prompt and output tokens per verified feature wave.
 - First-pass PR acceptance rate: percentage of autonomous PRs passing Contract 5 on attempt 1 without rework.
@@ -91,6 +128,6 @@ Once Wave 1 reaches `100%` across Levels 0 to 5 with zero manual workarounds, Wa
 
 ## Qualification Log
 
-| Run ID | Date (BRT) | Release Base | Track A (VM + GECX) | Track B (GKE + ADK) | Friction Items Fixed | Status |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `HC-2026-11-24-01` | 2026-11-24 | `acém` (`v0.4.0`) | In progress | In progress | Pending live run synthesis | Active |
+| Run ID | Date (BRT) | Release Base | `core_v1` Cold-Start First-Pass | `core_v1` End-of-Round | Friction (Showstoppers / Minor) | Mock Escapes | Status |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `HC-2026-11-24-01` | 2026-11-24 | `acém` (`v0.4.0`) | `33.3%` (`6/18`) | `17/18 PASS`, `1 PARTIAL` | `31` (`24` / `7`) | `26` | Completed baseline (30 fixed in repo + 1 upstream `WK-005`) |

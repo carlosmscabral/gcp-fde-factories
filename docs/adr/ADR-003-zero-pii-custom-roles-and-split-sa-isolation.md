@@ -14,15 +14,17 @@ Allowing a single identity to write agent code, deploy apps, run evaluations, an
 ## Decision
 
 1. Define explicit non-wildcard Custom Roles in `deploy/01-landing-zone/iam.tf`:
-   - `gecxSandboxDeployer` (metadata read plus app, agent, tool, guardrail, and evaluation write)
-   - `gecxSandboxEvaluator` (metadata read plus evaluation execution and tool test execution, zero writes)
-   - `gecxSandboxJanitor` (app list, get, delete, and operations read only)
-   - `sandboxEvaluatorPredict` (`aiplatform.endpoints.predict` only, replacing broad `roles/aiplatform.user` on Sandbox)
-   - `adkSandboxDeployer`, `adkSandboxEvaluator`, and `adkSandboxJanitor` (explicit `aiplatform.reasoningEngines.*` and `discoveryengine.agents.*` permissions)
+   - `vertexInferencePredict` (`aiplatform.endpoints.predict` only on `inference_project_id`, replacing broad `roles/aiplatform.user` on `worker` and bound to `worker`, `deployer`, and `eval` alongside `roles/serviceusage.serviceUsageConsumer`).
+   - `gecxSandboxDeployer` (metadata read plus app, agent, tool, guardrail, and evaluation write).
+   - `gecxSandboxEvaluator` (metadata read plus evaluation execution and tool test execution, zero writes).
+   - `gecxSandboxJanitor` (app list, get, delete, and operations read only).
+   - `sandboxEvaluatorPredict` (`aiplatform.endpoints.predict` only on `sandbox_project_id` when distinct from `inference_project_id`).
+   - `adkSandboxDeployer`, `adkSandboxEvaluator`, and `adkSandboxJanitor` (explicit `aiplatform.reasoningEngines.*`, `discoveryengine.agents.*`, `cloudbuild.builds.*`, and `run.services.*` permissions for Dockerfile-first deploys).
 2. Forbid `contactcenterinsights.*`, `ces.conversations.*`, and `*` wildcard permissions in all custom roles.
 3. Isolate duties across dedicated Service Accounts: `hub`, `iap`, `worker`, `deployer`, `eval`, `janitor`, `builder`, and optional read-only `kaizen`.
-4. Never grant the Scion Hub `roles/iam.serviceAccountTokenCreator` on `sandbox_janitor`, and never register `sandbox_janitor` on the Hub.
-5. Grant the CES Service Agent `roles/storage.objectUser` on the ephemeral staging bucket so `cxas` staging imports succeed.
+4. Never grant the Scion Hub `roles/iam.serviceAccountTokenCreator` or GKE `roles/iam.workloadIdentityUser` on `sandbox_janitor`, and never register `sandbox_janitor` on the Hub.
+5. Materialize service agents via `google_project_service_identity` before binding IAM (`ces.googleapis.com` for staging bucket `roles/storage.objectUser`, and `run.googleapis.com` plus `aiplatform.googleapis.com` for `roles/artifactregistry.reader` on `hub_project_id` alongside `sandbox_deployer`).
+6. Grant `release_builder` staging bucket read and write access (`roles/storage.objectAdmin` and `roles/storage.bucketViewer`) for Cloud Build source and log staging.
 
 ## Consequences
 

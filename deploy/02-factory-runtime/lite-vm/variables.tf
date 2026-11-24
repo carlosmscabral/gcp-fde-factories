@@ -63,14 +63,37 @@ variable "scion_binary_sha256" {
 }
 
 variable "hub_public_url" {
-  description = "Optional HTTPS public URL when behind an IAP Cloud Run proxy. Leave empty for IAP SSH loopback mode."
+  description = "Optional HTTPS public URL when behind an IAP Cloud Run proxy. Leave empty to use an internal HTTPS base URL with bridge-mode container_hub_endpoint."
   type        = string
   default     = ""
 
   validation {
     condition     = var.hub_public_url == "" || startswith(var.hub_public_url, "https://")
-    error_message = "hub_public_url must be empty (loopback mode) or start with https://."
+    error_message = "hub_public_url must be empty or start with https://."
   }
+}
+
+variable "gcp_iam_deny_unknown_policy" {
+  description = "Policy Troubleshooter fallback when Allow is GRANTED but org-level Deny is UNKNOWN (fail-open recommended for project-scoped Hub SAs; fail-closed requires org roles/iam.denyReviewer)."
+  type        = string
+  default     = "fail-open"
+
+  validation {
+    condition     = contains(["fail-open", "fail-closed"], var.gcp_iam_deny_unknown_policy)
+    error_message = "gcp_iam_deny_unknown_policy must be fail-open or fail-closed."
+  }
+}
+
+variable "admin_emails" {
+  description = "Optional list of Google Workspace or Cloud Identity emails granted Scion Hub admin access."
+  type        = list(string)
+  default     = []
+}
+
+variable "oidc_allowed_domains" {
+  description = "Optional list of allowed Google OIDC domains for headless gcloud identity-token authentication over IAP SSH."
+  type        = list(string)
+  default     = []
 }
 
 variable "boot_image" {

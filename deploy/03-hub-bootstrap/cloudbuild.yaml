@@ -1,6 +1,6 @@
 # Internal Cloud Build pipeline for customer-owned OCI image builds (default Stage 03 mode).
-# Builds either the lean CI runtime image (python:3.12-slim-bookworm) or a Scion agent harness
-# image (passing an upstream scion-antigravity or scion-claude base in _BASE_IMAGE).
+# Builds either the lean CI runtime image (python:3.12-slim-bookworm, _FINAL_USER=scion) or a Scion
+# agent harness image (upstream scion-antigravity or scion-claude base, _FINAL_USER=root for sciontool init).
 options:
   logging: CLOUD_LOGGING_ONLY
 
@@ -8,11 +8,11 @@ substitutions:
   _AR_URL: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/factory-images"
   _BASE_IMAGE: "python:3.12-slim-bookworm"
   _CORE_VERSION: "0.4.0"
-  _PACK: "gecx"
   _PACK_VERSION: "0.4.0"
   _CORE_IMAGE_NAME: "core-gcp-fde-base"
   _IMAGE_NAME: "gecx-runtime"
   _DOCKERFILE: "packs/gecx/Dockerfile"
+  _FINAL_USER: "scion"
 
 steps:
   - name: "gcr.io/cloud-builders/docker"
@@ -23,6 +23,8 @@ steps:
       - "core-gcp-fde/images/base.Dockerfile"
       - "--build-arg"
       - "BASE_IMAGE=${_BASE_IMAGE}"
+      - "--build-arg"
+      - "FINAL_USER=${_FINAL_USER}"
       - "-t"
       - "${_AR_URL}/${_CORE_IMAGE_NAME}:${_CORE_VERSION}"
       - "."
@@ -35,6 +37,8 @@ steps:
       - "${_DOCKERFILE}"
       - "--build-arg"
       - "CORE_BASE_IMAGE=${_AR_URL}/${_CORE_IMAGE_NAME}:${_CORE_VERSION}"
+      - "--build-arg"
+      - "FINAL_USER=${_FINAL_USER}"
       - "-t"
       - "${_AR_URL}/${_IMAGE_NAME}:${_PACK_VERSION}"
       - "."

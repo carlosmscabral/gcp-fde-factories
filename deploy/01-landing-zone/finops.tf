@@ -88,12 +88,36 @@ resource "google_storage_bucket_iam_member" "evaluator_staging_ro" {
   member = "serviceAccount:${google_service_account.sandbox_evaluator.email}"
 }
 
+# Cloud Build SA needs staging read/write access when --gcs-source-staging-dir and --gcs-log-dir target this bucket.
+resource "google_storage_bucket_iam_member" "builder_staging_rw" {
+  bucket = google_storage_bucket.sandbox_staging.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.release_builder.email}"
+}
+
+resource "google_storage_bucket_iam_member" "builder_staging_bucket_view" {
+  bucket = google_storage_bucket.sandbox_staging.name
+  role   = "roles/storage.bucketViewer"
+  member = "serviceAccount:${google_service_account.release_builder.email}"
+}
+
+# Explicitly materialize the CES Service Agent on brand-new projects before binding staging IAM (HC-01 F3).
+resource "google_project_service_identity" "ces_service_agent" {
+  provider = google-beta
+  count    = var.enable_gecx_sandbox_roles ? 1 : 0
+
+  project = var.sandbox_project_id
+  service = "ces.googleapis.com"
+
+  depends_on = [google_project_service.enabled]
+}
+
 resource "google_storage_bucket_iam_member" "ces_service_agent_staging" {
   count = var.enable_gecx_sandbox_roles ? 1 : 0
 
   bucket = google_storage_bucket.sandbox_staging.name
   role   = "roles/storage.objectUser"
-  member = "serviceAccount:service-${data.google_project.sandbox.number}@gcp-sa-ces.iam.gserviceaccount.com"
+  member = "serviceAccount:${google_project_service_identity.ces_service_agent[0].email}"
 
-  depends_on = [google_project_service.enabled]
+  depends_on = [google_project_service_identity.ces_service_agent]
 }

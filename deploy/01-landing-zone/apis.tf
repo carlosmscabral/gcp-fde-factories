@@ -3,22 +3,26 @@
 # Includes oslogin.googleapis.com so IAP SSH succeeds on brand-new projects with enable-oslogin=TRUE.
 
 locals {
-  hub_apis = [
-    "compute.googleapis.com",
-    "oslogin.googleapis.com",
-    "run.googleapis.com",
-    "iap.googleapis.com",
-    "artifactregistry.googleapis.com",
-    "secretmanager.googleapis.com",
-    "cloudbuild.googleapis.com",
-    "pubsub.googleapis.com",
-    "billingbudgets.googleapis.com",
-    "iam.googleapis.com",
-    "cloudresourcemanager.googleapis.com",
-    "iamcredentials.googleapis.com",
-    "logging.googleapis.com",
-    "monitoring.googleapis.com",
-  ]
+  hub_apis = concat(
+    [
+      "compute.googleapis.com",
+      "oslogin.googleapis.com",
+      "run.googleapis.com",
+      "iap.googleapis.com",
+      "artifactregistry.googleapis.com",
+      "secretmanager.googleapis.com",
+      "cloudbuild.googleapis.com",
+      "pubsub.googleapis.com",
+      "billingbudgets.googleapis.com",
+      "iam.googleapis.com",
+      "policytroubleshooter.googleapis.com",
+      "cloudresourcemanager.googleapis.com",
+      "iamcredentials.googleapis.com",
+      "logging.googleapis.com",
+      "monitoring.googleapis.com",
+    ],
+    var.enable_gke_api ? ["container.googleapis.com"] : [],
+  )
 
   inference_apis = [
     "aiplatform.googleapis.com",
@@ -37,7 +41,7 @@ locals {
       "logging.googleapis.com",
     ],
     var.enable_gecx_sandbox_roles ? ["ces.googleapis.com", "texttospeech.googleapis.com"] : [],
-    var.enable_adk_sandbox_roles ? ["discoveryengine.googleapis.com"] : [],
+    var.enable_adk_sandbox_roles ? ["discoveryengine.googleapis.com", "run.googleapis.com", "cloudbuild.googleapis.com"] : [],
   )
 
   project_api_pairs = merge(

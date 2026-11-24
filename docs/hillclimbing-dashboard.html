@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>gcp-fde-factories — Hillclimbing Qualification Tracker</title>
+<style>
+:root {
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --surface-alt: #f1f5f9;
+  --text-primary: #0f172a;
+  --text-muted: #475569;
+  --border: #e2e8f0;
+  --accent: #1a73e8;
+  --pass: #137333;
+  --pass-bg: #e6f4ea;
+  --warn: #b06000;
+  --warn-bg: #fef7e0;
+  --fail: #c5221f;
+  --fail-bg: #fce8e6;
+  --info: #1967d2;
+  --info-bg: #e8f0fe;
+  --purple: #7627bb;
+  --purple-bg: #f3e8fd;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface-alt: #0b1220;
+    --text-primary: #f1f5f9;
+    --text-muted: #94a3b8;
+    --border: #334155;
+    --accent: #8ab4f8;
+    --pass: #81c995;
+    --pass-bg: #133120;
+    --warn: #fdd663;
+    --warn-bg: #36290c;
+    --fail: #f28b82;
+    --fail-bg: #3b1718;
+    --info: #8ab4f8;
+    --info-bg: #17253d;
+    --purple: #c58af9;
+    --purple-bg: #2a183b;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+  background: var(--bg);
+  color: var(--text-primary);
+  line-height: 1.5;
+  padding: 24px 20px 56px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; }
+header.hero {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px 24px;
+  margin-bottom: 18px;
+}
+.hero-top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+h1 { margin: 0 0 6px; font-size: 1.55rem; letter-spacing: -0.02em; }
+h2 { margin: 0 0 12px; font-size: 1.12rem; letter-spacing: -0.01em; }
+h3 { margin: 0 0 8px; font-size: 0.96rem; }
+.sub { margin: 0; color: var(--text-muted); font-size: 0.92rem; }
+.meta-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  color: var(--text-primary);
+}
+.pill.pass { background: var(--pass-bg); color: var(--pass); border-color: transparent; }
+.pill.warn { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+.pill.fail { background: var(--fail-bg); color: var(--fail); border-color: transparent; }
+.pill.info { background: var(--info-bg); color: var(--info); border-color: transparent; }
+.pill.purple { background: var(--purple-bg); color: var(--purple); border-color: transparent; }
+.run-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.run-tab {
+  cursor: pointer;
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.run-tab.active {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+}
+.grid { display: grid; gap: 16px; margin-bottom: 18px; }
+.grid-3 { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.grid-2 { grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+}
+.kpi-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+.kpi-val { font-size: 2rem; font-weight: 800; margin: 4px 0 6px; letter-spacing: -0.03em; }
+.kpi-note { font-size: 0.84rem; color: var(--text-muted); margin: 0; }
+.bar-track {
+  height: 10px;
+  background: var(--surface-alt);
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 10px 0 6px;
+  display: flex;
+}
+.bar-fill { height: 100%; }
+.bar-pass { background: var(--pass); }
+.bar-fail { background: var(--fail); }
+.bar-warn { background: var(--warn); }
+.bar-info { background: var(--accent); }
+.bar-caption {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+th, td {
+  text-align: left;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+th {
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  background: var(--surface-alt);
+}
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.82rem; }
+.proof-box {
+  background: var(--surface-alt);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  font-size: 0.84rem;
+}
+.proof-box.sec { border-left-color: var(--fail); }
+.proof-box.ok { border-left-color: var(--pass); }
+.filter-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.filter-btn {
+  cursor: pointer;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.filter-btn.active {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+}
+.hidden { display: none !important; }
+.svg-box { width: 100%; overflow-x: auto; }
+footer.sync {
+  margin-top: 24px;
+  padding: 14px 18px;
+  border-radius: var(--radius);
+  border: 1px dashed var(--border);
+  background: var(--surface);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <div class="hero-top">
+      <div>
+        <h1>gcp-fde-factories — Hillclimbing Qualification Tracker</h1>
+        <p class="sub">Single-source-of-truth progression dashboard generated deterministically from <span class="mono">docs/hillclimbing-runs.jsonl</span>. Same HTML artifact committed in git and published to Artifacts Service with zero drift.</p>
+      </div>
+      <div class="meta-pills">
+        <span class="pill info">Rounds Recorded: 1</span>
+        <span class="pill pass">Latest Base: acém (v0.4.0)</span>
+        <span class="pill purple">Updated: 2026-11-24 15:06 BRT</span>
+      </div>
+    </div>
+    <div class="run-tabs"><button class="run-tab active" data-run="HC-2026-11-24-01" onclick="selectRun('HC-2026-11-24-01')">HC-2026-11-24-01 (acém v0.4.0)</button></div>
+  </header>
+
+  <div class="card" style="margin-bottom:18px;">
+    <h2>Cross-Round Evolution (core_v1 Immutable Baseline vs. HC-02 Target)</h2>
+    <div class="svg-box"><svg viewBox="0 0 460 185" width="100%" role="img" aria-label="Hillclimbing evolution chart"><line x1="40" y1="148" x2="440" y2="148" stroke="currentColor" stroke-opacity="0.25"/><text x="42" y="16" font-size="11" fill="currentColor" opacity="0.75">Cold-Start First-Pass % (blue) | Showstoppers (red) | Mock Escapes (amber)</text><rect x="54" y="113" width="24" height="35" rx="3" fill="#1a73e8"/><text x="66" y="108" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor">33%</text><rect x="84" y="51" width="24" height="97" rx="3" fill="#c5221f"/><text x="96" y="46" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor">24</text><rect x="114" y="43" width="24" height="105" rx="3" fill="#e37400"/><text x="126" y="38" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor">26</text><text x="96" y="166" text-anchor="middle" font-size="11" font-weight="600" fill="currentColor">HC-2026-11-24-01</text><rect x="189" y="54" width="24" height="94" rx="3" fill="#1a73e8" opacity="0.65" stroke-dasharray="3 2"/><text x="201" y="49" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor">90%</text><rect x="219" y="145" width="24" height="3" rx="3" fill="#c5221f" opacity="0.65" stroke-dasharray="3 2"/><text x="231" y="140" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor">0</text><rect x="249" y="145" width="24" height="3" rx="3" fill="#e37400" opacity="0.65" stroke-dasharray="3 2"/><text x="261" y="140" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor">0</text><text x="231" y="166" text-anchor="middle" font-size="11" font-weight="600" fill="currentColor">HC-02 Target</text></svg></div>
+  </div>
+
+  
+<section class="run-panel" data-run="HC-2026-11-24-01">
+  <div class="grid grid-3">
+    <div class="card">
+      <div class="kpi-label">1. Cold-Start First-Pass Rate</div>
+      <div class="kpi-val">33.3%</div>
+      <p class="kpi-note">6/18 core_v1 gates passed on Attempt 1 without workarounds. End-of-round: 17/18 PASS, 1 PARTIAL.</p>
+      <div class="bar-track"><div class="bar-fill bar-info" style="width:33.3%"></div></div>
+      <div class="bar-caption"><span>Baseline: 33.3%</span><span>HC-02 Target: &gt;=90%</span></div>
+    </div>
+    <div class="card">
+      <div class="kpi-label">2. Manual Friction Count</div>
+      <div class="kpi-val">31 <span style="font-size:1rem;font-weight:600;color:var(--text-muted)">(24S / 7M)</span></div>
+      <p class="kpi-note">24 Showstoppers and 7 Minor items captured live. 30/31 fixed in repo plus 1 upstream workaround.</p>
+      <div class="bar-track"><div class="bar-fill bar-fail" style="width:77.4%"></div><div class="bar-fill bar-warn" style="width:22.6%"></div></div>
+      <div class="bar-caption"><span>Showstoppers: 24</span><span>Minor: 7</span></div>
+    </div>
+    <div class="card">
+      <div class="kpi-label">3. Mock-to-Reality Escape Rate</div>
+      <div class="kpi-val">26 <span style="font-size:1rem;font-weight:600;color:var(--text-muted)">(83.9%)</span></div>
+      <p class="kpi-note">Defects that passed 100% of offline pytest, build checks, and terraform validate before failing on live GCP, GitHub, or Scion APIs.</p>
+      <div class="bar-track"><div class="bar-fill bar-warn" style="width:83.9%"></div></div>
+      <div class="bar-caption"><span>Escapes: 26</span><span>Target: 0</span></div>
+    </div>
+  </div>
+
+  <div class="grid grid-2">
+    <div class="card">
+      <h2>Findings Distribution by Layer</h2>
+      <p class="sub" style="margin-bottom:10px;">Where live Argolis qualification caught real gaps across Stage 01-03, packs, and upstream Scion.</p>
+      <div class="svg-box"><svg viewBox="0 0 538 318" width="100%" role="img" aria-label="Findings by layer"><text x="150" y="13" font-size="11" fill="currentColor" opacity="0.7">Showstoppers (red) vs Minor (amber)</text><text x="140" y="37" text-anchor="end" font-size="12" fill="currentColor">Stage 03 Bootstrap</text><rect x="150" y="25" width="229" height="16" rx="3" fill="#c5221f"/><rect x="381" y="25" width="91" height="16" rx="3" fill="#e37400"/><text x="480" y="37" font-size="11" font-weight="700" fill="currentColor">5S / 2M</text><text x="140" y="65" text-anchor="end" font-size="12" fill="currentColor">Stage 02 HA GKE</text><rect x="150" y="53" width="229" height="16" rx="3" fill="#c5221f"/><rect x="381" y="53" width="46" height="16" rx="3" fill="#e37400"/><text x="435" y="65" font-size="11" font-weight="700" fill="currentColor">5S / 1M</text><text x="140" y="93" text-anchor="end" font-size="12" fill="currentColor">Stage 01 IAM</text><rect x="150" y="81" width="229" height="16" rx="3" fill="#c5221f"/><text x="389" y="93" font-size="11" font-weight="700" fill="currentColor">5S / 0M</text><text x="140" y="121" text-anchor="end" font-size="12" fill="currentColor">Stage 02 Lite VM</text><rect x="150" y="109" width="91" height="16" rx="3" fill="#c5221f"/><rect x="243" y="109" width="46" height="16" rx="3" fill="#e37400"/><text x="297" y="121" font-size="11" font-weight="700" fill="currentColor">2S / 1M</text><text x="140" y="149" text-anchor="end" font-size="12" fill="currentColor">Docs &amp; Scaffolding</text><rect x="150" y="137" width="91" height="16" rx="3" fill="#e37400"/><text x="251" y="149" font-size="11" font-weight="700" fill="currentColor">0S / 2M</text><text x="140" y="177" text-anchor="end" font-size="12" fill="currentColor">Pack ADK</text><rect x="150" y="165" width="46" height="16" rx="3" fill="#c5221f"/><rect x="198" y="165" width="46" height="16" rx="3" fill="#e37400"/><text x="252" y="177" font-size="11" font-weight="700" fill="currentColor">1S / 1M</text><text x="140" y="205" text-anchor="end" font-size="12" fill="currentColor">Stage 01 Infra</text><rect x="150" y="193" width="91" height="16" rx="3" fill="#c5221f"/><text x="251" y="205" font-size="11" font-weight="700" fill="currentColor">2S / 0M</text><text x="140" y="233" text-anchor="end" font-size="12" fill="currentColor">Stage 03 Kit Build</text><rect x="150" y="221" width="91" height="16" rx="3" fill="#c5221f"/><text x="251" y="233" font-size="11" font-weight="700" fill="currentColor">2S / 0M</text><text x="140" y="261" text-anchor="end" font-size="12" fill="currentColor">Kaizen Engine</text><rect x="150" y="249" width="46" height="16" rx="3" fill="#c5221f"/><text x="206" y="261" font-size="11" font-weight="700" fill="currentColor">1S / 0M</text><text x="140" y="289" text-anchor="end" font-size="12" fill="currentColor">Upstream Scion</text><rect x="150" y="277" width="46" height="16" rx="3" fill="#c5221f"/><text x="206" y="289" font-size="11" font-weight="700" fill="currentColor">1S / 0M</text></svg></div>
+    </div>
+    <div class="card">
+      <h2>Live Verification Proofs (Concrete Evidence)</h2>
+      <h3>Track A: Lite Single-VM + packs/gecx</h3>
+      <div class="proof-box ok"><strong>Turn:</strong> Check status for order ORD-1001<br/><span class="mono">check_order_status({&quot;order_id&quot;: &quot;ORD-1001&quot;}) -&gt; HTTP 200 (962 ms)</span><br/>&ldquo;Your order ORD-1001 has shipped! The estimated delivery time is 2 days.&rdquo;</div><div class="proof-box ok"><strong>Turn:</strong> Check status for order ORD-9999<br/><span class="mono">check_order_status({&quot;order_id&quot;: &quot;ORD-9999&quot;}) -&gt; HTTP 200 (925 ms)</span><br/>&ldquo;The order ID ORD-9999 could not be found.&rdquo;</div>
+      <h3 style="margin-top:12px;">Track B: GKE Standard + packs/adk</h3>
+      <div class="proof-box ok"><strong>POST /run (authenticated Cloud Run, non-root USER appuser, zero cloudpickle)</strong><br/>Prompt: What is the SLA for platinum tier?<br/><span class="mono">get_sla_status({&quot;tier&quot;: &quot;platinum&quot;}) -&gt; HTTP 200</span><br/>&ldquo;The platinum support tier is currently operational with a response SLA of 15 minutes.&rdquo;</div><div class="proof-box sec"><strong>F27 Live Security Re-Probe (Worker SA):</strong> Before fix <span class="mono">POST reasoningEngines = HTTP 200</span> -&gt; After predict-only custom role <span class="mono">POST reasoningEngines = HTTP 403</span> and <span class="mono">Vertex AI predict = HTTP 200</span>.</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:18px;">
+    <h2>Findings Ledger (31 Empirical Items)</h2>
+    <div class="filter-bar">
+      <button class="filter-btn active" onclick="filterFindings('HC-2026-11-24-01','all',this)">All (31)</button>
+      <button class="filter-btn" onclick="filterFindings('HC-2026-11-24-01','showstopper',this)">Showstoppers (24)</button>
+      <button class="filter-btn" onclick="filterFindings('HC-2026-11-24-01','minor',this)">Minor (7)</button>
+      <button class="filter-btn" onclick="filterFindings('HC-2026-11-24-01','escape',this)">Mock Escapes (26)</button>
+      <button class="filter-btn" onclick="filterFindings('HC-2026-11-24-01','workaround',this)">Upstream Workarounds (1)</button>
+    </div>
+    <table>
+      <thead><tr><th>ID</th><th>Class</th><th>Gate / Layer</th><th>Finding &amp; Resolution</th><th>Status</th></tr></thead>
+      <tbody><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F1</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M1.2<br/>Stage 02 HA GKE</td><td><strong>Broken upstream ha-gke Terraform module path</strong><br/><span class="kpi-note">Updated ha-gke/main.tf to pin verified deploy/helm/scion-hub, deploy/terraform/configurations/hub-gke, and image-build/cloudbuild-hub-gke.yaml.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F2</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M1.1<br/>Stage 01 Infra</td><td><strong>Brand-new project cold-start API bootstrap race</strong><br/><span class="kpi-note">Documented prerequisite gcloud services enable for serviceusage, cloudresourcemanager, and iam in deploy/README.md.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F3</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M1.1<br/>Stage 01 Infra</td><td><strong>CES service identity not eagerly materialized in finops.tf</strong><br/><span class="kpi-note">Added google_project_service_identity.ces_service_agent (google-beta) before binding staging bucket IAM.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F4</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M1.3<br/>Stage 03 Kit Build</td><td><strong>Cloud Build rejected unused _PACK substitution</strong><br/><span class="kpi-note">Removed unused _PACK substitution from stage-release-kit.sh and cloudbuild.yaml.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="minor" data-escape="false" data-status="fixed"><td class="mono"><strong>F5</strong></td><td><span class="pill warn">Minor</span> <span class="pill info">Direct</span></td><td class="mono">M0.2<br/>Docs &amp; Scaffolding</td><td><strong>Charter referenced stale filenames (SHA256SUMS, sanitizer_check.py)</strong><br/><span class="kpi-note">Aligned HILLCLIMBING_CHARTER.md with scripts/sanitize-public-check.py, manifest.json, and skills.lock.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F6</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M1.2<br/>Stage 02 Lite VM</td><td><strong>Lite VM lacked Docker Artifact Registry auth and cred helper PATH</strong><br/><span class="kpi-note">Configured docker-credential-gcloud symlink and gcloud auth configure-docker in cloud-init.tftpl.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="minor" data-escape="false" data-status="fixed"><td class="mono"><strong>F7</strong></td><td><span class="pill warn">Minor</span> <span class="pill info">Direct</span></td><td class="mono">M1.2<br/>Stage 02 Lite VM</td><td><strong>Lite VM lacked optional admin_emails and OIDC domain variables</strong><br/><span class="kpi-note">Added optional admin_emails and oidc_allowed_domains variables to lite-vm Terraform module.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F8</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M1.3<br/>Stage 03 Kit Build</td><td><strong>Debian Trixie base lacked pip and USER scion broke sciontool PID 1</strong><br/><span class="kpi-note">Switched base.Dockerfile to multi-stage uv:0.6.14 venv at /opt/gcp-fde/.venv with parameterized FINAL_USER (root for harness, scion for CI).</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="minor" data-escape="true" data-status="fixed"><td class="mono"><strong>F9</strong></td><td><span class="pill warn">Minor</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M1.2<br/>Stage 02 HA GKE</td><td><strong>GKE private-nodes control plane needed DNS access and container API toggle</strong><br/><span class="kpi-note">Added optional enable_gke_api toggle in apis.tf and gke_dns_control_plane contract in ha-gke.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="workaround"><td class="mono"><strong>F10</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M2.1<br/>Upstream Scion</td><td><strong>Upstream Scion v0.4.0-preview.3 first OIDC admin missing super-admin binding</strong><br/><span class="kpi-note">Logged as WK-005 in WORKAROUNDS.yaml with deterministic member-&gt;admin transition workaround.</span></td><td><span class="pill warn">workaround</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F11</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M2.1<br/>Stage 03 Bootstrap</td><td><strong>Standalone harness-config YAML failed ValidateHarnessConfig</strong><br/><span class="kpi-note">Updated bootstrap-hub-project.sh to sync upstream Hub bundle and overlay only schema-valid Vertex AI fields.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="minor" data-escape="false" data-status="fixed"><td class="mono"><strong>F12</strong></td><td><span class="pill warn">Minor</span> <span class="pill info">Direct</span></td><td class="mono">M2.1<br/>Stage 03 Bootstrap</td><td><strong>bootstrap-hub-project.sh lacked --project headless flag</strong><br/><span class="kpi-note">Added explicit --project &lt;slug&gt; flag to bootstrap-hub-project.sh.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F13</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M2.2<br/>Stage 03 Bootstrap</td><td><strong>project skills list JSON returned .entries instead of .skills</strong><br/><span class="kpi-note">Updated jq parsing in bootstrap-hub-project.sh for .entries shape.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F14</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M2.1<br/>Stage 03 Bootstrap</td><td><strong>server-config API rejected default_agent_role with HTTP 422</strong><br/><span class="kpi-note">Removed default_agent_role from runtime API patch and pinned it in Stage 02 settings.yaml and templates.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F15</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M2.1<br/>Stage 03 Bootstrap</td><td><strong>schedule list --show recurring returned nested schedules object</strong><br/><span class="kpi-note">Fixed jq extraction in ensure_kaizen_schedule to handle nested schedules.schedules arrays.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="minor" data-escape="false" data-status="fixed"><td class="mono"><strong>F16</strong></td><td><span class="pill warn">Minor</span> <span class="pill info">Direct</span></td><td class="mono">M3.2<br/>Docs &amp; Scaffolding</td><td><strong>Scion v0.4 uses -t/--type flag and writes .scion/agents/ state</strong><br/><span class="kpi-note">Added .scion/agents/ to pack repo-scaffold .gitignore files.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F17</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M2.1<br/>Stage 01 IAM</td><td><strong>Missing policytroubleshooter API and project-scoped deny UNKNOWN_INFO</strong><br/><span class="kpi-note">Enabled policytroubleshooter.googleapis.com in apis.tf and set gcp_iam_deny_unknown_policy=fail-open for project-scoped Hub SAs (WK-004).</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F18</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M3.1<br/>Stage 02 HA GKE</td><td><strong>GKE Kubernetes broker requires Workload Identity KSAs and serviceaccounts RBAC</strong><br/><span class="kpi-note">Codified annotated KSAs (excluding janitor), workloadIdentityUser bindings, and K8s serviceaccounts get/list/watch RBAC in ha-gke.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F19</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M3.1<br/>Stage 02 Lite VM</td><td><strong>Lite VM 127.0.0.1 forced --network=host rejected under assign mode</strong><br/><span class="kpi-note">Bound Hub to --host 0.0.0.0 (VPC-private), set HTTPS base URL, and configured container_hub_endpoint=http://scion-hub.internal:8080.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F20</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M3.1<br/>Stage 02 HA GKE</td><td><strong>GKE shared-dir scratchpad rejected standard-rwo StorageClass</strong><br/><span class="kpi-note">Codified ReadWriteMany (standard-rwx / Filestore / NFS) requirement in ha-gke contract and README.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="minor" data-escape="true" data-status="fixed"><td class="mono"><strong>F21</strong></td><td><span class="pill warn">Minor</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M3.2<br/>Stage 03 Bootstrap</td><td><strong>User-scope as_needed GITHUB_TOKEN shadowed project-scope always secret</strong><br/><span class="kpi-note">Documented project-scope injectionMode=always precedence without shadowing user secrets.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F22</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M3.1<br/>Stage 02 HA GKE</td><td><strong>GKE hub_transport_policy forbade http:// in-cluster hub endpoints</strong><br/><span class="kpi-note">Codified internal HTTPS endpoint requirement in ha-gke contract and README.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F24</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M3.1<br/>Stage 03 Bootstrap</td><td><strong>antigravity/provision.py required project-scope Vertex AI env vars</strong><br/><span class="kpi-note">Added GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION, and GOOGLE_GENAI_USE_VERTEXAI project env sync in bootstrap-hub-project.sh.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F25</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M1.2<br/>Stage 02 HA GKE</td><td><strong>Upstream GKE Helm chart used ephemeral emptyDir SQLite DB</strong><br/><span class="kpi-note">Codified PVC or Cloud SQL persistence requirement in ha-gke contract and scheduled restart proof as HC-02 gate M5.4.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F26</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M4.1<br/>Stage 01 IAM</td><td><strong>Deployer and GECX Evaluator SAs lacked aiplatform.endpoints.predict</strong><br/><span class="kpi-note">Bound custom vertexInferencePredict and serviceUsageConsumer on inference_project_id to worker, deployer, and eval.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F27</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M5.1<br/>Stage 01 IAM</td><td><strong>CRITICAL SECURITY: worker SA held roles/aiplatform.user and created a live ReasoningEngine (HTTP 200)</strong><br/><span class="kpi-note">Replaced roles/aiplatform.user on worker with custom predict-only vertexInferencePredict (re-probe verified HTTP 403 on write, HTTP 200 on predict).</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F28</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M5.2<br/>Kaizen Engine</td><td><strong>kaizen_collect.py gh pr list --limit 60 exceeded GitHub 500k GraphQL node ceiling</strong><br/><span class="kpi-note">Capped gh pr list to --limit 25 in scripts/lib/kaizen_repo_sources.py and verified 0 errors on both live Hubs.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F29</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M4.2<br/>Stage 01 IAM</td><td><strong>adkSandboxDeployer lacked Cloud Build, Cloud Run, AR, and actAs IAM</strong><br/><span class="kpi-note">Added cloudbuild/run perms, cross-project Hub AR reader for deployer and Sandbox service agents, and builder/worker actAs bindings in iam.tf.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F30</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M4.2<br/>Pack ADK</td><td><strong>ADK scaffold default model gemini-4-neon-high returned HTTP 404 on Vertex AI</strong><br/><span class="kpi-note">Fixed packs/adk/repo-scaffold/agent/config.py default ADK_MODEL_NAME to gemini-4-neon.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="minor" data-escape="false" data-status="fixed"><td class="mono"><strong>F31</strong></td><td><span class="pill warn">Minor</span> <span class="pill info">Direct</span></td><td class="mono">M4.2<br/>Pack ADK</td><td><strong>ADK scaffold lacked .gcloudignore and eval_env dropped metadata env vars</strong><br/><span class="kpi-note">Added packs/adk/repo-scaffold/.gcloudignore and preserved GOOGLE_CLOUD_LOCATION and GCE_METADATA_* in adk_sandbox_gate.py.</span></td><td><span class="pill pass">fixed</span></td></tr><tr class="finding-row" data-severity="showstopper" data-escape="true" data-status="fixed"><td class="mono"><strong>F32</strong></td><td><span class="pill fail">Showstopper</span> <span class="pill fail">Mock Escape</span></td><td class="mono">M4.2<br/>Stage 01 IAM</td><td><strong>release_builder SA lacked staging bucket IAM for Cloud Build uploads</strong><br/><span class="kpi-note">Bound roles/storage.objectAdmin and roles/storage.bucketViewer on sandbox_staging to release_builder in finops.tf.</span></td><td><span class="pill pass">fixed</span></td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Additive Gates Roadmap: <span class="mono">additive_gates.v2_cross_project</span></h2>
+    <p class="sub" style="margin-bottom:12px;">Target topology for next round: <strong>3-project unified landing zone (hub + inf + sbx) across Lite VM and GKE</strong> (5 versioned extension gates added alongside immutable <span class="mono">core_v1</span>).</p>
+    <table>
+      <thead><tr><th>Gate</th><th>Extension Requirement</th><th>Pass Criteria</th><th>State</th></tr></thead>
+      <tbody><tr><td class="mono"><strong>M2.4</strong></td><td><strong>Non-Owner operator via factory_operator_members</strong></td><td>Non-Owner principal spawns agents under gcp_iam_check_mode=enforce.</td><td><span class="pill purple">planned</span></td></tr><tr><td class="mono"><strong>M3.3</strong></td><td><strong>All 3 assignable personas live on VM and GKE</strong></td><td>worker, deployer, and eval each complete a real Vertex AI LLM turn on both runtimes.</td><td><span class="pill purple">planned</span></td></tr><tr><td class="mono"><strong>M4.4</strong></td><td><strong>Cross-project isolation proof (hub AR / inf Vertex / sbx workloads)</strong></td><td>Pulls from hub AR, predicts on inf Vertex AI, mutates resources strictly in sbx.</td><td><span class="pill purple">planned</span></td></tr><tr><td class="mono"><strong>M4.5</strong></td><td><strong>Live ADK Agent Engine deploy and Gemini Enterprise App CRUD</strong></td><td>Dockerfile-first deploy on Vertex AI Agent Engine plus live register, readback, and delete via packs/adk/scripts/ge_export.py.</td><td><span class="pill purple">planned</span></td></tr><tr><td class="mono"><strong>M5.4</strong></td><td><strong>Stateful GKE scion-hub pod restart with zero state loss</strong></td><td>Pod deletion recovers all projects, secrets, templates, schedules, and RoleBindings from PVC or Cloud SQL.</td><td><span class="pill purple">planned</span></td></tr></tbody>
+    </table>
+  </div>
+</section>
+
+  <div class="card" style="margin-bottom:18px;"><h2>Immutable <span class="mono">core_v1</span> Scorecard (18 Gates, Levels 0-5)</h2><p class="sub" style="margin-bottom:12px;">Never mutates across rounds so every Hillclimbing iteration compares apples-to-apples against the release baseline.</p><table><thead><tr><th>Gate</th><th>Lvl</th><th>Requirement &amp; Latest Evidence</th><th>HC-2026-11-24-01<br/><span class="mono">Attempt 1 / Final</span></th></tr></thead><tbody><tr><td class="mono"><strong>M0.1</strong></td><td>L0</td><td><strong>Unit and contract suite pass rate</strong><br/><span class="kpi-note">41/41 existing pytest checks passed cold-start before live execution.</span></td><td><span class="pill pass">Cold PASS</span> <span class="pill pass">PASS</span></td></tr><tr><td class="mono"><strong>M0.2</strong></td><td>L0</td><td><strong>Clean-room sanitizer compliance</strong><br/><span class="kpi-note">scripts/sanitize-public-check.py exited 0 with 0 forbidden hits.</span></td><td><span class="pill pass">Cold PASS</span> <span class="pill pass">PASS</span> <span class="mono">(F5)</span></td></tr><tr><td class="mono"><strong>M0.3</strong></td><td>L0</td><td><strong>Diagram and Terraform syntax validity</strong><br/><span class="kpi-note">terraform validate passed offline across all modules (upstream ha-gke ref F1 escaped offline validate).</span></td><td><span class="pill pass">Cold PASS</span> <span class="pill pass">PASS</span> <span class="mono">(F1)</span></td></tr><tr><td class="mono"><strong>M0.4</strong></td><td>L0</td><td><strong>Offline Release Kit checksum integrity</strong><br/><span class="kpi-note">gecx and adk kits built with valid manifest.json hashes and verified skills.lock.</span></td><td><span class="pill pass">Cold PASS</span> <span class="pill pass">PASS</span> <span class="mono">(F5)</span></td></tr><tr><td class="mono"><strong>M1.1</strong></td><td>L1</td><td><strong>Cold-start Stage 01 apply rate</strong><br/><span class="kpi-note">Both projects required pre-enabling serviceusage/cloudresourcemanager/iam (F2) and materializing CES service identity (F3).</span></td><td><span class="pill warn">Cold FRICTION</span> <span class="pill pass">PASS</span> <span class="mono">(F2, F3)</span></td></tr><tr><td class="mono"><strong>M1.2</strong></td><td>L1</td><td><strong>Stage 02 runtime bring-up (VM + GKE)</strong><br/><span class="kpi-note">Both Lite VM and GKE Hubs reached HTTP 200 on /healthz and /readyz after runtime hardening.</span></td><td><span class="pill warn">Cold FRICTION</span> <span class="pill pass">PASS</span> <span class="mono">(F1, F6, F7, F9, F18, F19, F20, F22, F25)</span></td></tr><tr><td class="mono"><strong>M1.3</strong></td><td>L1</td><td><strong>Release Kit staging via Cloud Build</strong><br/><span class="kpi-note">Both packs built lean CI and Scion harness images via Cloud Build and stamped @sha256 digests.</span></td><td><span class="pill warn">Cold FRICTION</span> <span class="pill pass">PASS</span> <span class="mono">(F4, F8, F32)</span></td></tr><tr><td class="mono"><strong>M2.1</strong></td><td>L2</td><td><strong>bootstrap-hub-project.sh idempotency</strong><br/><span class="kpi-note">preflight -&gt; plan -&gt; apply -&gt; second apply converged idempotently on both Hubs.</span></td><td><span class="pill warn">Cold FRICTION</span> <span class="pill pass">PASS</span> <span class="mono">(F10, F11, F12, F13, F14, F15, F17, F24)</span></td></tr><tr><td class="mono"><strong>M2.2</strong></td><td>L2</td><td><strong>Template, skill, and harness registration</strong><br/><span class="kpi-note">16 prefix-scoped templates, pack skills, and Vertex AI harness bundle registered on both Hubs.</span></td><td><span class="pill warn">Cold FRICTION</span> <span class="pill pass">PASS</span> <span class="mono">(F11, F13)</span></td></tr><tr><td class="mono"><strong>M2.3</strong></td><td>L2</td><td><strong>Assignable SA hygiene (INV-04)</strong><br/><span class="kpi-note">worker, deployer, and eval registered with gcp_iam_check_mode=enforce; janitor IAM policy had 0 Hub bindings.</span></td><td><span class="pill pass">Cold PASS</span> <span class="pill pass">PASS</span></td></tr><tr><td class="mono"><strong>M3.1</strong></td><td>L3</td><td><strong>Real Scion agent spawn (VM Docker + GKE Pod)</strong><br/><span class="kpi-note">VM Docker container (bridge + metadata interception) and GKE Pod (Workload Identity + TLS) spawned with Vertex AI credentials.</span></td><td><span class="pill warn">Cold FRICTION</span> <span class="pill pass">PASS</span> <span class="mono">(F17, F18, F19, F20, F22, F24)</span></td></tr><tr><td class="mono"><strong>M3.2</strong></td><td>L3</td><td><strong>End-to-end autonomous task completion</strong><br/><span class="kpi-note">Track A opened PR #1 (order-status CES agent, 3 pytest passed); Track B opened PR #1 (get_sla_status ADK tool, 5 pytest passed).</span></td><td><span class="pill warn">Cold FRICTION</span> <span class="pill pass">PASS</span> <span class="mono">(F16, F21)</span></td></tr><tr><td class="mono"><strong>M4.1</strong></td><td>L4</td><td><strong>Live GECX publish and evaluation (Track A)</strong><br/><span class="kpi-note">Deployer pushed live [CI] CES app; Evaluator passed live v1beta runSession tool calls for ORD-1001 and ORD-9999.</span></td><td><span class="pill warn">Cold FRICTION</span> <span class="pill pass">PASS</span> <span class="mono">(F26)</span></td></tr><tr><td class="mono"><strong>M4.2</strong></td><td>L4</td><td><strong>Live ADK build, deploy, and smoke test (Track B)</strong><br/><span class="kpi-note">Dockerfile built via Cloud Build (zero cloudpickle), deployed to authenticated Cloud Run, passed /list-apps and /run via gemini-4-neon, and emitted valid GE export bundle.</span></td><td><span class="pill warn">Cold FRICTION</span> <span class="pill pass">PASS</span> <span class="mono">(F26, F29, F30, F31, F32)</span></td></tr><tr><td class="mono"><strong>M4.3</strong></td><td>L4</td><td><strong>Independent Contract 5 Verdict verification</strong><br/><span class="kpi-note">Both tracks produced valid commit-bound verdicts verified against live GCP readback.</span></td><td><span class="pill pass">Cold PASS</span> <span class="pill pass">PASS</span></td></tr><tr><td class="mono"><strong>M5.1</strong></td><td>L5</td><td><strong>Negative IAM boundary enforcement</strong><br/><span class="kpi-note">Live probe caught worker creating a ReasoningEngine (HTTP 200 under roles/aiplatform.user); after switching to predict-only role, re-probe proved HTTP 403 on write and HTTP 200 on Vertex AI predict, plus 100% 403s on GECX writes and Insights.</span></td><td><span class="pill warn">Cold FRICTION</span> <span class="pill pass">PASS</span> <span class="mono">(F27)</span></td></tr><tr><td class="mono"><strong>M5.2</strong></td><td>L5</td><td><strong>Zero-token Kaizen collection (INV-11)</strong><br/><span class="kpi-note">After capping gh pr list to 25 (fixing 600k GraphQL node failure), both Hubs produced valid snapshots with 0 LLM tokens and 0 source errors.</span></td><td><span class="pill warn">Cold FRICTION</span> <span class="pill pass">PASS</span> <span class="mono">(F28)</span></td></tr><tr><td class="mono"><strong>M5.3</strong></td><td>L5</td><td><strong>Ephemeral Janitor and full project teardown</strong><br/><span class="kpi-note">GECX Janitor swept [CI] app cleanly; both ephemeral GCP projects verified DELETE_REQUESTED ($0 residual); 2 private temp GitHub repos archived because CLI token lacked delete_repo scope.</span></td><td><span class="pill warn">Cold FRICTION</span> <span class="pill warn">PARTIAL</span></td></tr></tbody></table></div>
+
+  <footer class="sync">
+    <span>Regenerate: <span class="mono">python3 scripts/render-hillclimbing-report.py</span></span>
+    <span>Ledger SHA-256: <span class="mono">3897b3fc75b13622</span></span>
+    <span>Clean-Room Verified: zero private project IDs, billing IDs, or personal domains</span>
+  </footer>
+</div>
+<script>
+function selectRun(runId) {
+  document.querySelectorAll('.run-panel').forEach(function(el) {
+    el.classList.toggle('hidden', el.dataset.run !== runId);
+  });
+  document.querySelectorAll('.run-tab').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.run === runId);
+  });
+}
+
+function filterFindings(runId, mode, btn) {
+  var panel = document.querySelector('.run-panel[data-run="' + runId + '"]');
+  if (!panel) return;
+  panel.querySelectorAll('.filter-btn').forEach(function(b) {
+    b.classList.remove('active');
+  });
+  btn.classList.add('active');
+  panel.querySelectorAll('tr.finding-row').forEach(function(row) {
+    var show = true;
+    if (mode === 'showstopper') show = row.dataset.severity === 'showstopper';
+    else if (mode === 'minor') show = row.dataset.severity === 'minor';
+    else if (mode === 'escape') show = row.dataset.escape === 'true';
+    else if (mode === 'workaround') show = row.dataset.status === 'workaround';
+    row.classList.toggle('hidden', !show);
+  });
+}
+</script>
+</body>
+</html>

@@ -92,7 +92,7 @@ PY
 }
 
 submit_and_stamp() {
-  local base_img="$1" core_img_name="$2" target_img_name="$3" hc_suffix="${4:-}"
+  local base_img="$1" core_img_name="$2" target_img_name="$3" hc_suffix="${4:-}" final_user="${5:-scion}"
   local builder_sa sa_args=()
   builder_sa="$(jq -r '.release_builder_sa_email.value // empty' "$LANDING_ZONE_JSON")"
   if [[ -n "$builder_sa" ]]; then
@@ -103,15 +103,23 @@ submit_and_stamp() {
     --region="$REGION" \
     "${sa_args[@]}" \
     --config="$SCRIPT_DIR/cloudbuild.yaml" \
-    --substitutions="_AR_URL=${AR_URL},_BASE_IMAGE=${base_img},_CORE_VERSION=${CORE_VERSION},_PACK=${PACK_NAME},_PACK_VERSION=${PACK_VERSION},_CORE_IMAGE_NAME=${core_img_name},_IMAGE_NAME=${target_img_name},_DOCKERFILE=${PACK_DOCKERFILE}"
+    --substitutions="_AR_URL=${AR_URL},_BASE_IMAGE=${base_img},_CORE_VERSION=${CORE_VERSION},_PACK_VERSION=${PACK_VERSION},_CORE_IMAGE_NAME=${core_img_name},_IMAGE_NAME=${target_img_name},_DOCKERFILE=${PACK_DOCKERFILE},_FINAL_USER=${final_user}"
   if [[ "$DRY_RUN" != "true" ]]; then
-    local digest pinned_ref
+    local digest pinned_ref core_digest
     digest="$(gcloud "${GCLOUD_ARGS[@]}" artifacts docker images describe \
       "${AR_URL}/${target_img_name}:${PACK_VERSION}" \
       --project="$HUB_PROJECT" --format='value(image_summary.digest)')"
     [[ "$digest" == sha256:* ]] || { echo "Failed to resolve pushed digest for ${target_img_name}:${PACK_VERSION}" >&2; exit 1; }
     pinned_ref="${AR_URL}/${target_img_name}@${digest}"
     stamp_manifest_and_harness "$target_img_name" "$pinned_ref" "$hc_suffix"
+    if [[ "$core_img_name" == "core-gcp-fde-base" ]]; then
+      core_digest="$(gcloud "${GCLOUD_ARGS[@]}" artifacts docker images describe \
+        "${AR_URL}/${core_img_name}:${CORE_VERSION}" \
+        --project="$HUB_PROJECT" --format='value(image_summary.digest)' 2>/dev/null || true)"
+      if [[ "$core_digest" == sha256:* ]]; then
+        stamp_manifest_and_harness "$core_img_name" "${AR_URL}/${core_img_name}@${core_digest}" ""
+      fi
+    fi
   fi
 }
 
@@ -155,14 +163,14 @@ case "$MODE" in
     ;;
   rebuild)
     echo "=== Staging Release Kit (${PACK_NAME}@${PACK_VERSION}) via internal Cloud Build rebuild -> $AR_URL ==="
-    # 1. Always build the lean CI/verification runtime image (<pack>-runtime).
-    submit_and_stamp "$BASE_IMAGE" "core-gcp-fde-base" "${PACK_NAME}-runtime" ""
-    # 2. Build Scion agent harness images when upstream Scion harness bases are provided.
+    # 1. Always build the lean CI/verification runtime image (<pack>-runtime, non-root scion).
+    submit_and_stamp "$BASE_IMAGE" "core-gcp-fde-base" "${PACK_NAME}-runtime" "" "scion"
+    # 2. Build Scion agent harness images (USER root preserved so sciontool init PID 1 drops privileges cleanly).
     if [[ -n "$ANTIGRAVITY_BASE_IMAGE" ]]; then
-      submit_and_stamp "$ANTIGRAVITY_BASE_IMAGE" "core-gcp-fde-antigravity-base" "${PACK_NAME}-antigravity-runtime" "antigravity-vertex"
+      submit_and_stamp "$ANTIGRAVITY_BASE_IMAGE" "core-gcp-fde-antigravity-base" "${PACK_NAME}-antigravity-runtime" "antigravity-vertex" "root"
     fi
     if [[ -n "$CLAUDE_BASE_IMAGE" ]]; then
-      submit_and_stamp "$CLAUDE_BASE_IMAGE" "core-gcp-fde-claude-base" "${PACK_NAME}-claude-runtime" "claude-vertex"
+      submit_and_stamp "$CLAUDE_BASE_IMAGE" "core-gcp-fde-claude-base" "${PACK_NAME}-claude-runtime" "claude-vertex" "root"
     fi
     if [[ -z "$ANTIGRAVITY_BASE_IMAGE" && -z "$CLAUDE_BASE_IMAGE" ]]; then
       echo "NOTE: Built lean CI runtime image (${PACK_NAME}-runtime) only. Pass --antigravity-base-image / --claude-base-image here, OR pass --harness-image-antigravity / --harness-image-claude to bootstrap-hub-project.sh apply."

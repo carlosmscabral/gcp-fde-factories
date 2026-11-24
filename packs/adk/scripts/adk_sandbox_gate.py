@@ -349,16 +349,21 @@ def main(argv: list[str] | None = None) -> int:
         return _write_verdict(args, diversity_profile, evals_dir, gates_executed, _remaining_gates(gates_executed, ["l2:no-evalsets"]), "verifier-failed", exit_code=1)
 
     # Scrub ambient Deployer credentials and isolate Evaluator token + Sandbox project explicitly.
+    # Preserve container metadata and TLS CA env vars so google-auth works inside Scion Docker/GKE pods.
     with tempfile.TemporaryDirectory(prefix="adk-l2-eval-") as eval_home:
         eval_env = {
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
             "HOME": eval_home,
             "LANG": "C.UTF-8",
             "GOOGLE_CLOUD_PROJECT": args.sandbox_project,
+            "GOOGLE_CLOUD_LOCATION": os.environ.get("GOOGLE_CLOUD_LOCATION", "global"),
             "GOOGLE_GENAI_USE_VERTEXAI": "1",
             "CLOUDSDK_AUTH_ACCESS_TOKEN": evaluator_tok,
             "ADK_EVALUATOR_OAUTH_TOKEN": evaluator_tok,
         }
+        for passthrough in ("GCE_METADATA_HOST", "GCE_METADATA_ROOT", "SSL_CERT_FILE", "SSL_CERT_DIR"):
+            if os.environ.get(passthrough):
+                eval_env[passthrough] = os.environ[passthrough]
         cfg_path = evals_dir / "eval_config.json"
         total_passed = 0
         for es in evalsets:

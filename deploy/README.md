@@ -52,11 +52,15 @@ Stage 03 distinguishes clearly between two container classes so CI stays fast an
 
 ## 3. Stage 01 Feature Toggles (`deploy/01-landing-zone/variables.tf`)
 
+> **Cold-Start API Bootstrap (HC-01 F2):** On brand-new GCP projects where `serviceusage.googleapis.com` is not yet enabled, run `gcloud services enable serviceusage.googleapis.com cloudresourcemanager.googleapis.com iam.googleapis.com --project <project>` on each target project before the first `terraform apply`. Stage 01 then enables all remaining APIs, including `policytroubleshooter.googleapis.com` on `hub_project_id`, and binds the custom predict-only `vertexInferencePredict` role (`aiplatform.endpoints.predict` only) plus `roles/serviceusage.serviceUsageConsumer` on `inference_project_id` to `worker`, `deployer`, and `eval`.
+
 | Variable | Default | Effect |
 | :--- | :--- | :--- |
-| `create_custom_vpc` | `true` | Creates private VPC + Cloud NAT; set `false` + `existing_subnet_self_link` for customer Shared VPC |
-| `enable_gecx_sandbox_roles` | `true` | Enables CES/TTS APIs and creates `gecxSandboxDeployer`, `gecxSandboxEvaluator`, `gecxSandboxJanitor` |
-| `enable_adk_sandbox_roles` | `false` | Enables Discovery Engine API and creates `adkSandboxDeployer`, `adkSandboxEvaluator`, `adkSandboxJanitor` |
+| `create_custom_vpc` | `true` | Creates private VPC + Cloud NAT. Set `false` + `existing_subnet_self_link` for customer Shared VPC |
+| `enable_gecx_sandbox_roles` | `true` | Enables CES/TTS APIs, materializes the CES service identity, and creates `gecxSandboxDeployer`, `gecxSandboxEvaluator`, `gecxSandboxJanitor` |
+| `enable_adk_sandbox_roles` | `false` | Enables Discovery Engine, Cloud Run, and Cloud Build APIs, grants cross-project Hub Artifact Registry reader to `sandbox_deployer` and Sandbox Cloud Run / Vertex AI service agents, and creates `adkSandboxDeployer`, `adkSandboxEvaluator`, `adkSandboxJanitor` |
+| `enable_agent_engine_re_ar_reader` | `false` | Grants `roles/artifactregistry.reader` on `hub_project_id` to `service-<sandbox_num>@gcp-sa-aiplatform-re.iam.gserviceaccount.com` once materialized by the first ReasoningEngine API call |
+| `enable_gke_api` | `false` | Enables `container.googleapis.com` on `hub_project_id` for the HA GKE runtime profile |
 | `enable_kaizen_gcp_obs` | `false` | Creates optional 8th SA (`<prefix>-kaizen@`) with read-only Monitoring & Logging Viewer |
 | `enable_github_wif` | `false` | Provisions keyless GitHub Actions WIF pool/provider restricted strictly to `github_repository` (`owner/repo`) for `sandbox_evaluator` and `sandbox_janitor` |
 

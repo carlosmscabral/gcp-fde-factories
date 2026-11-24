@@ -58,9 +58,11 @@ def collect_github_ci(
     if not (repo_dir and repo_dir.exists()):
         return "skipped", empty, [], []
 
+    # Cap merged PR pagination at 25 so GitHub GraphQL nested connections (reviews + commits)
+    # stay below GitHub's hard 500,000-node query ceiling on real repositories.
     rc, pr_out, err = run_cmd(
         [
-            "gh", "pr", "list", "--state", "merged", "--limit", "60",
+            "gh", "pr", "list", "--state", "merged", "--limit", "25",
             "--json", "number,title,body,createdAt,mergedAt,mergeCommit,reviews,commits",
         ],
         repo_dir,

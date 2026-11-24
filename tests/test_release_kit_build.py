@@ -245,13 +245,14 @@ def test_bootstrap_schedules_weekly_kaizen_by_default_and_enforces_claude_model_
     calls = log_file.read_text(encoding="utf-8")
     assert "schedule list --show recurring --hub" in calls
     assert "schedule create-recurring --name weekly-kaizen --cron 0 17 * * 5 --time-zone America/Sao_Paulo --type message --agent coordinator --wake" in calls
-    assert "default_agent_role baseline" in calls
+    assert "default_agent_role" not in calls  # read-only in Scion v0.4 server-config API (dbUnwrittenLayer1Paths)
     assert "default_max_model_calls 150" in calls
     assert "default_harness_config gecx-antigravity-vertex" in calls
     assert "harness-config sync gecx-antigravity-vertex --global --hub" in calls
     assert "gecx-claude-vertex --global" not in calls
     staged_agy = yaml.safe_load((fake_home / ".scion" / "harness-configs" / "gecx-antigravity-vertex" / "config.yaml").read_text(encoding="utf-8"))
     assert staged_agy["image"] == real_agy_img
+    assert not ({"schema_version", "name", "resources"} & set(staged_agy))
 
     # 2. Negative test: rollback on 0-template first-install backup must fail closed.
     rb = subprocess.run(

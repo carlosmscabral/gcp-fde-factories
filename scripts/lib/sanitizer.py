@@ -28,7 +28,7 @@ PII_PATTERNS: dict[str, re.Pattern[str]] = {
 
 SOURCE_LINE_RE = re.compile(r"^\s*-\s*source:\s*(https://\S+|canaries/\S+)\s*$")
 TEXT_SUFFIXES = {
-    ".md", ".yaml", ".yml", ".json", ".tf", ".tftpl", ".tfvars",
+    ".md", ".yaml", ".yml", ".json", ".jsonl", ".html", ".tf", ".tftpl", ".tfvars",
     ".sh", ".py", ".txt", ".toml", ".lock", ".Dockerfile",
 }
 TEXT_FILENAMES = {"Dockerfile", "NOTICE", "Makefile", ".gitignore"}

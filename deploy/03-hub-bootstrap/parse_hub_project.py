@@ -193,16 +193,40 @@ def render_harness_config(
     gemini_location: str,
     claude_region: str,
     image_override: str = "",
+    base_yaml: pathlib.Path | None = None,
 ) -> None:
-    """Materializes customer Vertex AI project, region, and validated image into a staged config.yaml."""
-    data = yaml.safe_load(src_yaml.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
+    """Materializes customer Vertex AI project, region, and validated image onto an upstream Scion harness config.
+
+    When base_yaml is supplied (pulled from the Hub's built-in antigravity or claude harness bundle),
+    inherits upstream provisioner, command, model_aliases, thinking levels, and auth rules intact while
+    overlaying Vertex AI settings and stripping non-schema catalog keys (schema_version, name, resources).
+    """
+    overlay = yaml.safe_load(src_yaml.read_text(encoding="utf-8"))
+    if not isinstance(overlay, dict):
         raise ValueError(f"Expected YAML mapping in {src_yaml}")
+
+    if base_yaml is not None and base_yaml.is_file():
+        base_data = yaml.safe_load(base_yaml.read_text(encoding="utf-8"))
+        if not isinstance(base_data, dict):
+            raise ValueError(f"Expected YAML mapping in base harness config {base_yaml}")
+        data: dict[str, Any] = dict(base_data)
+    else:
+        data = {}
+
+    for key in ("harness", "image", "user", "model", "auth_selected_type", "args"):
+        if key in overlay and overlay[key] not in (None, ""):
+            data[key] = overlay[key]
+    data.setdefault("user", "scion")
+    for forbidden_key in ("schema_version", "name", "resources"):
+        data.pop(forbidden_key, None)
+
     if image_override:
         data["image"] = image_override
     _assert_real_container_image(str(data.get("image") or ""), src_yaml)
 
     env = dict(data.get("env") or {})
+    if isinstance(overlay.get("env"), dict):
+        env.update(overlay["env"])
     harness = str(data.get("harness") or "")
     if harness == "claude":
         env["CLAUDE_CODE_USE_VERTEX"] = "1"
@@ -244,6 +268,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-pack", default="")
     parser.add_argument("--render-harness-src", type=pathlib.Path)
     parser.add_argument("--render-harness-dst", type=pathlib.Path)
+    parser.add_argument("--base-harness-yaml", type=pathlib.Path, default=None)
     parser.add_argument("--inference-project", default="")
     parser.add_argument("--gemini-location", default="global")
     parser.add_argument("--claude-region", default="global")
@@ -264,6 +289,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.gemini_location,
                 args.claude_region,
                 image_override=args.pin_image,
+                base_yaml=args.base_harness_yaml,
             )
             return 0
         if not args.repo:

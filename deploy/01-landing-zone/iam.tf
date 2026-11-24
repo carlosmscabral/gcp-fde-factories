@@ -156,7 +156,22 @@ resource "google_project_iam_custom_role" "gecx_sandbox_janitor" {
   depends_on = [google_project_service.enabled]
 }
 
-# Explicit predict-only Vertex AI role for Sandbox Evaluator (replaces roles/aiplatform.user which allows reasoningEngine writes).
+# Explicit predict-only Vertex AI role on Inference Project shared by worker, deployer, and eval SAs.
+# Replaces roles/aiplatform.user on worker (HC-01 F26/F27: prevents worker from creating ReasoningEngines
+# while enabling Vertex AI harness inference across all 3 assignable agent SAs).
+resource "google_project_iam_custom_role" "inference_vertex_predict" {
+  project     = var.inference_project_id
+  role_id     = "vertexInferencePredict"
+  title       = "Factory Vertex AI Predict-Only"
+  description = "Allows Vertex AI model prediction calls for factory agents without ReasoningEngine or endpoint write rights."
+  permissions = [
+    "aiplatform.endpoints.predict",
+  ]
+
+  depends_on = [google_project_service.enabled]
+}
+
+# Explicit predict-only Vertex AI role for Sandbox Evaluator when sandbox_project_id differs from inference_project_id.
 resource "google_project_iam_custom_role" "sandbox_evaluator_predict" {
   project     = var.sandbox_project_id
   role_id     = "sandboxEvaluatorPredict"
@@ -297,25 +312,106 @@ resource "google_project_iam_member" "operator_cloudbuild_editor" {
   member  = each.value
 }
 
-# Allow CI Evaluator SA to pull digest-pinned pack runtime images from the Hub Artifact Registry.
+# Allow CI Evaluator and Sandbox Deployer SAs to pull digest-pinned images from the Hub Artifact Registry.
 resource "google_project_iam_member" "evaluator_ar_reader" {
   project = var.hub_project_id
   role    = "roles/artifactregistry.reader"
   member  = "serviceAccount:${google_service_account.sandbox_evaluator.email}"
 }
 
-# --- Inference Project Worker IAM ---
+resource "google_project_iam_member" "deployer_ar_reader" {
+  project = var.hub_project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+}
 
-resource "google_project_iam_member" "worker_vertex" {
+# Materialize Sandbox Cloud Run and Vertex AI service agents so ADK containers pull from Hub Artifact Registry.
+resource "google_project_service_identity" "sandbox_cloudrun_agent" {
+  provider = google-beta
+  count    = var.enable_adk_sandbox_roles ? 1 : 0
+
+  project = var.sandbox_project_id
+  service = "run.googleapis.com"
+
+  depends_on = [google_project_service.enabled]
+}
+
+resource "google_project_iam_member" "sandbox_cloudrun_ar_reader" {
+  count = var.enable_adk_sandbox_roles ? 1 : 0
+
+  project = var.hub_project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_project_service_identity.sandbox_cloudrun_agent[0].email}"
+
+  depends_on = [google_project_service_identity.sandbox_cloudrun_agent]
+}
+
+resource "google_project_service_identity" "sandbox_aiplatform_agent" {
+  provider = google-beta
+  count    = var.enable_adk_sandbox_roles ? 1 : 0
+
+  project = var.sandbox_project_id
+  service = "aiplatform.googleapis.com"
+
+  depends_on = [google_project_service.enabled]
+}
+
+resource "google_project_iam_member" "sandbox_aiplatform_ar_reader" {
+  count = var.enable_adk_sandbox_roles ? 1 : 0
+
+  project = var.hub_project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_project_service_identity.sandbox_aiplatform_agent[0].email}"
+
+  depends_on = [google_project_service_identity.sandbox_aiplatform_agent]
+}
+
+# Optional binding for the Vertex AI Agent Engine dedicated Reasoning Engine service agent
+# (gcp-sa-aiplatform-re), materialized after the first ReasoningEngine API call in sandbox_project_id.
+resource "google_project_iam_member" "sandbox_agent_engine_re_ar_reader" {
+  count = var.enable_adk_sandbox_roles && var.enable_agent_engine_re_ar_reader ? 1 : 0
+
+  project = var.hub_project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:service-${data.google_project.sandbox.number}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
+}
+
+# --- Inference Project Least-Privilege Predict-Only IAM (Worker, Deployer, Evaluator — HC-01 F26/F27) ---
+
+resource "google_project_iam_member" "worker_vertex_predict" {
   project = var.inference_project_id
-  role    = "roles/aiplatform.user"
+  role    = google_project_iam_custom_role.inference_vertex_predict.id
   member  = "serviceAccount:${google_service_account.worker.email}"
+}
+
+resource "google_project_iam_member" "deployer_inference_vertex_predict" {
+  project = var.inference_project_id
+  role    = google_project_iam_custom_role.inference_vertex_predict.id
+  member  = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+}
+
+resource "google_project_iam_member" "evaluator_inference_vertex_predict" {
+  project = var.inference_project_id
+  role    = google_project_iam_custom_role.inference_vertex_predict.id
+  member  = "serviceAccount:${google_service_account.sandbox_evaluator.email}"
 }
 
 resource "google_project_iam_member" "worker_service_usage" {
   project = var.inference_project_id
   role    = "roles/serviceusage.serviceUsageConsumer"
   member  = "serviceAccount:${google_service_account.worker.email}"
+}
+
+resource "google_project_iam_member" "deployer_inference_service_usage" {
+  project = var.inference_project_id
+  role    = "roles/serviceusage.serviceUsageConsumer"
+  member  = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+}
+
+resource "google_project_iam_member" "evaluator_inference_service_usage" {
+  project = var.inference_project_id
+  role    = "roles/serviceusage.serviceUsageConsumer"
+  member  = "serviceAccount:${google_service_account.sandbox_evaluator.email}"
 }
 
 resource "google_project_iam_member" "worker_logging" {
@@ -388,7 +484,7 @@ resource "google_project_iam_custom_role" "adk_sandbox_deployer" {
   project     = var.sandbox_project_id
   role_id     = "adkSandboxDeployer"
   title       = "ADK and Gemini Enterprise Sandbox Ephemeral Deployer"
-  description = "Deploys ephemeral Vertex AI Agent Engine runtimes and registers ephemeral Sandbox agents in Gemini Enterprise."
+  description = "Builds ADK Docker images via Cloud Build, deploys ephemeral Agent Engine or Cloud Run runtimes, and registers ephemeral Sandbox agents in Gemini Enterprise."
   permissions = [
     "aiplatform.reasoningEngines.create",
     "aiplatform.reasoningEngines.delete",
@@ -396,11 +492,20 @@ resource "google_project_iam_custom_role" "adk_sandbox_deployer" {
     "aiplatform.reasoningEngines.list",
     "aiplatform.reasoningEngines.query",
     "aiplatform.reasoningEngines.update",
+    "cloudbuild.builds.create",
+    "cloudbuild.builds.get",
+    "cloudbuild.builds.list",
     "discoveryengine.agents.create",
     "discoveryengine.agents.delete",
     "discoveryengine.agents.get",
     "discoveryengine.agents.list",
     "discoveryengine.agents.update",
+    "run.operations.get",
+    "run.services.create",
+    "run.services.delete",
+    "run.services.get",
+    "run.services.list",
+    "run.services.update",
   ]
 
   depends_on = [google_project_service.enabled]
@@ -419,6 +524,8 @@ resource "google_project_iam_custom_role" "adk_sandbox_evaluator" {
     "aiplatform.reasoningEngines.query",
     "discoveryengine.agents.get",
     "discoveryengine.agents.list",
+    "run.services.get",
+    "run.services.list",
   ]
 
   depends_on = [google_project_service.enabled]
@@ -430,7 +537,7 @@ resource "google_project_iam_custom_role" "adk_sandbox_janitor" {
   project     = var.sandbox_project_id
   role_id     = "adkSandboxJanitor"
   title       = "ADK and Gemini Enterprise Sandbox Ephemeral Janitor"
-  description = "Lists and deletes expired [CI] Vertex AI Agent Engine runtimes and Gemini Enterprise Sandbox registrations."
+  description = "Lists and deletes expired [CI] Vertex AI Agent Engine runtimes, Cloud Run services, and Gemini Enterprise Sandbox registrations."
   permissions = [
     "aiplatform.reasoningEngines.delete",
     "aiplatform.reasoningEngines.get",
@@ -438,6 +545,9 @@ resource "google_project_iam_custom_role" "adk_sandbox_janitor" {
     "discoveryengine.agents.delete",
     "discoveryengine.agents.get",
     "discoveryengine.agents.list",
+    "run.services.delete",
+    "run.services.get",
+    "run.services.list",
   ]
 
   depends_on = [google_project_service.enabled]
@@ -448,6 +558,40 @@ resource "google_project_iam_member" "deployer_adk_custom_role" {
 
   project = var.sandbox_project_id
   role    = google_project_iam_custom_role.adk_sandbox_deployer[0].id
+  member  = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+}
+
+# Allow ADK Sandbox Deployer to submit Dockerfile builds with the dedicated builder SA
+# and attach the predict-only worker SA to ephemeral Sandbox Cloud Run services (HC-01 F29).
+resource "google_service_account_iam_member" "deployer_builder_act_as" {
+  count = var.enable_adk_sandbox_roles ? 1 : 0
+
+  service_account_id = google_service_account.release_builder.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+}
+
+resource "google_service_account_iam_member" "deployer_worker_act_as" {
+  count = var.enable_adk_sandbox_roles ? 1 : 0
+
+  service_account_id = google_service_account.worker.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+}
+
+resource "google_project_iam_member" "deployer_hub_cloudbuild_editor" {
+  count = var.enable_adk_sandbox_roles && var.hub_project_id != var.sandbox_project_id ? 1 : 0
+
+  project = var.hub_project_id
+  role    = "roles/cloudbuild.builds.editor"
+  member  = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+}
+
+resource "google_project_iam_member" "deployer_hub_service_usage" {
+  count = var.enable_adk_sandbox_roles && var.hub_project_id != var.sandbox_project_id ? 1 : 0
+
+  project = var.hub_project_id
+  role    = "roles/serviceusage.serviceUsageConsumer"
   member  = "serviceAccount:${google_service_account.sandbox_deployer.email}"
 }
 
