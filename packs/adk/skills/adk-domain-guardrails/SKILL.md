@@ -16,6 +16,7 @@ description: Opinionated Dockerfile-first ADK 2.15+ deployment using upstream go
 - On `google-adk 2.15.0`, set `tool_list_cache_ttl_seconds` on `McpToolset` and pass static headers with `header_provider`.
 - Gate `PreloadMemoryTool` or `VertexAiMemoryBankService` queries by `invocation_id` to prevent per-step memory storms.
 - Decouple Vertex AI inference location (`GOOGLE_CLOUD_LOCATION=global`) from Agent Runtime hosting region (`us-central1`).
+- Never pass reserved GCP project env vars (`GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_QUOTA_PROJECT`) in Vertex AI Agent Engine `deploymentSpec.env` (returns HTTP `400 FAILED_PRECONDITION`). Prefer `agents-cli deploy` and use non-reserved app env vars for cross-project inference.
 - Enable `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT="SPAN_AND_EVENT"` for container telemetry.
 - source: https://google.github.io/adk-docs/tools/mcp-tools/
 

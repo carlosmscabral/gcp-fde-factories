@@ -58,6 +58,13 @@ def test_adk_pack_budget_schemas_dockerfile_and_scaffold_parity() -> None:
     assert (scaffold / "CLAUDE.md").read_bytes() == agents
     assert (scaffold / "GEMINI.md").read_bytes() == agents
 
+    # HC02-F9: guardrails and adk-deployer delta must forbid reserved GCP project env vars in Agent Engine.
+    guardrails = (REPO_ROOT / "packs/adk/skills/adk-domain-guardrails/SKILL.md").read_text(encoding="utf-8")
+    deployer_delta = (REPO_ROOT / "packs/adk/templates/adk-deployer/delta.md").read_text(encoding="utf-8")
+    for text in (guardrails, deployer_delta):
+        assert "GOOGLE_CLOUD_QUOTA_PROJECT" in text
+        assert "deploymentSpec.env" in text
+
 
 def test_ge_export_supports_agent_engine_a2a_patch_and_rejects_bad_inputs(tmp_path: pathlib.Path) -> None:
     """Confirms GE export emits valid payloads (zero toolSettings), supports PATCH, and rejects invalid inputs."""
