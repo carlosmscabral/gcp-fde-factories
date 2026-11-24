@@ -56,6 +56,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--skip-drift", action="store_true")
     parser.add_argument("--enable-gcp-obs", action="store_true")
     parser.add_argument(
+        "--inference-project",
+        default=os.environ.get("GOOGLE_CLOUD_PROJECT", ""),
+        help="Inference GCP project ID for live Tier-B Cloud Monitoring queries.",
+    )
+    parser.add_argument(
+        "--sandbox-project",
+        default=os.environ.get("SANDBOX_PROJECT_ID", ""),
+        help="Sandbox GCP project ID for live Tier-B Cloud Logging queries.",
+    )
+    parser.add_argument(
+        "--gcp-obs-window-hours",
+        type=int,
+        default=24,
+        help="Lookback window in hours for live Tier-B Cloud Monitoring and Logging queries.",
+    )
+    parser.add_argument(
         "--gcp-obs-json",
         type=pathlib.Path,
         default=None,
@@ -98,6 +114,9 @@ def main(argv: list[str] | None = None) -> int:
         include_drift=not args.skip_drift,
         enable_gcp_obs=bool(args.enable_gcp_obs or args.gcp_obs_json is not None),
         gcp_obs_payload=obs_payload,
+        inference_project=args.inference_project if args.enable_gcp_obs else "",
+        sandbox_project=args.sandbox_project if args.enable_gcp_obs else "",
+        gcp_obs_window_hours=args.gcp_obs_window_hours,
         time_zone=args.time_zone,
     )
     if obs_err:

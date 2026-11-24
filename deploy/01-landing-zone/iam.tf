@@ -725,11 +725,37 @@ resource "google_project_iam_member" "kaizen_inference_monitoring" {
   member  = "serviceAccount:${google_service_account.kaizen_viewer[0].email}"
 }
 
+# Allow kaizen_viewer to invoke Vertex AI predict and bill Monitoring calls when kaizen-analyst runs under it (HC-04 F5).
+resource "google_project_iam_member" "kaizen_inference_predict" {
+  count = var.enable_kaizen_gcp_obs ? 1 : 0
+
+  project = var.inference_project_id
+  role    = google_project_iam_custom_role.inference_vertex_predict.id
+  member  = "serviceAccount:${google_service_account.kaizen_viewer[0].email}"
+}
+
+resource "google_project_iam_member" "kaizen_inference_usage" {
+  count = var.enable_kaizen_gcp_obs ? 1 : 0
+
+  project = var.inference_project_id
+  role    = "roles/serviceusage.serviceUsageConsumer"
+  member  = "serviceAccount:${google_service_account.kaizen_viewer[0].email}"
+}
+
 resource "google_project_iam_member" "kaizen_sandbox_logging" {
   count = var.enable_kaizen_gcp_obs ? 1 : 0
 
   project = var.sandbox_project_id
   role    = "roles/logging.viewer"
+  member  = "serviceAccount:${google_service_account.kaizen_viewer[0].email}"
+}
+
+# Grant Service Usage Consumer on sandbox_project_id so Cloud Logging clients sending x-goog-user-project avoid HTTP 403 (HC-04 F5).
+resource "google_project_iam_member" "kaizen_sandbox_usage" {
+  count = var.enable_kaizen_gcp_obs ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = "roles/serviceusage.serviceUsageConsumer"
   member  = "serviceAccount:${google_service_account.kaizen_viewer[0].email}"
 }
 

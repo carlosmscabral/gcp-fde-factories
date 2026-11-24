@@ -318,6 +318,14 @@ do_apply() {
     else
       echo "MODE ci-only: skipping Sandbox Deployer and Evaluator SA registration on Hub."
     fi
+
+    # Register read-only Tier-B Kaizen Viewer SA on Hub when enable_gcp_obs is active (HC-04 F5).
+    local kz_gcp_obs kaizen_sa
+    kz_gcp_obs="$(jq -r '(.kaizen.enable_gcp_obs // false) | tostring' <<< "$repo_cfg")"
+    kaizen_sa="$(jq -r '.kaizen_viewer_sa_email.value // empty' "$LANDING_ZONE_JSON")"
+    if [[ "$kz_gcp_obs" == "true" && -n "$kaizen_sa" ]]; then
+      register_and_verify_sa "$kaizen_sa" "$inf_p" "kaizen-viewer"
+    fi
   fi
 
   # 5. Apply security, Vertex AI project env, and FinOps settings last.

@@ -11,6 +11,7 @@ import pathlib
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from scripts.lib.kaizen_gcp_obs import GcpHttpFn, collect_gcp_observability, default_gcp_http
 from scripts.lib.kaizen_sources import (
     HttpGetFn,
     RunCmdFn,
@@ -78,10 +79,14 @@ def build_kaizen_snapshot(
     include_drift: bool = True,
     enable_gcp_obs: bool = False,
     gcp_obs_payload: dict[str, Any] | None = None,
+    inference_project: str = "",
+    sandbox_project: str = "",
+    gcp_obs_window_hours: int = 24,
     today: dt.date | None = None,
     time_zone: str = "America/Sao_Paulo",
     http_get: HttpGetFn = default_http_get,
     run_cmd: RunCmdFn = default_run_cmd,
+    gcp_http_fn: GcpHttpFn = default_gcp_http,
 ) -> dict[str, Any]:
     """Collects telemetry, evaluates open Kaizen proposals, and returns a snapshot dict."""
     resolved_auth = dict(auth_headers or {})
@@ -121,10 +126,18 @@ def build_kaizen_snapshot(
     if enable_gcp_obs:
         if gcp_obs_payload is not None:
             obs_status, obs_data = "ok", gcp_obs_payload
+        elif inference_project or sandbox_project:
+            obs_status, obs_data, obs_errs = collect_gcp_observability(
+                inference_project=inference_project,
+                sandbox_project=sandbox_project,
+                window_hours=gcp_obs_window_hours,
+                http_fn=gcp_http_fn,
+            )
+            all_errors.extend(obs_errs)
         else:
             obs_status, obs_data = "error", None
             all_errors.append(
-                "gcp_observability: --enable-gcp-obs set but no Cloud Monitoring/Logging adapter payload was supplied."
+                "gcp_observability: --enable-gcp-obs set without --gcp-obs-json or --inference-project/--sandbox-project."
             )
     else:
         obs_status, obs_data = "skipped", None

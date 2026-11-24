@@ -250,8 +250,12 @@ def _copy_build_and_deploy_assets(
     shutil.copytree(repo_root / "schemas", out_dir / "schemas", ignore=ignore_cache)
 
     dockerfile_rel = str(pack_cfg["runtime_image"]["dockerfile"])
+    # Support out-of-tree pack directories by falling back to pack_dir/<basename> when REPO_ROOT/dockerfile_rel is absent (HC-04 F1).
+    dockerfile_src = repo_root / dockerfile_rel
+    if not dockerfile_src.is_file():
+        dockerfile_src = pack_dir / pathlib.Path(dockerfile_rel).name
     (out_dir / dockerfile_rel).parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(repo_root / dockerfile_rel, out_dir / dockerfile_rel)
+    shutil.copy2(dockerfile_src, out_dir / dockerfile_rel)
     toolchain_manifest_rel: str | None = None
     if (pack_dir / "toolchain-manifest.json").exists():
         toolchain_manifest_rel = f"packs/{pack_name}/toolchain-manifest.json"

@@ -129,9 +129,9 @@ Each gate uses a binary first-pass check (`first_pass: true` or `false`) and an 
 | **M2.5** | Brownfield adopt-first onboarding and `overlay-sync` | `factory_onboard.py` and `bootstrap-hub-project.sh overlay-sync` attach custom client `.factory/skills/` and `exclude_skills` onto a dirty repo without overwriting customer code | `PASS (overlay enforced, 0 clobber)` |
 | **M4.7** | Live ADK Cloud Run A2A dual export (`export_mode: a2a`) | Same root `Dockerfile` deploys to authenticated Cloud Run with `adk_runtime` SA, serves `/.well-known/agent-card.json` (`v0.3.0`), handles live JSON-RPC `message/send`, and exports valid `a2a` bundle | `PASS (live A2A AgentCard + RPC)` |
 
-## Additive Gates: `additive_gates.v4_day2_resilience` (Planned for `HC-04`)
+## Additive Gates: `additive_gates.v4_day2_resilience` (Qualified in `HC-04`)
 
-`HC-04` qualifies upgrade/rollback durability, closed-loop Tier-B Kaizen observability, FinOps loop kill-switches, and `cross-vendor` diversity (requiring manual Vertex AI Model Garden Claude opt-in):
+`HC-04` qualified upgrade/rollback durability, closed-loop Tier-B Kaizen observability, FinOps loop kill-switches, and `cross-vendor` diversity (Gemini 4 author plus live Claude Opus 5.5 Vertex AI reviewer):
 
 | Metric ID | Additive Gate | Verification Requirement (`HC-04` Day-2 Resilience and Third Pack) | Target |
 | :--- | :--- | :--- | :--- |
@@ -166,3 +166,4 @@ Once `core_v1` and active Wave 1 additive blocks reach `100%` with zero Showstop
 | `HC-2026-11-24-01` | 2026-11-24 | `acém` (`v0.4.0`) | `33.3%` (`6/18`) | `17/18 PASS`, `1 PARTIAL` | `31` (`24` / `7`) | `26` | Completed baseline (30 fixed in repo + 1 upstream `WK-005`) |
 | `HC-2026-11-24-02` | 2026-11-24 | `acém` (`v0.4.0` + HC-01) | `66.7%` (`12/18`) | `17/18 PASS`, `1 PARTIAL` | `14` (`9` / `5`) | `14` | Completed 3-project cross-project (`v2_cross_project`: `4/5 PASS`, `1 PARTIAL` GE billing license) |
 | `HC-2026-11-24-03` | 2026-11-24 | `acém` (`v0.4.0` + HC-02) | `66.7%` (`12/18`) | `17/18 PASS`, `1 PARTIAL` | `8` (`6` / `2`) | `8` | Completed real factory ops (`v3_real_factory_ops`: `3/4 PASS`, `1 PARTIAL` Cloud Run A2A `agent.json` + `run.routes.invoke`, all 8 findings fixed) |
+| `HC-2026-11-24-04` | 2026-11-24 | `acém` (`v0.4.0` + HC-03) | `77.8%` (`14/18`) | `17/18 PASS`, `1 PARTIAL` | `5` (`3` / `2`) | `3` | Completed Day-2 resilience and cross-vendor (`v4_day2_resilience`: `4/4 PASS` — `M2.6`, `M5.5`, `M5.6`, `M3.5` live Claude Opus 5.5 review, all 5 findings fixed) |

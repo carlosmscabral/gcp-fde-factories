@@ -68,6 +68,12 @@ variable "monthly_budget_usd" {
   default     = 500
 }
 
+variable "enable_budget_pubsub_topic" {
+  description = "If true, attaches the Hub Pub/Sub topic to the Billing Budget. Set false in orgs enforcing Domain Restricted Sharing (constraints/iam.allowedPolicyMemberDomains) until billing-budget-alert@system.gserviceaccount.com is permitted (HC-04 F2)."
+  type        = bool
+  default     = true
+}
+
 variable "factory_operator_members" {
   description = "IAM members (group: or user:) granted roles/iam.serviceAccountUser on the 3 assignable SAs for gcp_iam_check_mode=enforce."
   type        = list(string)

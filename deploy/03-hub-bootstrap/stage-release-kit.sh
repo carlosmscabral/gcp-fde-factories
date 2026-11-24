@@ -98,13 +98,13 @@ submit_and_stamp() {
   if [[ -n "$builder_sa" ]]; then
     sa_args=(--service-account="projects/${HUB_PROJECT}/serviceAccounts/${builder_sa}")
   fi
-  # Route Cloud Build staging and logs to the Landing Zone bucket to avoid concurrent races
+  # Route Cloud Build source staging to the Landing Zone bucket to avoid concurrent races
   # on auto-created <hub>_cloudbuild buckets in brand-new projects (HC-03 F1).
+  # Omit --gcs-log-dir because cloudbuild.yaml enforces options.logging: CLOUD_LOGGING_ONLY (HC-04 F4).
   staging_bkt="$(jq -r '.sandbox_staging_bucket.value // empty' "$LANDING_ZONE_JSON")"
   if [[ -n "$staging_bkt" ]]; then
     staging_args=(
       --gcs-source-staging-dir="gs://${staging_bkt}/release-kit-src/${PACK_NAME}-${target_img_name}"
-      --gcs-log-dir="gs://${staging_bkt}/release-kit-logs/${PACK_NAME}-${target_img_name}"
     )
   fi
   run_or_echo gcloud "${GCLOUD_ARGS[@]}" builds submit "$KIT_DIR" \

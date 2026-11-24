@@ -19,11 +19,11 @@ class TestHC03FactoryOpsRegressions(unittest.TestCase):
     """Locks in every fix discovered during live HC-03 qualification."""
 
     def test_stage_release_kit_routes_staging_and_logs_to_landing_zone_bucket(self) -> None:
-        """Verifies HC03-F1: stage-release-kit.sh passes --gcs-source-staging-dir and --gcs-log-dir."""
+        """Verifies HC03-F1 and HC04-F4: stage-release-kit.sh routes --gcs-source-staging-dir without conflicting --gcs-log-dir."""
         script = (REPO_ROOT / "deploy/03-hub-bootstrap/stage-release-kit.sh").read_text(encoding="utf-8")
         self.assertIn("sandbox_staging_bucket", script)
         self.assertIn("--gcs-source-staging-dir=", script)
-        self.assertIn("--gcs-log-dir=", script)
+        self.assertNotIn("--gcs-log-dir=", script)
 
     def test_bootstrap_overlay_sync_uses_project_uuid_and_idempotency_guard(self) -> None:
         """Verifies HC03-F2: do_overlay_sync resolves project UUID into skill://scion/project/<id>/<name>@<ver>."""

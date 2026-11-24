@@ -49,7 +49,8 @@ def run_check(pack_rel: str) -> int:
         if f"{pack_name}-runtime" not in images and f"scion-{pack_name}-runtime" not in images:
             errors.append(f"compat.yaml images lacks '{pack_name}-runtime' digest for pack '{pack_name}'.")
         df_rel = str(pack_cfg.get("runtime_image", {}).get("dockerfile") or "")
-        if not df_rel or not (REPO_ROOT / df_rel).is_file():
+        df_candidates = [REPO_ROOT / df_rel, pack_dir / pathlib.Path(df_rel).name] if df_rel else []
+        if not df_rel or not any(cand.is_file() for cand in df_candidates):
             errors.append(f"pack.yaml runtime_image.dockerfile not found: '{df_rel}'.")
 
     overlay_cfg = pack_dir / "repo-scaffold" / ".factory" / "hub-project.yaml"
