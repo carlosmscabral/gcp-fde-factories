@@ -3,7 +3,7 @@
 **Status:** Implementada no repositório (`packs/gecx v0.4.0` e `packs/adk v0.1.0`), aguardando validação live em ambiente de referência GCP após o smoke test manual da `v0.2.0`
 **Data:** 24/11/2026 (BRT)
 **Baseline Protegido:** `packs/gecx v0.2.0` (live em ambiente de validação GCP), `scion v0.4.0-preview.3`, `scion-frontiers/agent-team@08faf48`
-**Escopo:** Evolução de `core-gcp-fde/` (Camada 1), `packs/gecx/` e `packs/adk/` (Camada 2) e Overlay `.factory/` (Camada 3), sem alterações na Camada 0 (`vendor/agent-team/`).
+**Escopo:** Evolução de `core-gcp-fde/` (Camada 1), `packs/gecx/` e `packs/adk/` (Camada 2) e Overlay `.factory/` (Camada 3), sem alterações na Camada 0 (`vendor/agent-team/` e `vendor/agents-cli/`).
 
 > [!NOTE]
 > Esta especificação registra decisões arquiteturais e contratos verificáveis para as releases `v0.3.0` e `v0.4.0`. O ambiente live de validação da `v0.2.0` permanece intacto até o término do smoke test manual. O coletor Tier B (`--enable-gcp-obs`) exige um JSON pré-coletado (`--gcp-obs-json`) e falha de forma explícita quando o payload não é fornecido.
@@ -39,7 +39,7 @@ O modelo em 4 camadas separa evolução do Upstream, governança FDE, domínio t
 
 | Camada | Diretório / Escopo | O que Muda em `v0.3.0` e `v0.4.0` | Invariante |
 | :--- | :--- | :--- | :--- |
-| **Camada 0** | `vendor/agent-team/` | Nenhuma alteração. | O mantenedor nunca edita arquivos em `vendor/`. |
+| **Camada 0** | `vendor/agent-team/` e `vendor/agents-cli/` | Nenhuma alteração. | O mantenedor nunca edita arquivos em `vendor/`. |
 | **Camada 1** | `core-gcp-fde/` | Recebe `Coletor`, `Scanner`, skill `gcp-kaizen-analyst`, template base `kaizen-analyst` e skill `factory-onboard`. | Todo recurso genérico atende `gecx`, `adk` e `agent-platform`. |
 | **Camada 2** | `packs/<domínio>/` | Recebe delta fino do `Kaizen Analyst`, papel `gecx-kaizen-analyst` e manifesto `toolchain-manifest.json`. | Os templates prefixados (`gecx-*`) permanecem intactos no cliente. |
 | **Camada 3** | `.factory/` no repositório alvo | Recebe perfil brownfield, Overlay Skill de convenções, `Dockerfile.customer` condicional, `knowledge-index.yaml` e `Modernization Backlog`. | O `bootstrap-hub-project.sh` sincroniza o Overlay sem gerar drift no Pack. |
@@ -85,7 +85,7 @@ O `Coletor` opera em degradação graciosa: se uma fonte opcional não estiver h
 | Tier | Fonte | Mecanismo Real de Leitura | Sinais Extraídos |
 | :--- | :--- | :--- | :--- |
 | **Tier A (Padrão, 0 IAM extra)** | Scion Hub Session Metrics API | `GET /api/v1/projects/{id}/metrics/summary` e `GET /api/v1/agents/{id}/metrics/summary` | `totalSessions`, `avgSessionDurationMs`, tokens (`input`/`output`/`cached`/`reasoning`), `avgTokensPerSession`, `mostUsedTools` (`calls`/`success`/`error`), `mostUsedModels`. |
-| **Tier A (Padrão, 0 IAM extra)** | Scion Control Plane | `scion list --json`, `scion logs`, `scion artifact list`, `scion decisions list` | Estados `stalled` e `limits_exceeded`, árvore de criação de agentes, gargalos de decisão humana. |
+| **Tier A (Padrão, 0 IAM extra)** | Scion Control Plane | `scion --format json list`, `scion logs`, `scion --format json artifact list --all`, `scion decisions list --all --json` | Estados `stalled` e `limits_exceeded`, árvore de criação de agentes, gargalos de decisão humana. |
 | **Tier A (Padrão, 0 IAM extra)** | GitHub e CI | `gh pr list`, `gh api .../reviews`, `gh run list`, `gh issue list` | Lead time de PR, rodadas de `code-review`, categorias de `REQUEST_CHANGES`, falhas de CI, issues `priority:hygiene`. |
 | **Tier A (Padrão, 0 IAM extra)** | Scratchpad e Repositório | Leitura direta em `/scion-volumes/scratchpad/` e git local | Históricos de `verdict.json`, `sandbox-ledger.jsonl`, `kaizen-events.jsonl`, `WORKAROUNDS.yaml`, orçamento do `./build.sh --check`, briefs dos leads e drift do `Scanner` (na `v0.4.0`). |
 | **Tier B (Opt-In GCP)** | Cloud Monitoring e Cloud Logging | SA dedicada com `roles/monitoring.viewer` e `roles/logging.viewer` | Séries de 7 a 90 dias de `workload.googleapis.com/scion.usage.tokens`, `gen_ai.api.calls`, `gen_ai.api.duration`, `agent.tool.duration` e logs `scion-server`, `scion-agents` e `scion-artifacts`. |
@@ -123,7 +123,7 @@ sequenceDiagram
     Col-->>KA: Entrega kaizen-snapshot.json
     KA->>KA: Diagnostica gargalos e aplica Escada de 4 Degraus
     alt Gargalo exige nova skill ou ferramenta externa
-        KA->>Coord: Envia Research Brief via scion msg
+        KA->>Coord: Envia Research Brief via scion message
         Coord->>Res: Cria Researcher com brief delimitado
         Res->>Res: Pesquisa fontes oficiais e avalia seguranca
         Res-->>KA: Entrega Ficha de Skill Candidata
@@ -139,7 +139,7 @@ Se o `Researcher` propuser uma nova skill ou ferramenta, a ficha entrega obrigat
 
 1. `candidate_name`: identificador canônico em `kebab-case`.
 2. `source_url` e `commit_sha40`: URL pública e hash SHA de 40 caracteres.
-3. `license`: licença aprovada (`Apache-2.0`, `MIT` ou `BSD-3-Clause`).
+3. `license`: licença aprovada (`Apache-2.0` ou `MIT`).
 4. `security_audit`: confirmação explícita de ausência de prompt injection, downloads sem pin ou acesso indevido a rede.
 5. `budget_impact_lines`: número exato de linhas somadas aos papéis impactados contra o teto de 1.800 linhas.
 6. `target_metric`: métrica exata de `kaizen-snapshot.json` que a candidata busca melhorar.

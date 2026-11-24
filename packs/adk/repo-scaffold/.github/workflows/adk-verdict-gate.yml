@@ -1,6 +1,7 @@
 # Contract 3 & 5 anti-forgery PR verification workflow for customer ADK repositories.
-# Enforces AGENTS/CLAUDE/GEMINI parity, evals/tests tamper guard, PII/secret scan,
-# live Vertex AI / Gemini Enterprise provenance verification, and `if: always()` Janitor teardown.
+# Fails closed when runtime image digest or PR Verdict is missing, enforces AGENTS/CLAUDE/GEMINI
+# parity, evals/tests tamper guard, PII/secret scan, GE export validation, live Vertex AI /
+# Gemini Enterprise provenance verification, and `if: always()` Janitor teardown.
 name: ADK Anti-Forgery Verdict & GE Export Gate
 
 on:
@@ -22,6 +23,7 @@ jobs:
       JANITOR_SA: "${{ vars.ADK_JANITOR_SA_EMAIL }}"
       WIF_PROVIDER: "${{ vars.GCP_WIF_PROVIDER }}"
       ADK_RUNTIME_IMAGE: "${{ vars.ADK_RUNTIME_IMAGE_DIGEST }}"
+      REUSE_GE_AGENT: "${{ vars.ADK_REUSE_GE_AGENT }}"
 
     steps:
       - name: Checkout PR head
@@ -47,6 +49,11 @@ jobs:
               exit 1
             fi
           fi
+          if grep -Eq '^(agent/|Dockerfile$)' <<< "$CHANGED"; then
+            echo "REQUIRE_LIVE=true" >> "$GITHUB_ENV"
+          else
+            echo "REQUIRE_LIVE=false" >> "$GITHUB_ENV"
+          fi
 
       - name: Scan evals/ and ge_manifest.json for PII and secrets
         run: |
@@ -70,8 +77,26 @@ jobs:
           print("PII and secret scan clean.")
           PY
 
-      - name: Authenticate to Sandbox Evaluator SA via WIF (when Verdict exists)
-        if: hashFiles(env.VERDICT_FILE) != '' && env.WIF_PROVIDER != ''
+      - name: Fail closed if pinned runtime image or required Verdict is missing
+        env:
+          PR_LABELS: "${{ join(github.event.pull_request.labels.*.name, ',') }}"
+        run: |
+          if [[ -z "$ADK_RUNTIME_IMAGE" || "$ADK_RUNTIME_IMAGE" != *"@sha256:"* ]]; then
+            echo "::error::vars.ADK_RUNTIME_IMAGE_DIGEST must be set to a digest-pinned image from Stage 03."
+            exit 1
+          fi
+          if [[ ! -f "$VERDICT_FILE" ]]; then
+            if ! grep -qw 'no-verdict-approved' <<< "$PR_LABELS"; then
+              echo "::error::Missing required PR Verdict '$VERDICT_FILE' (add label 'no-verdict-approved' for docs-only PRs)."
+              exit 1
+            fi
+            echo "SKIP_VERDICT=true" >> "$GITHUB_ENV"
+          else
+            echo "SKIP_VERDICT=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Authenticate to Sandbox Evaluator SA via WIF
+        if: env.WIF_PROVIDER != ''
         id: auth-eval
         uses: google-github-actions/auth@v2
         with:
@@ -80,27 +105,39 @@ jobs:
           token_format: access_token
 
       - name: Validate GE export bundle and verify PR Verdict inside pinned runtime image
-        if: env.ADK_RUNTIME_IMAGE != ''
         env:
           EVAL_ACCESS_TOKEN: "${{ steps.auth-eval.outputs.access_token }}"
           PR_HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
           PR_NUM: "${{ github.event.pull_request.number }}"
         run: |
-          docker run --rm -v "$PWD:/workspace" -w /workspace \
+          if [[ -n "$EVAL_ACCESS_TOKEN" ]]; then
+            REG="${ADK_RUNTIME_IMAGE%%/*}"
+            printf '%s' "$EVAL_ACCESS_TOKEN" | docker login -u oauth2accesstoken --password-stdin "https://${REG}" >/dev/null
+          fi
+          mkdir -p dist/ge-export
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$PWD:/workspace" -w /workspace \
             -e EVAL_ACCESS_TOKEN -e PR_HEAD_SHA -e PR_NUM \
             -e VERDICT_FILE -e SANDBOX_PROJECT -e EVALUATOR_SA \
+            -e SKIP_VERDICT -e REQUIRE_LIVE \
             "$ADK_RUNTIME_IMAGE" bash -euo pipefail -c '
               python3 /opt/adk-factory/ge_export.py validate --manifest ge_manifest.json
               python3 /opt/adk-factory/ge_export.py export --manifest ge_manifest.json --out dist/ge-export
-              if [[ -f "$VERDICT_FILE" ]]; then
+              if [[ "$SKIP_VERDICT" != "true" ]]; then
+                EXTRA_ARGS=()
+                if [[ "$REQUIRE_LIVE" == "true" ]]; then
+                  EXTRA_ARGS+=(--require-live)
+                fi
                 python3 /opt/gcp-fde/verify-verdict.py \
+                  --schema /opt/gcp-fde/schemas/verdict.schema.json \
                   --verdict "$VERDICT_FILE" \
                   --expected-pack adk \
                   --expected-pr-number "$PR_NUM" \
                   --expected-commit "$PR_HEAD_SHA" \
                   --evals-dir evals \
                   --sandbox-project "$SANDBOX_PROJECT" \
-                  --expected-evaluator-sa "$EVALUATOR_SA"
+                  --expected-evaluator-sa "$EVALUATOR_SA" \
+                  "${EXTRA_ARGS[@]}"
               fi
             '
 
@@ -113,7 +150,7 @@ jobs:
           service_account: "${{ env.JANITOR_SA }}"
           token_format: access_token
 
-      - name: Delete ephemeral [CI] ReasoningEngine and GE agent (if always)
+      - name: Delete ephemeral [CI] ReasoningEngine and non-reused GE agent (if always)
         if: always() && steps.auth-janitor.outputs.access_token != ''
         env:
           JANITOR_TOKEN: "${{ steps.auth-janitor.outputs.access_token }}"
@@ -127,7 +164,7 @@ jobs:
               "https://${LOC}-aiplatform.googleapis.com/v1beta1/${RE_RES}?force=true" >/dev/null || true
           fi
           GE_RES="$(jq -r '.ge_agent_resource // empty' "$VERDICT_FILE")"
-          if [[ -n "$GE_RES" && "$GE_RES" == *"/agents/"* ]]; then
+          if [[ -n "$GE_RES" && "$GE_RES" == *"/agents/"* && "$GE_RES" != "$REUSE_GE_AGENT" ]]; then
             GE_LOC="$(echo "$GE_RES" | awk -F/ "{print \$4}")"
             PREFIX=""
             [[ "$GE_LOC" != "global" ]] && PREFIX="${GE_LOC}-"

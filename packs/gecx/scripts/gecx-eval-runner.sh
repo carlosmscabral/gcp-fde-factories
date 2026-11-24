@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Contract 4 thin entrypoint for GECX split-SA Level 1 + Level 2 Sandbox verification.
-# Acquires a per-PR file lock to prevent draft collisions, records a ledger entry,
-# and delegates execution to gecx_sandbox_gate.py.
+# Acquires a per-PR file lock with strict numeric PR validation and delegates to gecx_sandbox_gate.py.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,14 +14,17 @@ LOCK_DIR="${SCRATCH_ROOT}/locks"
 LEDGER_FILE="${SCRATCH_ROOT}/sandbox-ledger.jsonl"
 
 for ((i=1; i<=$#; i++)); do
-  if [[ "${!i}" == "--pr-number" ]]; then
+  arg="${!i}"
+  if [[ "$arg" == "--pr-number" ]]; then
     next=$((i + 1))
-    PR_NUMBER="${!next}"
+    PR_NUMBER="${!next:-}"
+  elif [[ "$arg" == --pr-number=* ]]; then
+    PR_NUMBER="${arg#--pr-number=}"
   fi
 done
 
-if [[ -z "$PR_NUMBER" ]]; then
-  echo "Usage: gecx-eval-runner.sh --pr-number <N> [options passed to gecx_sandbox_gate.py]" >&2
+if [[ -z "$PR_NUMBER" || ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+  echo "Usage: gecx-eval-runner.sh --pr-number <integer> [options passed to gecx_sandbox_gate.py]" >&2
   exit 2
 fi
 

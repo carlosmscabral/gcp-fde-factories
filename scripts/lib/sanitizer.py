@@ -1,12 +1,13 @@
 """Public repository sanitization gate (Stage 2 of the two-stage clean-room pipeline).
 
-Checks internal-link regexes, corp domains and emails, private environment tokens, PII patterns,
+Checks generic internal-link regexes, corp domains and emails, PII patterns, optional
+workstation-only Tier-C denylist patterns loaded at runtime (never committed in source),
 salted n-gram hashes, and mandatory `source:` citations on normative pack and core skills.
-Never stores Tier-C internal codenames or customer lists (those stay in local workstation pre-push gates).
 """
 from __future__ import annotations
 
 import hashlib
+import os
 import pathlib
 import re
 
@@ -18,7 +19,6 @@ INTERNAL_PATTERNS: dict[str, re.Pattern[str]] = {
     "googlers_host": re.compile(r"\b[a-z0-9-]+\.c\.googlers\.com\b", re.I),
     "google_email": re.compile(r"\b[A-Za-z0-9._%+-]+@(?:corp\.)?google\.com\b", re.I),
     "google3_path": re.compile(r"(?:/google/src/files/|//depot/google3/)"),
-    "internal_env": re.compile(r"\b(?:argolis|cabral-gecx-spk)\b", re.I),
 }
 
 PII_PATTERNS: dict[str, re.Pattern[str]] = {
@@ -45,14 +45,33 @@ def _is_scannable_file(path: pathlib.Path) -> bool:
     )
 
 
+def load_runtime_denylist(denylist_path: pathlib.Path | None = None) -> list[re.Pattern[str]]:
+    """Loads optional untracked Tier-C denylist regexes from SANITIZER_DENYLIST_FILE or path."""
+    target = denylist_path
+    if target is None:
+        env_path = os.environ.get("SANITIZER_DENYLIST_FILE", "").strip()
+        target = pathlib.Path(env_path) if env_path else None
+    if not (target and target.is_file()):
+        return []
+    patterns: list[re.Pattern[str]] = []
+    for raw in target.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        patterns.append(re.compile(re.escape(line), re.I))
+    return patterns
+
+
 def scan_text_for_leaks(
     text: str,
     rel_path: str,
     salted_ngram_hashes: set[str] | None = None,
     salt: str = "",
+    extra_denylist: list[re.Pattern[str]] | None = None,
 ) -> list[str]:
-    """Scans a single text payload for internal Google references, PII, and salted n-grams."""
+    """Scans a single text payload for internal Google references, PII, denylist hits, and salted n-grams."""
     findings: list[str] = []
+    denylist = load_runtime_denylist() if extra_denylist is None else extra_denylist
     for line_no, line in enumerate(text.splitlines(), 1):
         for label, pat in INTERNAL_PATTERNS.items():
             if pat.search(line):
@@ -60,6 +79,9 @@ def scan_text_for_leaks(
         for label, pat in PII_PATTERNS.items():
             if pat.search(line):
                 findings.append(f"{rel_path}:{line_no} matched prohibited PII pattern '{label}'.")
+        for idx, pat in enumerate(denylist, 1):
+            if pat.search(line):
+                findings.append(f"{rel_path}:{line_no} matched runtime Tier-C denylist rule #{idx}.")
 
     if salted_ngram_hashes:
         tokens = re.findall(r"[a-z0-9_-]+", text.lower())
@@ -97,9 +119,14 @@ def check_skill_sources(skill_md: pathlib.Path, rel_path: str) -> list[str]:
     return findings
 
 
-def scan_repository(repo_root: pathlib.Path, scan_tests: bool = False) -> list[str]:
+def scan_repository(
+    repo_root: pathlib.Path,
+    scan_tests: bool = False,
+    denylist_path: pathlib.Path | None = None,
+) -> list[str]:
     """Scans repository files for public sanitization violations and missing skill citations."""
     findings: list[str] = []
+    extra_denylist = load_runtime_denylist(denylist_path)
     for path in sorted(repo_root.rglob("*")):
         if not path.is_file():
             continue
@@ -115,7 +142,7 @@ def scan_repository(repo_root: pathlib.Path, scan_tests: bool = False) -> list[s
 
         rel = path.relative_to(repo_root).as_posix()
         text = path.read_text(encoding="utf-8", errors="ignore")
-        findings.extend(scan_text_for_leaks(text, rel))
+        findings.extend(scan_text_for_leaks(text, rel, extra_denylist=extra_denylist))
 
         if path.name == "SKILL.md" and (rel.startswith("packs/") or rel.startswith("core-gcp-fde/")):
             findings.extend(check_skill_sources(path, rel))

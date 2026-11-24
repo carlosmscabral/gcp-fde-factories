@@ -19,7 +19,7 @@ def load_settings() -> AgentSettings:
     """Reads environment variables lazily at runtime rather than import time."""
     return AgentSettings(
         app_name=os.environ.get("ADK_APP_NAME", "starter_adk_agent"),
-        model_name=os.environ.get("ADK_MODEL_NAME", "gemini-3.1-pro-preview"),
+        model_name=os.environ.get("ADK_MODEL_NAME", "gemini-4-neon-high"),
         model_location=os.environ.get("ADK_MODEL_LOCATION", "global"),
         otel_capture_content=os.environ.get(
             "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT",

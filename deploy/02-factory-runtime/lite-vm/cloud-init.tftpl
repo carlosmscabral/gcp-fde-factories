@@ -1,5 +1,5 @@
 #cloud-config
-# Cloud-init for Stage 02 Lite Single-VM Scion Hub (pinned release + SHA256SUMS verification).
+# Cloud-init for Stage 02 Lite Single-VM Scion Hub (pinned release + pinned SHA-256 verification).
 # Enforces gcp_iam_check_mode=enforce, gcp_iam_deny_unknown_policy=fail-closed, and default block identity.
 # Binds 127.0.0.1 when hub_public_url is empty because Scion v0.4 --hosted rejects 0.0.0.0 without HTTPS.
 
@@ -54,12 +54,11 @@ runcmd:
     cd /tmp
     BASE_URL="https://github.com/GoogleCloudPlatform/scion/releases/download/${scion_version}"
     curl -fsSLO "$BASE_URL/scion-linux-amd64.tar.gz"
-    curl -fsSLO "$BASE_URL/SHA256SUMS"
-    grep "scion-linux-amd64.tar.gz" SHA256SUMS | sha256sum -c -
+    echo "${scion_binary_sha256}  scion-linux-amd64.tar.gz" | sha256sum -c -
     tar -xzf scion-linux-amd64.tar.gz -C /opt/scion/releases/${scion_version}
     ln -sfn /opt/scion/releases/${scion_version} /opt/scion/current
     ln -sfn /opt/scion/current/scion /usr/local/bin/scion
-    rm -f scion-linux-amd64.tar.gz SHA256SUMS
+    rm -f scion-linux-amd64.tar.gz
   - |
     if [ ! -f /home/scion/.scion/hub.env ]; then
       SECRET="$(head -c 32 /dev/urandom | base64 | tr -d '\n')"

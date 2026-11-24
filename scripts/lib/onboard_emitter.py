@@ -75,22 +75,6 @@ def compute_merged_agents_md(existing: str | None, block_body: str) -> str:
     return existing.rstrip("\r\n") + eol + eol + wrapped
 
 
-def merge_delimited_agents_md(agents_md_path: pathlib.Path, block_body: str) -> str:
-    """Inserts or updates the factory block in AGENTS.md safely, refusing symlinks."""
-    if agents_md_path.is_symlink():
-        raise ValueError(f"Refusing to write through symlink: {agents_md_path}")
-    existing: str | None = None
-    if agents_md_path.exists():
-        raw = agents_md_path.read_bytes()
-        try:
-            existing = raw.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise ValueError(f"AGENTS.md must be UTF-8 encoded: {exc}") from exc
-    merged = compute_merged_agents_md(existing, block_body)
-    agents_md_path.write_bytes(merged.encode("utf-8"))
-    return merged
-
-
 def _render_conventions_skill(profile: dict[str, Any]) -> str:
     """Renders skills/<slug>-repo-conventions/SKILL.md within the 300-line skill budget."""
     slug = profile["slug"]
@@ -207,6 +191,12 @@ def emit_layer3_overlay(
             "profile_path": ".factory/factory-profile.yaml",
         },
     }
+
+    hub_schema_path = profile_schema_path.parent / "hub-project.schema.json"
+    if hub_schema_path.is_file():
+        hub_errs = validate_against_schema(hub_project, hub_schema_path)
+        if hub_errs:
+            raise ValueError("Generated hub-project.yaml failed schema validation: " + " | ".join(hub_errs))
 
     # Merge modernization backlog by gap ID so PO statuses survive re-emission.
     backlog_path = repo / ".factory" / "modernization-backlog.yaml"

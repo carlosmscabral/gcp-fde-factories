@@ -253,11 +253,20 @@ def patch_ge_agent(
         raise ValueError(f"Refusing cross-project PATCH: resource project '{m.group(1)}' != '{quota_project}'.")
     loc = m.group(2)
     prefix = "" if loc == "global" else f"{loc}-"
-    mask = "displayName,description," + ("adkAgentDefinition" if spec["export_mode"] == "agent_engine" else "a2aAgentDefinition")
-    url = f"https://{prefix}discoveryengine.googleapis.com/v1alpha/{agent_resource_name}?updateMask={urllib.parse.quote(mask)}"
     payload = build_ge_registration_payload(
         spec, display_name_override=display_name_override, reasoning_engine_override=reasoning_engine_override
     )
+    mask_fields = [
+        "displayName",
+        "description",
+        "adkAgentDefinition" if spec["export_mode"] == "agent_engine" else "a2aAgentDefinition",
+    ]
+    if "authorizationConfig" in payload:
+        mask_fields.append("authorizationConfig")
+    if "icon" in payload:
+        mask_fields.append("icon")
+    mask = ",".join(mask_fields)
+    url = f"https://{prefix}discoveryengine.googleapis.com/v1alpha/{agent_resource_name}?updateMask={urllib.parse.quote(mask)}"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",

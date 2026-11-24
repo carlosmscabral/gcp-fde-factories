@@ -34,6 +34,7 @@ jobs:
         run: |
           ./build.sh --release-kit packs/gecx --out /tmp/gecx-kit-ci
           ./build.sh --release-kit packs/adk --out /tmp/adk-kit-ci
+          ./build.sh --release-kit packs/_template-pack --out /tmp/template-kit-ci
 
       - name: Run unit tests
         run: ./build.sh --test

@@ -1,6 +1,8 @@
-# Stage 02 — HA GKE Profile (`ha-gke`)
+# Stage 02 — HA GKE Parameter Contract Bridge (Preview) (`ha-gke`)
 
-Use this profile for production customer deployments requiring multi-replica availability, Cloud SQL persistence, GCS storage, and IAP-protected HTTPS ingress.
+> **Status: Preview Contract Bridge.** This module validates Stage 01 outputs and emits the normalized parameter map (`normalized_runtime_contract`) for the official upstream `GoogleCloudPlatform/scion/deploy/terraform` module. It does **not** provision GKE clusters or Cloud SQL directly until the operator uncomments and wires the pinned upstream `module "scion_hub_ha"` block.
+
+Use this profile as the contract bridge for production customer deployments requiring multi-replica availability, Cloud SQL persistence, GCS storage, and IAP-protected HTTPS ingress.
 
 ## Design
 

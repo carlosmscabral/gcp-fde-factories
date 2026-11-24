@@ -1,5 +1,5 @@
 # Tracked SDK and platform workarounds with mandatory 90-day TTL and removal tests.
-# scripts/budget-check.py fails CI if any entry exceeds max_age_days without review.
+# `./build.sh --check` fails CI if any entry exceeds max_age_days without review.
 schema_version: "1"
 max_age_days: 90
 

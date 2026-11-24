@@ -44,7 +44,7 @@
       "properties": {
         "default_max_duration": { "type": "string", "pattern": "^[0-9]+(m|h)$" },
         "default_max_turns": { "type": "integer", "minimum": 10, "maximum": 200 },
-        "default_max_model_calls": { "type": "integer", "minimum": 10, "maximum": 400 },
+        "default_max_model_calls": { "type": "integer", "minimum": 10, "maximum": 500 },
         "auto_suspend_idle": { "type": "boolean" }
       }
     },

@@ -5,7 +5,9 @@
     "list_agents_json": ["scion", "--format", "json", "list", "--hub"],
     "list_artifacts_json": ["scion", "--format", "json", "artifact", "list", "--all", "--hub"],
     "list_decisions_json": ["scion", "decisions", "list", "--all", "--json", "--hub"],
-    "list_recurring_schedules_json": ["scion", "--format", "json", "schedule", "list", "--type", "recurring", "--hub"],
+    "list_recurring_schedules_json": ["scion", "--format", "json", "schedule", "list", "--show", "recurring", "--hub"],
+    "harness_config_sync_global": ["scion", "harness-config", "sync", "<name>", "--global", "--hub"],
+    "message": ["scion", "message"],
     "create_recurring_schedule": [
       "scion",
       "schedule",
@@ -21,6 +23,7 @@
       "--hub"
     ],
     "forbidden_flags_on_list_or_artifact": ["--json"],
+    "forbidden_flags_on_schedule_list": ["--type recurring"],
     "forbidden_flags_on_schedule_create_recurring": ["--template"]
   }
 }

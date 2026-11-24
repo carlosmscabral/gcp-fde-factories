@@ -11,8 +11,8 @@ This skill adapts the Apache-2.0 `cxas-agent-foundry` scripts vendored at `${GEC
 - `architect`: authors `tdd.md`, `knowledge-plane/requirements.md`, and tool/callback contracts.
 - `developer`: edits `cxas_app/<App>/`, callbacks, tools, and runs Level 1 offline checks only.
 - `code-reviewer`: reviews diffs blindly using the active `diversity_profile` from `.factory/hub-project.yaml`.
-- `gecx-deployer`: executes ephemeral Sandbox `cxas push` and `cxas push-eval --file` using `gecx-sandbox-deployer`.
-- `gecx-eval-tester`: executes `cxas test-tools`, `cxas run --eval-type all --wait`, synthetic `BidiRunSession` audio checks, and REST Verdict capture using `gecx-sandbox-evaluator`.
+- `gecx-deployer`: executes ephemeral Sandbox `cxas push` and `cxas push-eval --file` using the `gecx-deployer` Hub SA (`gecxSandboxDeployer` Custom Role).
+- `gecx-eval-tester`: executes `cxas test-tools`, `cxas run --eval-type all --wait`, synthetic `BidiRunSession` audio checks, and REST Verdict capture using the `gecx-evaluator` Hub SA (`gecxSandboxEvaluator` Custom Role).
 - source: https://github.com/GoogleCloudPlatform/cxas-scrapi/tree/f55e877638dfc07879aad4082abc35c34f18359c/.agents/skills/cxas-agent-foundry
 
 ## 2. Level 1 Offline Execution (Zero GCP Credentials)

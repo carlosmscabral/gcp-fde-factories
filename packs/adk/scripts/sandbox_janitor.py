@@ -25,21 +25,26 @@ def select_expired_ci_resources(
     resources: list[dict[str, Any]],
     now_utc: dt.datetime,
     max_age_hours: float = 4.0,
+    skip_resources: set[str] | None = None,
 ) -> list[str]:
     """Filters `[CI]`-prefixed ReasoningEngines or GE agents older than max_age_hours."""
     expired: list[str] = []
+    skipped = skip_resources or set()
     cutoff = now_utc - dt.timedelta(hours=max_age_hours)
     for item in resources:
         display = str(item.get("displayName") or "")
         name = str(item.get("name") or "")
-        created_raw = str(item.get("createTime") or "")
-        if not (display.startswith("[CI]") and name and created_raw):
+        # Use updateTime when present so shared PATCH-reused Sandbox GE agents stay alive while active.
+        ts_raw = str(item.get("updateTime") or item.get("createTime") or "")
+        if not (display.startswith("[CI]") and name and ts_raw) or name in skipped:
             continue
         try:
-            created = dt.datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+            ref_time = dt.datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
         except ValueError:
             continue
-        if created <= cutoff:
+        if ref_time.tzinfo is None:
+            ref_time = ref_time.replace(tzinfo=dt.timezone.utc)
+        if ref_time <= cutoff:
             expired.append(name)
     return sorted(expired)
 
@@ -92,6 +97,7 @@ def run_janitor(
     ge_app: str = "",
     ge_location: str = "global",
     ge_assistant: str = "default_assistant",
+    skip_resources: set[str] | None = None,
     now_utc: dt.datetime | None = None,
     rest_fn: RestFn = default_rest_call,
 ) -> tuple[int, dict[str, Any]]:
@@ -134,7 +140,7 @@ def run_janitor(
         if not ok:
             failures.append(err)
         else:
-            expired_ge = select_expired_ci_resources(agents, ref_now, max_age_hours)
+            expired_ge = select_expired_ci_resources(agents, ref_now, max_age_hours, skip_resources=skip_resources)
             found.extend(expired_ge)
             if apply:
                 for name in expired_ge:
@@ -156,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ge-app", default="", help="Optional Gemini Enterprise Sandbox app_id to sweep.")
     parser.add_argument("--ge-location", default="global", choices=["global", "us", "eu"])
     parser.add_argument("--assistant", default="default_assistant")
+    parser.add_argument("--skip-ge-agent", action="append", default=[], help="GE agent resource name to preserve (e.g. shared PATCH target).")
     parser.add_argument("--max-age-hours", type=float, default=4.0)
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
@@ -175,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
         ge_app=args.ge_app,
         ge_location=args.ge_location,
         ge_assistant=args.assistant,
+        skip_resources=set(args.skip_ge_agent),
     )
     print(json.dumps(report, indent=2))
     return rc

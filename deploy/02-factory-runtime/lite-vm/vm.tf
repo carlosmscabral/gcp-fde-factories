@@ -37,6 +37,7 @@ resource "google_compute_instance" "scion_hub_vm" {
     enable-oslogin = "TRUE"
     user-data = templatefile("${path.module}/cloud-init.tftpl", {
       scion_version         = var.scion_version
+      scion_binary_sha256   = var.scion_binary_sha256
       hub_project_id        = var.hub_project_id
       artifact_registry_url = var.artifact_registry_url
       hub_public_url        = var.hub_public_url

@@ -96,6 +96,16 @@ def collect_github_ci(
     return _collect_github_ci(repo_dir, run_cmd)
 
 
+def _safe_int(value: Any) -> int:
+    """Converts an integer-like Hub metric count safely, defaulting to zero."""
+    if isinstance(value, bool):
+        return 0
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
 def collect_hub_metrics(
     hub_url: str,
     project_id: str,
@@ -133,8 +143,8 @@ def collect_hub_metrics(
         for tool in raw_tools:
             if not isinstance(tool, dict):
                 continue
-            calls = max(0, int(tool.get("calls", 0) or 0))
-            errors = max(0, int(tool.get("error", 0) or 0))
+            calls = _safe_int(tool.get("calls", 0))
+            errors = _safe_int(tool.get("error", 0))
             if calls > 0:
                 tool_rates.append({
                     "tool": clean_token_str(tool.get("name", "unknown"), 80),

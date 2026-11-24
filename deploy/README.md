@@ -1,0 +1,81 @@
+# `deploy/` — 3-Stage Repeatable Customer GCP Deployment
+
+All infrastructure deploys directly inside the customer's Google Cloud organization with **zero static JSON keys**, **additive-only IAM bindings**, **explicit non-wildcard Sandbox Custom Roles**, and **fail-closed Hub settings**.
+
+---
+
+## 1. Three-Stage Pipeline & Separation of Duties
+
+```mermaid
+flowchart LR
+    subgraph S1["Stage 01: 01-landing-zone (Platform / SecOps)"]
+        NET["Custom VPC + Cloud NAT<br/>or Shared VPC"]
+        AR["Artifact Registry<br/>(factory-images)"]
+        IAM["7-8 Service Accounts<br/>+ Explicit Custom Roles<br/>+ Optional GitHub WIF"]
+        BUD["Inference Budget Alert<br/>+ Pub/Sub Kill-Switch"]
+    end
+
+    subgraph S2["Stage 02: 02-factory-runtime (Platform / FDE)"]
+        VM["lite-vm (Production Pilot)<br/>Shielded VM, 0 Public IP<br/>Pinned Scion SHA-256"]
+        GKE["ha-gke (Preview Bridge)<br/>Contract outputs for upstream<br/>Scion GKE Terraform module"]
+    end
+
+    subgraph S3["Stage 03: 03-hub-bootstrap (Customer Principal)"]
+        STG["stage-release-kit.sh<br/>--mode rebuild (default)<br/>or --mode mirror (crane)"]
+        BOOT["bootstrap-hub-project.sh<br/>preflight -> plan -> backup -> apply"]
+    end
+
+    NET -->|"landing-zone-outputs.json"| VM
+    IAM -->|"landing-zone-outputs.json"| GKE
+    AR -->|"artifact_registry_url"| STG
+    IAM -->|"SAs + WIF"| BOOT
+    VM -->|"Healthy Hub via IAP"| BOOT
+    GKE -->|"Healthy Hub via IAP"| BOOT
+    STG -->|"Stamped @sha256 digests"| BOOT
+```
+
+---
+
+## 2. Container Image Separation (CI Runtime vs. Scion Agent Harnesses)
+
+Stage 03 distinguishes clearly between two container classes so CI stays fast and Scion agents always boot with real `/usr/local/bin/sciontool` + harness CLIs:
+
+| Image Class | Base Image (`--base-image` / flags) | Contains | Used By |
+| :--- | :--- | :--- | :--- |
+| **Lean CI Runtime (`<pack>-runtime`)** | `python:3.12-slim-bookworm` (default) | `/opt/gcp-fde/`, pack SDK (`cxas` or `google-adk` + `agents-cli`), schemas | GitHub Actions Verdict Gate (`docker run`), offline Level 1 checks |
+| **Scion Antigravity Harness (`<pack>-antigravity-runtime`)** | Upstream `scion-antigravity:v0.4.0-preview.3` (`--antigravity-base-image`) | `sciontool`, `git >= 2.48`, Antigravity CLI + `/opt/gcp-fde/` + pack SDK | Scion Hub agents spawned with `<prefix>-antigravity-vertex` |
+| **Scion Claude Harness (`<pack>-claude-runtime`)** | Upstream `scion-claude:v0.4.0-preview.3` (`--claude-base-image`) | `sciontool`, `git >= 2.48`, Claude Code CLI + `/opt/gcp-fde/` + pack SDK | Scion Hub agents spawned with `<prefix>-claude-vertex` (when `claude_model_garden_enabled: true`) |
+
+> **Fail-Closed Guard:** `bootstrap-hub-project.sh apply` rejects any harness-config whose `image:` still contains `REPLACE_` or an all-zero `@sha256:0000...` placeholder. Either pass `--antigravity-base-image` / `--claude-base-image` to `stage-release-kit.sh --mode rebuild` (which stamps the pushed `@sha256:` digests automatically) or pass explicit `--harness-image-antigravity` / `--harness-image-claude` refs to `bootstrap-hub-project.sh apply`.
+
+---
+
+## 3. Stage 01 Feature Toggles (`deploy/01-landing-zone/variables.tf`)
+
+| Variable | Default | Effect |
+| :--- | :--- | :--- |
+| `create_custom_vpc` | `true` | Creates private VPC + Cloud NAT; set `false` + `existing_subnet_self_link` for customer Shared VPC |
+| `enable_gecx_sandbox_roles` | `true` | Enables CES/TTS APIs and creates `gecxSandboxDeployer`, `gecxSandboxEvaluator`, `gecxSandboxJanitor` |
+| `enable_adk_sandbox_roles` | `false` | Enables Discovery Engine API and creates `adkSandboxDeployer`, `adkSandboxEvaluator`, `adkSandboxJanitor` |
+| `enable_kaizen_gcp_obs` | `false` | Creates optional 8th SA (`<prefix>-kaizen@`) with read-only Monitoring & Logging Viewer |
+| `enable_github_wif` | `false` | Provisions keyless GitHub Actions WIF pool/provider restricted strictly to `github_repository` (`owner/repo`) for `sandbox_evaluator` and `sandbox_janitor` |
+
+---
+
+## 4. Stage 03 Canonical Execution Sequence
+
+```bash
+# 1. Rebuild CI + Scion harness images inside customer Hub project and stamp digests into the kit
+/tmp/gecx-kit/bootstrap/stage-release-kit.sh \
+  --mode rebuild \
+  --kit /tmp/gecx-kit \
+  --landing-zone /tmp/landing-zone-outputs.json \
+  --antigravity-base-image ghcr.io/homebrew-scion/scion-antigravity:v0.4.0-preview.3
+
+# 2. Reconcile Hub settings, skills, global harness-configs, templates, SAs, and weekly-kaizen
+/tmp/gecx-kit/bootstrap/bootstrap-hub-project.sh preflight --kit /tmp/gecx-kit --hub http://127.0.0.1:8080
+/tmp/gecx-kit/bootstrap/bootstrap-hub-project.sh plan      --kit /tmp/gecx-kit --hub http://127.0.0.1:8080
+/tmp/gecx-kit/bootstrap/bootstrap-hub-project.sh apply     --kit /tmp/gecx-kit --hub http://127.0.0.1:8080 \
+  --landing-zone /tmp/landing-zone-outputs.json \
+  --repo /path/to/customer-repo
+```

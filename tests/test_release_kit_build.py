@@ -62,7 +62,7 @@ def _assert_templates_follow_scion_v04_rules(
 
 
 def test_release_kit_is_offline_prefix_isolated_and_composes_core_deltas(tmp_path: pathlib.Path) -> None:
-    """Verifies packs/gecx Release Kit composes core+pack deltas, prefix-scoped harnesses, and full assets."""
+    """Verifies packs/gecx Release Kit composes core+pack deltas, excludes build-only libs, and builds template-pack."""
     out_dir = tmp_path / "gecx-kit"
     manifest = build_release_kit(REPO_ROOT, REPO_ROOT / "packs/gecx", out_dir)
 
@@ -76,6 +76,10 @@ def test_release_kit_is_offline_prefix_isolated_and_composes_core_deltas(tmp_pat
     assert (out_dir / "deploy" / "01-landing-zone" / "iam.tf").is_file()
     assert (out_dir / "fde-skills" / "factory-onboard" / "SKILL.md").is_file()
     assert (out_dir / "repo-scaffold" / ".factory" / "hub-project.yaml").is_file()
+
+    # Catalog-only scripts/lib modules must not be shipped inside customer Release Kits (C-19).
+    assert not (out_dir / "scripts" / "lib" / "sanitizer.py").exists()
+    assert not (out_dir / "scripts" / "lib" / "release_kit.py").exists()
 
     # Verify Vertex AI-first defaults using Scion generic tiers (zero hardcoded model versions in harness-configs).
     agy_hc = yaml.safe_load((out_dir / "harness-configs" / "gecx-antigravity-vertex" / "config.yaml").read_text(encoding="utf-8"))
@@ -102,6 +106,12 @@ def test_release_kit_is_offline_prefix_isolated_and_composes_core_deltas(tmp_pat
     assert len(manifest_disk["skills"]) == 11
     for sk in manifest_disk["skills"]:
         assert len(sk["tree_sha256"]) == 64
+
+    # Verify packs/_template-pack builds cleanly too (C-15).
+    tpl_kit = tmp_path / "template-kit"
+    tpl_manifest = build_release_kit(REPO_ROOT, REPO_ROOT / "packs/_template-pack", tpl_kit)
+    assert tpl_manifest["pack"] == "example-pack"
+    assert (tpl_kit / "packs" / "_template-pack" / "Dockerfile").is_file()
 
 
 def test_adk_release_kit_ships_18_skills_and_adk_runtime_compat(tmp_path: pathlib.Path) -> None:
@@ -176,7 +186,7 @@ exit 0
 
 
 def test_bootstrap_schedules_weekly_kaizen_by_default_and_enforces_claude_model_garden(tmp_path: pathlib.Path) -> None:
-    """Tests bootstrap-hub-project.sh end-to-end against a stub scion CLI for Kaizen, Claude opt-in, and rollback."""
+    """Tests bootstrap-hub-project.sh end-to-end: placeholder image guard, global harness sync, Kaizen, and overlay checks."""
     kit_dir = tmp_path / "gecx-kit"
     build_release_kit(REPO_ROOT, REPO_ROOT / "packs/gecx", kit_dir)
 
@@ -197,12 +207,35 @@ def test_bootstrap_schedules_weekly_kaizen_by_default_and_enforces_claude_model_
         encoding="utf-8",
     )
 
-    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"}
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    env = {**os.environ, "HOME": str(fake_home), "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"}
     bootstrap = kit_dir / "bootstrap" / "bootstrap-hub-project.sh"
+    real_agy_img = "us-central1-docker.pkg.dev/cust-hub/factory-images/gecx-antigravity-runtime@sha256:" + ("a" * 64)
+    real_cld_img = "us-central1-docker.pkg.dev/cust-hub/factory-images/gecx-claude-runtime@sha256:" + ("b" * 64)
 
-    # 1. Default apply (no --repo): schedules weekly-kaizen, skips claude-vertex (opt-in false), sets Vertex default.
+    # 0. Negative test (C-02/D-01): apply WITHOUT staged real harness images MUST fail closed on placeholder REPLACE_HUB_PROJECT.
+    placeholder_fail = subprocess.run(
+        [str(bootstrap), "apply", "--kit", str(kit_dir), "--hub", "http://127.0.0.1:8080", "--landing-zone", str(lz), "--backup-dir", str(tmp_path / "bkp0")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert placeholder_fail.returncode != 0
+    assert "placeholder image" in placeholder_fail.stderr
+
+    # 1. Default apply with real harness image: schedules weekly-kaizen, syncs global harness-config, sets max_model_calls.
+    log_file.write_text("", encoding="utf-8")
     res = subprocess.run(
-        [str(bootstrap), "apply", "--kit", str(kit_dir), "--hub", "http://127.0.0.1:8080", "--landing-zone", str(lz), "--backup-dir", str(tmp_path / "bkp1")],
+        [
+            str(bootstrap), "apply",
+            "--kit", str(kit_dir),
+            "--hub", "http://127.0.0.1:8080",
+            "--landing-zone", str(lz),
+            "--backup-dir", str(tmp_path / "bkp1"),
+            "--harness-image-antigravity", real_agy_img,
+        ],
         env=env,
         capture_output=True,
         text=True,
@@ -210,11 +243,15 @@ def test_bootstrap_schedules_weekly_kaizen_by_default_and_enforces_claude_model_
     )
     assert res.returncode == 0, res.stderr
     calls = log_file.read_text(encoding="utf-8")
+    assert "schedule list --show recurring --hub" in calls
     assert "schedule create-recurring --name weekly-kaizen --cron 0 17 * * 5 --time-zone America/Sao_Paulo --type message --agent coordinator --wake" in calls
     assert "default_agent_role baseline" in calls
+    assert "default_max_model_calls 150" in calls
     assert "default_harness_config gecx-antigravity-vertex" in calls
-    assert "harness-config sync" in calls and "--name gecx-antigravity-vertex" in calls
-    assert "--name gecx-claude-vertex" not in calls
+    assert "harness-config sync gecx-antigravity-vertex --global --hub" in calls
+    assert "gecx-claude-vertex --global" not in calls
+    staged_agy = yaml.safe_load((fake_home / ".scion" / "harness-configs" / "gecx-antigravity-vertex" / "config.yaml").read_text(encoding="utf-8"))
+    assert staged_agy["image"] == real_agy_img
 
     # 2. Negative test: rollback on 0-template first-install backup must fail closed.
     rb = subprocess.run(
@@ -253,7 +290,7 @@ def test_bootstrap_schedules_weekly_kaizen_by_default_and_enforces_claude_model_
     assert bad.returncode != 0
     assert "claude_model_garden_enabled is false" in bad.stderr
 
-    # 4. Explicit opt-out kaizen.enabled=false skips schedule creation, and claude_model_garden_enabled=true syncs Claude.
+    # 4. Explicit opt-out kaizen.enabled=false skips schedule creation, and claude_model_garden_enabled=true syncs Claude globally.
     log_file.write_text("", encoding="utf-8")
     opt_repo = tmp_path / "opt-repo"
     (opt_repo / ".factory").mkdir(parents=True)
@@ -276,7 +313,16 @@ def test_bootstrap_schedules_weekly_kaizen_by_default_and_enforces_claude_model_
         encoding="utf-8",
     )
     res2 = subprocess.run(
-        [str(bootstrap), "apply", "--kit", str(kit_dir), "--hub", "http://127.0.0.1:8080", "--landing-zone", str(lz), "--repo", str(opt_repo), "--backup-dir", str(tmp_path / "bkp2")],
+        [
+            str(bootstrap), "apply",
+            "--kit", str(kit_dir),
+            "--hub", "http://127.0.0.1:8080",
+            "--landing-zone", str(lz),
+            "--repo", str(opt_repo),
+            "--backup-dir", str(tmp_path / "bkp2"),
+            "--harness-image-antigravity", real_agy_img,
+            "--harness-image-claude", real_cld_img,
+        ],
         env=env,
         capture_output=True,
         text=True,
@@ -285,4 +331,31 @@ def test_bootstrap_schedules_weekly_kaizen_by_default_and_enforces_claude_model_
     assert res2.returncode == 0, res2.stderr
     calls2 = log_file.read_text(encoding="utf-8")
     assert "schedule create-recurring" not in calls2
-    assert "--name gecx-claude-vertex" in calls2
+    assert "harness-config sync gecx-claude-vertex --global --hub" in calls2
+
+    # 5. Negative test (D-19): overlay-sync rejects overlay skill colliding with pack skill name.
+    col_repo = tmp_path / "col-repo"
+    (col_repo / ".factory").mkdir(parents=True)
+    (col_repo / "skills" / "gcp-fde-guardrails").mkdir(parents=True)
+    (col_repo / "skills" / "gcp-fde-guardrails" / "SKILL.md").write_text("# colliding\n", encoding="utf-8")
+    (col_repo / ".factory" / "hub-project.yaml").write_text(
+        yaml.safe_dump({
+            "schema_version": "1",
+            "pack": "gecx",
+            "pack_version": "0.4.0",
+            "mode": "sandbox-direct",
+            "diversity_profile": "cross-model",
+            "limits": {"default_max_duration": "2h", "default_max_turns": 60, "auto_suspend_idle": True},
+            "overlay_skills": [{"dir": "skills/gcp-fde-guardrails", "version": "1.0.0"}],
+        }),
+        encoding="utf-8",
+    )
+    col_res = subprocess.run(
+        [str(bootstrap), "overlay-sync", "--kit", str(kit_dir), "--hub", "http://127.0.0.1:8080", "--repo", str(col_repo)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert col_res.returncode != 0
+    assert "collides" in col_res.stderr

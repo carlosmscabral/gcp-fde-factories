@@ -234,3 +234,23 @@ def test_factory_onboard_cli_supports_json_flag_on_all_subcommands(tmp_path: pat
     )
     assert res_chk.returncode == 0, res_chk.stderr
     assert json.loads(res_chk.stdout)["ready"] is True
+
+
+def test_model_routing_fail_closed_and_drift_note_truncation(tmp_path: pathlib.Path) -> None:
+    """Negative tests (B-05/B-07/B-08): cross-vendor without opt-in raises, drift notes stay <=200 chars."""
+    from scripts.lib.model_routing import build_default_harnesses_and_routing
+
+    with pytest.raises(ValueError, match="claude_model_garden_enabled"):
+        build_default_harnesses_and_routing("cross-vendor")
+
+    repo = _make_brownfield_repo(tmp_path / "long-wf")
+    prof = _base_profile(scan_repository_facts(repo, GECX_TOOLCHAIN))
+    emit_layer3_overlay(repo, prof, "us-central1-docker.pkg.dev/demo/repo/gecx-runtime@sha256:" + ("a" * 64), PROFILE_SCHEMA)
+
+    wf_dir = repo / ".github" / "workflows"
+    wf_dir.mkdir(parents=True, exist_ok=True)
+    for idx in range(12):
+        (wf_dir / f"very-long-workflow-pipeline-definition-{idx:02d}.yml").write_text("name: ci\n", encoding="utf-8")
+    drift = detect_repo_drift(repo, GECX_TOOLCHAIN)
+    assert drift["drift_detected"] is True
+    assert all(len(note) <= 200 for note in drift["notes"])

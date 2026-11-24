@@ -91,3 +91,20 @@ variable "enable_kaizen_gcp_obs" {
   type        = bool
   default     = false
 }
+
+variable "enable_github_wif" {
+  description = "If true, provisions a keyless GitHub Actions Workload Identity Federation pool and provider scoped strictly to github_repository."
+  type        = bool
+  default     = false
+}
+
+variable "github_repository" {
+  description = "GitHub repository slug (owner/repo) authorized to impersonate Sandbox Evaluator and Janitor SAs via WIF when enable_github_wif is true."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.enable_github_wif || can(regex("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", var.github_repository))
+    error_message = "Set github_repository to 'owner/repo' when enable_github_wif is true."
+  }
+}

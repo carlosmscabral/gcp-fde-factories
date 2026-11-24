@@ -46,19 +46,28 @@ def test_forged_verdict_rejected_when_ces_run_missing_or_failed(tmp_path: pathli
     verdict_path = _make_verdict(tmp_path, evals, {})
 
     def fake_fetch_pass(url: str, token: str, proj: str) -> tuple[int, dict]:
-        return 200, {
-            "evaluationRuns": [
-                {
-                    "name": "projects/sbx/locations/us/apps/app-123/evaluationRuns/run-1",
-                    "state": "SUCCEEDED",
-                    "progress": {"totalCount": 2, "failedCount": 0, "completedCount": 2},
-                    "initiatedBy": "gecx-eval@sbx.iam.gserviceaccount.com",
-                }
-            ]
-        }
+        if url.endswith("/evaluationRuns"):
+            return 200, {
+                "evaluationRuns": [
+                    {
+                        "name": "projects/sbx/locations/us/apps/app-123/evaluationRuns/run-1",
+                        "state": "SUCCEEDED",
+                        "progress": {"totalCount": 2, "failedCount": 0, "completedCount": 2},
+                        "initiatedBy": "gecx-eval@sbx.iam.gserviceaccount.com",
+                    }
+                ]
+            }
+        return 200, {"name": "projects/sbx/locations/us/apps/app-123", "displayName": f"[CI] PR-42-{'a' * 7} DemoApp"}
+
+    def fake_fetch_cross_pr_reuse(url: str, token: str, proj: str) -> tuple[int, dict]:
+        if url.endswith("/evaluationRuns"):
+            return fake_fetch_pass(url, token, proj)
+        return 200, {"name": "projects/sbx/locations/us/apps/app-123", "displayName": "[CI] PR-99-fffffff OtherApp"}
 
     def fake_fetch_forged(url: str, token: str, proj: str) -> tuple[int, dict]:
-        return 200, {"evaluationRuns": []}
+        if url.endswith("/evaluationRuns"):
+            return 200, {"evaluationRuns": []}
+        return 200, {"name": "projects/sbx/locations/us/apps/app-123", "displayName": f"[CI] PR-42-{'a' * 7} DemoApp"}
 
     assert (
         verify_verdict(verdict_path, VERDICT_SCHEMA, "a" * 40, evals, "sbx", "gecx-eval@sbx.iam.gserviceaccount.com", "tok", fake_fetch_pass)
@@ -66,6 +75,11 @@ def test_forged_verdict_rejected_when_ces_run_missing_or_failed(tmp_path: pathli
     )
     errs = verify_verdict(verdict_path, VERDICT_SCHEMA, "a" * 40, evals, "sbx", "gecx-eval@sbx.iam.gserviceaccount.com", "tok", fake_fetch_forged)
     assert any("does not exist in CES Sandbox" in e for e in errs)
+    # Negative test (B-01): reusing another PR's passing CES app must fail PR/SHA binding check.
+    errs_reuse = verify_verdict(
+        verdict_path, VERDICT_SCHEMA, "a" * 40, evals, "sbx", "gecx-eval@sbx.iam.gserviceaccount.com", "tok", fake_fetch_cross_pr_reuse
+    )
+    assert any("not bound to PR-42" in e for e in errs_reuse)
 
 
 def test_gecx_cross_pack_downgrade_and_adk_forgery_vectors_blocked(tmp_path: pathlib.Path) -> None:
@@ -193,3 +207,35 @@ def test_rest_gate_fails_closed_on_zero_runs_and_janitor_selects_only_expired_ci
     ]
     expired = select_expired_ci_apps(apps, now, max_age_hours=4.0)
     assert [a["name"] for a in expired] == ["apps/old-ci"]
+
+
+def test_adk_ge_only_cross_pr_reuse_is_blocked(tmp_path: pathlib.Path) -> None:
+    """Negative test (B-01): ADK GE-only Verdict cannot reuse another PR's [CI] Discovery Engine agent."""
+    evals = tmp_path / "evals"
+    evals.mkdir()
+    (evals / "c.json").write_text("{}\n", encoding="utf-8")
+    ge_res = "projects/sbx/locations/global/collections/default_collection/engines/e1/assistants/default_assistant/agents/a1"
+    vp = _make_verdict(
+        tmp_path,
+        evals,
+        {
+            "pack": "adk",
+            "ephemeral_app_name": None,
+            "ge_agent_resource": ge_res,
+            "evaluation_run_ids": [],
+            "expected_evaluator_sa": "adk-eval@sbx.iam.gserviceaccount.com",
+            "gates_executed": ["l1:ge-export-bundle", "l2:adk-eval"],
+        },
+        "ge-only.json",
+    )
+    errs = verify_verdict(
+        vp,
+        VERDICT_SCHEMA,
+        "a" * 40,
+        evals,
+        sandbox_project="sbx",
+        expected_evaluator_sa="adk-eval@sbx.iam.gserviceaccount.com",
+        access_token="tok",
+        fetch_fn=lambda url, t, p: (200, {"name": ge_res, "displayName": "[CI] PR-99-bbbbbbb StaleAgent"}),
+    )
+    assert any("not bound to [CI], PR-42" in e for e in errs)

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Stage 03 Hub Bootstrap reconciler (Contract 2: preflight / plan / backup / apply / rollback / overlay-sync).
-# Enforces compat.yaml closed version checks, Scion v0.4.0-preview.3 fail-closed settings,
-# default weekly Kaizen scheduling on every project, and strict YAML parsing with zero silent fall-open.
+# Enforces compat.yaml closed version checks, Scion v0.4.0-preview.3 CLI contracts
+# (`harness-config sync <name> --global`, `schedule list --show recurring`), fail-closed
+# image validation (rejects REPLACE_ / zero-digest harness images), default weekly Kaizen
+# scheduling, and strict overlay skill budget + collision verification.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,12 +13,27 @@ LANDING_ZONE_JSON=""
 HUB_URL=""
 TARGET_REPO=""
 BACKUP_DIR=""
+HARNESS_IMAGE_ANTIGRAVITY=""
+HARNESS_IMAGE_CLAUDE=""
+TMP_CLEANUP_DIRS=()
+
+cleanup_tmp() {
+  local d
+  for d in "${TMP_CLEANUP_DIRS[@]:-}"; do
+    if [[ -n "$d" && -d "$d" ]]; then
+      rm -rf "$d"
+    fi
+  done
+  return 0
+}
+trap cleanup_tmp EXIT
 
 usage() {
   cat <<'EOF'
 Usage: bootstrap-hub-project.sh <preflight|plan|backup|apply|rollback|overlay-sync> \
   --kit <release-kit-dir> --hub <https-or-loopback-url> \
-  [--landing-zone <landing-zone-outputs.json>] [--repo <target-repo-dir>] [--backup-dir <dir>]
+  [--landing-zone <landing-zone-outputs.json>] [--repo <target-repo-dir>] [--backup-dir <dir>] \
+  [--harness-image-antigravity <digest-or-registry-ref>] [--harness-image-claude <digest-or-registry-ref>]
 EOF
   exit 2
 }
@@ -29,6 +46,8 @@ while [[ $# -gt 0 ]]; do
     --landing-zone) LANDING_ZONE_JSON="$2"; shift 2 ;;
     --repo) TARGET_REPO="$2"; shift 2 ;;
     --backup-dir) BACKUP_DIR="$2"; shift 2 ;;
+    --harness-image-antigravity) HARNESS_IMAGE_ANTIGRAVITY="$2"; shift 2 ;;
+    --harness-image-claude) HARNESS_IMAGE_CLAUDE="$2"; shift 2 ;;
     *) echo "Unknown flag: $1" >&2; usage ;;
   esac
 done
@@ -47,7 +66,7 @@ parse_repo_cfg() {
     python3 "$SCRIPT_DIR/parse_hub_project.py" --repo "$TARGET_REPO" --expected-pack "$pack_name"
   else
     cat <<'JSON'
-{"pack":"","mode":"sandbox-direct","diversity_profile":"cross-model","limits":{"default_max_duration":"2h","default_max_turns":60,"auto_suspend_idle":true},"exclude_skills":[],"overlay_skills":[],"kaizen":{"enabled":true,"schedule_cron":"0 17 * * 5","time_zone":"America/Sao_Paulo","coordinator_agent":"coordinator"},"harnesses":{"default":"antigravity-vertex","claude_model_garden_enabled":false,"vertex_gemini_location":"global","vertex_claude_region":"global"},"model_routing":{}}
+{"pack":"","mode":"sandbox-direct","diversity_profile":"cross-model","limits":{"default_max_duration":"2h","default_max_turns":60,"default_max_model_calls":150,"auto_suspend_idle":true},"exclude_skills":[],"overlay_skills":[],"kaizen":{"enabled":true,"schedule_cron":"0 17 * * 5","time_zone":"America/Sao_Paulo","coordinator_agent":"coordinator","enable_gcp_obs":false},"harnesses":{"default":"antigravity-vertex","claude_model_garden_enabled":false,"vertex_gemini_location":"global","vertex_claude_region":"global"},"model_routing":{}}
 JSON
   fi
 }
@@ -63,6 +82,9 @@ do_preflight() {
     exit 1
   fi
   echo "PREFLIGHT OK: Scion $version_out matched compat.yaml tested list."
+  if [[ ! -d ".scion" && ( -z "$TARGET_REPO" || ! -d "$TARGET_REPO/.scion" ) ]]; then
+    echo "PREFLIGHT NOTE: No local .scion grove detected in $(pwd). Run apply from a linked Scion project directory so project-scoped commands succeed."
+  fi
   scion hub status --hub "$HUB_URL"
 }
 
@@ -105,10 +127,9 @@ do_backup() {
 
 register_and_verify_sa() {
   local sa_email="$1" project_id="$2" label="$3"
-  local existing_id sa_id
-  existing_id="$(scion --format json service-accounts list --hub "$HUB_URL" 2>/dev/null \
-    | jq -r --arg email "$sa_email" '((if type == "array" then . else (.serviceAccounts // .items // []) end)[] | select(.email == $email) | .id) // empty' \
-    | head -n 1 || true)"
+  local sa_list_json existing_id sa_id
+  sa_list_json="$(scion --format json service-accounts list --hub "$HUB_URL")"
+  existing_id="$(jq -r --arg email "$sa_email" '((if type == "array" then . else (.serviceAccounts // .items // []) end)[] | select(.email == $email) | .id) // empty' <<< "$sa_list_json" | head -n 1)"
   if [[ -n "$existing_id" ]]; then
     sa_id="$existing_id"
     echo "EXISTING SA: $label ($sa_email -> $sa_id)"
@@ -125,10 +146,9 @@ ensure_kaizen_schedule() {
     echo "KAIZEN SCHEDULE: explicitly disabled via .factory/hub-project.yaml (kaizen.enabled=false)."
     return 0
   fi
-  local existing_sched
-  existing_sched="$(scion --format json schedule list --type recurring --hub "$HUB_URL" 2>/dev/null \
-    | jq -r '((if type == "array" then . else (.schedules // .items // []) end)[] | select(.name == "weekly-kaizen") | .id) // empty' \
-    | head -n 1 || true)"
+  local sched_json existing_sched
+  sched_json="$(scion --format json schedule list --show recurring --hub "$HUB_URL")"
+  existing_sched="$(jq -r '((if type == "array" then . else (.schedules // .items // []) end)[] | select(.name == "weekly-kaizen") | .id) // empty' <<< "$sched_json" | head -n 1)"
   if [[ -n "$existing_sched" ]]; then
     echo "SKIP schedule: weekly-kaizen ($existing_sched) already registered."
     return 0
@@ -147,7 +167,7 @@ ensure_kaizen_schedule() {
 
 do_apply() {
   do_preflight
-  local pack_name pack_prefix repo_cfg mode max_dur max_turns auto_susp exclude_json
+  local pack_name pack_prefix repo_cfg mode max_dur max_turns max_calls auto_susp exclude_json
   pack_name="$(jq -re '.pack' "$KIT_DIR/manifest.json")"
   pack_prefix="$(jq -re '.pack_prefix // .pack' "$KIT_DIR/manifest.json")"
   repo_cfg="$(parse_repo_cfg "$pack_name")"
@@ -155,6 +175,7 @@ do_apply() {
   mode="$(jq -re '.mode' <<< "$repo_cfg")"
   max_dur="$(jq -re '.limits.default_max_duration' <<< "$repo_cfg")"
   max_turns="$(jq -re '.limits.default_max_turns' <<< "$repo_cfg")"
+  max_calls="$(jq -re '.limits.default_max_model_calls // 150' <<< "$repo_cfg")"
   auto_susp="$(jq -re '.limits.auto_suspend_idle' <<< "$repo_cfg")"
   exclude_json="$(jq -c '.exclude_skills' <<< "$repo_cfg")"
 
@@ -162,7 +183,7 @@ do_apply() {
 
   # 1. Publish pack skills first and attach non-excluded project skills pinned to exact versions.
   local existing_skills_json
-  existing_skills_json="$(scion --format json project skills list --hub "$HUB_URL" 2>/dev/null || echo '[]')"
+  existing_skills_json="$(scion --format json project skills list --hub "$HUB_URL")"
   while IFS=$'\t' read -r sname sver sattach; do
     [[ -n "$sname" ]] || continue
     local skill_dir="$KIT_DIR/skills/$sname"
@@ -181,7 +202,7 @@ do_apply() {
     fi
   done < <(jq -r '.skills[] | [.name, .version, ((if has("attach_to_project") then .attach_to_project else true end) | tostring)] | @tsv' "$KIT_DIR/manifest.json")
 
-  # 2. Materialize Vertex AI project/region into prefix-scoped harness-config bundles and sync.
+  # 2. Materialize Vertex AI project/region + real harness image into global Scion harness-configs store and sync.
   local default_harness claude_mg_enabled gemini_loc claude_reg inf_proj=""
   default_harness="$(jq -re '.harnesses.default // "antigravity-vertex"' <<< "$repo_cfg")"
   claude_mg_enabled="$(jq -re '(.harnesses.claude_model_garden_enabled // false) | tostring' <<< "$repo_cfg")"
@@ -192,28 +213,32 @@ do_apply() {
   fi
 
   if [[ -d "$KIT_DIR/harness-configs" ]]; then
-    local staged_hc_root
-    staged_hc_root="$(mktemp -d)"
-    trap 'rm -rf "$staged_hc_root"' RETURN
+    local global_hc_root="${SCION_GLOBAL_DIR:-$HOME/.scion}/harness-configs"
+    mkdir -p "$global_hc_root"
     for hc_dir in "$KIT_DIR"/harness-configs/*; do
       [[ -d "$hc_dir" && -f "$hc_dir/config.yaml" ]] || continue
-      local hc_name
+      local hc_name img_override=""
       hc_name="$(basename "$hc_dir")"
       if [[ "$hc_name" == *"-claude-vertex" && "$claude_mg_enabled" != "true" ]]; then
         echo "SKIP harness-config: $hc_name (harnesses.claude_model_garden_enabled=false; using Vertex AI Gemini 1P)."
         continue
       fi
       if [[ "$hc_name" == *"-claude-vertex" ]]; then
+        img_override="$HARNESS_IMAGE_CLAUDE"
         echo "VERTEX MODEL GARDEN CHECKPOINT: confirm claude-opus-5-5 is manually enabled at https://console.cloud.google.com/vertex-ai/publishers/anthropic/model-garden/claude-opus-5-5?project=${inf_proj:-YOUR_INFERENCE_PROJECT} (region=${claude_reg})."
+      elif [[ "$hc_name" == *"-antigravity-vertex" ]]; then
+        img_override="$HARNESS_IMAGE_ANTIGRAVITY"
       fi
-      cp -r "$hc_dir" "$staged_hc_root/$hc_name"
+      rm -rf "${global_hc_root:?}/${hc_name}"
+      cp -r "$hc_dir" "${global_hc_root}/${hc_name}"
       python3 "$SCRIPT_DIR/parse_hub_project.py" \
         --render-harness-src "$hc_dir/config.yaml" \
-        --render-harness-dst "$staged_hc_root/$hc_name/config.yaml" \
+        --render-harness-dst "${global_hc_root}/${hc_name}/config.yaml" \
         --inference-project "$inf_proj" \
         --gemini-location "$gemini_loc" \
-        --claude-region "$claude_reg"
-      scion harness-config sync "$staged_hc_root/$hc_name" --name "$hc_name" --hub "$HUB_URL"
+        --claude-region "$claude_reg" \
+        --pin-image "$img_override"
+      scion harness-config sync "$hc_name" --global --hub "$HUB_URL"
     done
     scion hub settings set default_harness_config "${pack_prefix}-${default_harness}" --hub "$HUB_URL"
   fi
@@ -253,6 +278,7 @@ do_apply() {
   scion hub settings set default_agent_role baseline --hub "$HUB_URL"
   scion hub settings set default_max_duration "$max_dur" --hub "$HUB_URL"
   scion hub settings set default_max_turns "$max_turns" --hub "$HUB_URL"
+  scion hub settings set default_max_model_calls "$max_calls" --hub "$HUB_URL"
   scion hub settings set server.hub.auto_suspend_idle "$auto_susp" --hub "$HUB_URL"
 
   # 6. Schedule weekly closed-loop Kaizen by default on every project.
@@ -271,14 +297,18 @@ do_apply() {
 
 do_overlay_sync() {
   [[ -n "$TARGET_REPO" ]] || { echo "--repo is required for overlay-sync" >&2; exit 2; }
-  local pack_name repo_cfg count=0
+  local pack_name repo_cfg pack_skills_json count=0
   pack_name="$(jq -re '.pack' "$KIT_DIR/manifest.json")"
+  pack_skills_json="$(jq -c '[.skills[].name]' "$KIT_DIR/manifest.json")"
   repo_cfg="$(parse_repo_cfg "$pack_name")"
 
   while IFS=$'\t' read -r rel_dir sver; do
     [[ -n "$rel_dir" ]] || continue
     local sdir="$TARGET_REPO/$rel_dir"
     [[ -d "$sdir" ]] || { echo "Missing declared overlay skill directory: $sdir" >&2; exit 1; }
+    python3 "$SCRIPT_DIR/parse_hub_project.py" \
+      --check-overlay-skill "$sdir" \
+      --pack-skills-json "$pack_skills_json"
     local sname
     sname="$(basename "$sdir")"
     if scion skills resolve "skill://scion/project/${sname}@${sver}" --hub "$HUB_URL" >/dev/null 2>&1; then

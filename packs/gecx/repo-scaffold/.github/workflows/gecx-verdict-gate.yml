@@ -1,6 +1,7 @@
 # Contract 3 & 5 anti-forgery PR verification workflow for customer GECX repositories.
-# Enforces AGENTS/CLAUDE/GEMINI parity, evals/ tamper guard, PII scan, live CES evaluationRuns
-# provenance verification, and deterministic `if: always()` Janitor cleanup of the [CI] app.
+# Fails closed when runtime image digest or PR Verdict is missing, enforces AGENTS/CLAUDE/GEMINI
+# parity, evals/ tamper guard, PII scan, live CES evaluationRuns provenance verification inside
+# the digest-pinned runtime container, and deterministic `if: always()` Janitor teardown.
 name: GECX Verdict Gate
 
 on:
@@ -21,6 +22,7 @@ jobs:
       EVALUATOR_SA: "${{ vars.GECX_EVALUATOR_SA_EMAIL }}"
       JANITOR_SA: "${{ vars.GECX_JANITOR_SA_EMAIL }}"
       WIF_PROVIDER: "${{ vars.GCP_WIF_PROVIDER }}"
+      GECX_RUNTIME_IMAGE: "${{ vars.GECX_RUNTIME_IMAGE_DIGEST }}"
 
     steps:
       - name: Checkout PR head
@@ -46,6 +48,11 @@ jobs:
               exit 1
             fi
           fi
+          if grep -q '^cxas_app/' <<< "$CHANGED"; then
+            echo "REQUIRE_LIVE=true" >> "$GITHUB_ENV"
+          else
+            echo "REQUIRE_LIVE=false" >> "$GITHUB_ENV"
+          fi
 
       - name: Scan evals/ for synthetic-data PII violations
         run: |
@@ -70,8 +77,26 @@ jobs:
           print("PII scan clean.")
           PY
 
-      - name: Authenticate to Sandbox Evaluator SA via WIF (when Verdict claims live-gcp-verified)
-        if: hashFiles(env.VERDICT_FILE) != '' && env.WIF_PROVIDER != ''
+      - name: Fail closed if pinned runtime image or required Verdict is missing
+        env:
+          PR_LABELS: "${{ join(github.event.pull_request.labels.*.name, ',') }}"
+        run: |
+          if [[ -z "$GECX_RUNTIME_IMAGE" || "$GECX_RUNTIME_IMAGE" != *"@sha256:"* ]]; then
+            echo "::error::vars.GECX_RUNTIME_IMAGE_DIGEST must be set to a digest-pinned image from Stage 03."
+            exit 1
+          fi
+          if [[ ! -f "$VERDICT_FILE" ]]; then
+            if ! grep -qw 'no-verdict-approved' <<< "$PR_LABELS"; then
+              echo "::error::Missing required PR Verdict '$VERDICT_FILE' (add label 'no-verdict-approved' for docs-only PRs)."
+              exit 1
+            fi
+            echo "SKIP_VERDICT=true" >> "$GITHUB_ENV"
+          else
+            echo "SKIP_VERDICT=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Authenticate to Sandbox Evaluator SA via WIF
+        if: env.WIF_PROVIDER != ''
         id: auth-eval
         uses: google-github-actions/auth@v2
         with:
@@ -79,18 +104,35 @@ jobs:
           service_account: "${{ env.EVALUATOR_SA }}"
           token_format: access_token
 
-      - name: Verify Verdict provenance against live CES evaluationRuns API
-        if: hashFiles(env.VERDICT_FILE) != ''
+      - name: Verify Verdict provenance inside digest-pinned GECX runtime image
+        if: env.SKIP_VERDICT != 'true'
         env:
           EVAL_ACCESS_TOKEN: "${{ steps.auth-eval.outputs.access_token }}"
           PR_HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
+          PR_NUM: "${{ github.event.pull_request.number }}"
         run: |
-          python3 scripts/verify-verdict.py \
-            --verdict "$VERDICT_FILE" \
-            --expected-commit "$PR_HEAD_SHA" \
-            --evals-dir evals \
-            --sandbox-project "$SANDBOX_PROJECT" \
-            --expected-evaluator-sa "$EVALUATOR_SA"
+          if [[ -n "$EVAL_ACCESS_TOKEN" ]]; then
+            REG="${GECX_RUNTIME_IMAGE%%/*}"
+            printf '%s' "$EVAL_ACCESS_TOKEN" | docker login -u oauth2accesstoken --password-stdin "https://${REG}" >/dev/null
+          fi
+          EXTRA_ARGS=()
+          if [[ "$REQUIRE_LIVE" == "true" ]]; then
+            EXTRA_ARGS+=(--require-live)
+          fi
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$PWD:/workspace" -w /workspace \
+            -e EVAL_ACCESS_TOKEN \
+            "$GECX_RUNTIME_IMAGE" \
+            python3 /opt/gcp-fde/verify-verdict.py \
+              --schema /opt/gcp-fde/schemas/verdict.schema.json \
+              --verdict "$VERDICT_FILE" \
+              --expected-pack gecx \
+              --expected-pr-number "$PR_NUM" \
+              --expected-commit "$PR_HEAD_SHA" \
+              --evals-dir evals \
+              --sandbox-project "$SANDBOX_PROJECT" \
+              --expected-evaluator-sa "$EVALUATOR_SA" \
+              "${EXTRA_ARGS[@]}"
 
       - name: Authenticate to Sandbox Janitor SA for always() teardown
         if: always() && hashFiles(env.VERDICT_FILE) != '' && env.WIF_PROVIDER != '' && env.JANITOR_SA != ''

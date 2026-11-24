@@ -1,5 +1,5 @@
 # Pilot 1 Factory Pack manifest for Google Cloud CX Agent Studio (GECX / CES).
-# Incorporates Preston's full 13-role agent-team hierarchy (Small Depth-1 and Chunky/Large Depth-3),
+# Incorporates the full 13-role scion-frontiers/agent-team (SEP) hierarchy (Small Depth-1 and Chunky/Large Depth-3),
 # the 2 split-SA GECX Sandbox specialists, and the closed-loop Kaizen Analyst (16 templates, 11 Hub Skill Bank skills).
 schema_version: "1"
 

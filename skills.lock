@@ -1,6 +1,6 @@
 # Auto-generated pinned skill lockfile (40-char Git SHAs and SHA-256 digests).
 schema_version: '1'
-generated_date_brt: '2026-11-22'
+generated_date_brt: '2026-11-24'
 layer0_baseline_lines:
   coordinator: 876
   architect: 206

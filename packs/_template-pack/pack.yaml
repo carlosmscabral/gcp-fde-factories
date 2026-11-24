@@ -25,7 +25,7 @@ specialist_templates:
 project_skills: []
 
 runtime_image:
-  dockerfile: "Dockerfile"
+  dockerfile: "packs/_template-pack/Dockerfile"
   harness_configs:
     - "core-gcp-fde/harness-configs/claude-vertex.yaml"
     - "core-gcp-fde/harness-configs/antigravity-vertex.yaml"

@@ -75,3 +75,8 @@ output "sandbox_staging_bucket" {
 output "kaizen_viewer_sa_email" {
   value = var.enable_kaizen_gcp_obs ? google_service_account.kaizen_viewer[0].email : null
 }
+
+output "github_wif_provider_name" {
+  description = "Full Workload Identity Provider resource name for GitHub Actions GCP_WIF_PROVIDER variable."
+  value       = var.enable_github_wif ? google_iam_workload_identity_pool_provider.github_oidc[0].name : null
+}

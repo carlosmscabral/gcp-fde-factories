@@ -14,11 +14,11 @@ description: Day-0 brownfield onboarding skill (scion-defaults-inspired) combini
 ## 2. Conduct the 2-Track PO Interview (`/grill-me`) One Topic at a Time
 - Never ask static facts already detected by the scanner. Never invent business intent, SLOs, autonomy rules, or acceptance criteria without explicit PO confirmation.
 - Challenge vague answers until every requirement or invariant is verifiable by a diff or command.
-- **Vertex AI Harnesses & Models (opinionated Vertex AI default; customer may change auth later in Scion):**
+- **Vertex AI Harnesses & Models (opinionated Vertex AI default — customer may change auth later in Scion):**
   - Use Scion's generic semantic tier aliases (`small`, `medium`, `large`, `extra-large`) and `thinking_level` (`0–100`) instead of hardcoded model versions so concrete models evolve automatically with upstream Scion releases (explicit model IDs remain supported as per-role overrides).
   - Ask whether Anthropic **Claude** was manually enabled in **Vertex AI Model Garden** on `inference_project_id`, and whether `global` endpoints are allowed (or regional residency `us`/`eu`/`us-east5` is required).
-  - If **enabled**: propose `diversity_profile: cross-vendor` with `harnesses.claude_model_garden_enabled: true` (`developer`/`architect` on `antigravity-vertex` tier `extra-large` thinking `100`; `code-reviewer`/`security-auditor` on `claude-vertex` tier `large` thinking `75`; `doc-writer` on tier `medium`).
-  - If **not enabled** (1P Gemini only): propose `diversity_profile: cross-model` with `harnesses.claude_model_garden_enabled: false` (`developer`/`architect` on `antigravity-vertex` tier `extra-large` thinking `100`; `code-reviewer`/`security-auditor` on `antigravity-vertex` tier `large` or an explicit alternate Gemini model ID, thinking `100`).
+  - If **enabled**: propose `diversity_profile: cross-vendor` with `harnesses.claude_model_garden_enabled: true`. Assign `developer` and `architect` to `antigravity-vertex` tier `extra-large` (thinking `100`), `code-reviewer` and `security-auditor` to `claude-vertex` tier `large` (thinking `75`), and `doc-writer` to tier `medium`.
+  - If **not enabled** (1P Gemini only): propose `diversity_profile: cross-model` with `harnesses.claude_model_garden_enabled: false`. Assign `developer` and `architect` to `antigravity-vertex` tier `extra-large` (thinking `100`), and `code-reviewer` and `security-auditor` to `antigravity-vertex` tier `large` (or an explicit alternate Gemini model ID) with thinking `100`.
   - Let the PO accept the preset or tune per-role `model_routing` entries (`harness`, `model`, `thinking_level`).
 - Offer two tracks:
   - **Express (~10 min):** confirm scanner facts, choose `mode` (`sandbox-direct` or `ci-only`), Vertex AI harnesses/models, `autonomy`, limits, Kaizen schedule (`America/Sao_Paulo`, enabled by default), index existing docs/ADRs in-place, and capture brownfield gaps in `modernization-backlog.yaml`.

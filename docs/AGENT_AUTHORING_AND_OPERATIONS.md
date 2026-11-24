@@ -1,6 +1,6 @@
-# Guia Completo — Scion `v0.4.0-preview.3` + Operação da Fábrica GECX (`packs/gecx v0.2.0`)
+# Guia Completo — Scion `v0.4.0-preview.3` + Operação das Fábricas (`packs/gecx v0.4.0` e `packs/adk v0.1.0`)
 
-**Audiência:** FDEs e Tech Leads que querem dominar **o Scion por dentro** (arquitetura, comandos, skills, comunicação entre agentes e imagens Docker customizadas) e **operar a fábrica `packs/gecx` com a estratégia hierárquica completa do Preston (15 papéis)** para construir agentes complexos no CX Agent Studio (GECX).
+**Audiência:** FDEs e Tech Leads que querem dominar **o Scion por dentro** (arquitetura, comandos, skills, comunicação entre agentes e imagens Docker customizadas) e **operar as fábricas `packs/gecx` (`v0.4.0`) e `packs/adk` (`v0.1.0`) com a hierarquia completa `scion-frontiers/agent-team` (SEP, 16 papéis)** para construir agentes complexos em produção no Google Cloud.
 
 > [!TIP]
 > Se você ainda não provisionou a infraestrutura GCP (Terraform, VM do Hub, Org Policies e Release Kit), comece pelo guia de infraestrutura em [HANDS_ON_WALKTHROUGH.md](HANDS_ON_WALKTHROUGH.md) e pelos requisitos de Landing Zone em [CUSTOMER_LANDING_ZONE_REQUIREMENTS.md](CUSTOMER_LANDING_ZONE_REQUIREMENTS.md). Este guia assume o Scion Hub no ar e cobre **todo o funcionamento do Scion e da fábrica no Dia 2, sempre baseado em exemplos concretos**.
@@ -127,7 +127,7 @@ Um ponto que costuma confundir quem chega no Scion é o uso da palavra **"role"*
 | :--- | :--- | :--- | :--- |
 | **`none`** | *(nenhum)* | Executa completamente desconectado da API do Hub (sem claims de autorização). | Scripts isolados ou tarefas batch sem interação com o Hub. |
 | **`readonly`** | `project:read`, `agent:status:update` | Consulta estado do projeto e reporta o próprio status. **Não** renova token, **não** abre port-forward, **não** envia notificações e **não** gerencia outros agentes. | Consultas curtas somente leitura sem necessidade de refresh de token. |
-| **`baseline`** | `project:read`, `agent:status:update`, `agent:token:refresh`, `project:agent:notify`, `agent:port:forward` | Trabalho padrão de longa duração: reporta status, renova o próprio JWT de 10 h, envia notificações e abre port-forward. **Não** pode criar sub-agentes, atribuir SAs GCP, suspender/deletar outros agentes ou ler secrets do projeto. | **13 dos 15 papéis** (`developer`, `code-reviewer`, `architect`, `investigator`, `security-auditor`, `test-engineer`, `gecx-deployer`, `gecx-eval-tester` e papéis de apoio). |
+| **`baseline`** | `project:read`, `agent:status:update`, `agent:token:refresh`, `project:agent:notify`, `agent:port:forward` | Trabalho padrão de longa duração: reporta status, renova o próprio JWT de 10 h, envia notificações e abre port-forward. **Não** pode criar sub-agentes, atribuir SAs GCP, suspender/deletar outros agentes ou ler secrets do projeto. | **14 dos 16 papéis** (`developer`, `code-reviewer`, `architect`, `investigator`, `security-auditor`, `test-engineer`, `gecx-deployer`, `gecx-eval-tester`, `gecx-kaizen-analyst` e papéis de apoio). |
 | **`full`** | Tudo do `baseline` + `project:agent:create`, `project:agent:sa_assign`, `project:agent:lifecycle`, `project:secret:read` | Controle completo de orquestração no projeto: cria filhos (`scion start`), atribui Service Accounts GCP aos filhos (`--service-account`), suspende/retoma/deleta filhos e lê secrets do projeto. | **Apenas os 2 papéis orquestradores:** `gecx-coordinator` (incluindo *Issue Owner*) e `gecx-eng-manager`. |
 
 #### Regra de Teto e Anti-Escalação (*No-Escalation*, Fail-Closed)
@@ -140,7 +140,7 @@ O Scion calcula a role efetiva no momento da criação sem nunca permitir que um
 - **Re-derivação no refresh de token:** ao renovar o JWT (`RefreshAgentToken`), o Hub sempre recalcula os escopos a partir da role armazenada no banco (nunca copia escopos antigos cegamente).
 
 > [!CAUTION]
-> **Pegadinha importante da v0.4 (`default_agent_role`):** no upstream do Scion, o fallback padrão quando `--role` é omitido passou de `baseline` para **`full`**. Em ambientes corporativos, configure `scion.io/default-agent-role = baseline` no projeto (ou passe `--role baseline` explicitamente em todo worker) e reserve `--role full` somente para `gecx-coordinator` e `gecx-eng-manager`.
+> **Pegadinha importante da v0.4 (`default_agent_role`):** no upstream do Scion, o fallback padrão quando `--role` é omitido passou de `baseline` para **`full`**. Em ambientes corporativos, nosso `bootstrap-hub-project.sh apply` impõe automaticamente `scion hub settings set default_agent_role baseline` no Hub, reservando `--role full` somente para `<prefix>-coordinator` e `<prefix>-eng-manager`.
 
 #### Exemplo Concreto: Os 4 Eixos Ortogonais no `Telecom_Support_Center`
 
@@ -165,9 +165,9 @@ Uma **skill** segue a convenção aberta [Agent Skills](https://agentskills.io/h
 **No Scion v0.4, as skills existem em 4 camadas (com precedência de template sobre platform skill):**
 
 1. **Platform Skills (embutidas no binário `scion`):** injetadas automaticamente conforme contexto — ex.: `git-sandbox` (regras de worktree/branch) e `scion-messaging`. Não precisam ser declaradas.
-2. **Hub Skill Bank (nosso padrão corporativo offline):** registro versionado no Hub com três escopos (`global`, `project`, `user`) e deduplicação por `sha256`. Em `packs/gecx v0.2.0`, publicamos **10 skills** no Skill Bank e dividimos em dois grupos para economizar contexto:
+2. **Hub Skill Bank (nosso padrão corporativo offline):** registro versionado no Hub com três escopos (`global`, `project`, `user`) e deduplicação por `sha256`. Em `packs/gecx v0.4.0`, publicamos **11 skills** no Skill Bank (`18` em `packs/adk`, somando as 7 skills `google/agents-cli`) divididas em dois grupos para economizar contexto:
    - **5 skills anexadas ao projeto inteiro (`attach_to_project: true`):** todo agente recebe `gcp-fde-guardrails`, `gcp-sandbox-contract`, `gcp-kaizen-light`, `gecx-foundry-adapter` e `gecx-domain-guardrails` via `scion project skills add`.
-   - **5 skills de processo do `agent-team` montadas só nos papéis que precisam (`attach_to_project: false`):** `software-engineering-process` (470 linhas), `code-review` (416 linhas), `artifact-durability`, `agent-state-continuity` e `release-notes-daily` ficam no Skill Bank e são referenciadas via `skill://scion/global/<nome>` no `scion-agent.yaml` apenas dos papéis correspondentes (assim `gecx-deployer` e `gecx-eval-tester` não desperdiçam 900 linhas de contexto com processo de code review).
+   - **6 skills de processo e Kaizen montadas só nos papéis que precisam (`attach_to_project: false`):** `software-engineering-process` (470 linhas), `code-review` (416 linhas), `artifact-durability`, `agent-state-continuity`, `release-notes-daily` e `gcp-kaizen-analyst` ficam no Skill Bank e são referenciadas via `skill://scion/global/<nome>` no `scion-agent.yaml` apenas dos papéis correspondentes (assim `gecx-deployer` e `gecx-eval-tester` não desperdiçam contexto com processo de code review ou Kaizen).
 3. **Template-mounted `skills/`:** pastas commitadas dentro de `<template>/skills/<nome>/`. Viajam com o template sem precisar de Hub.
 4. **Skills Federadas (`gh://...` ou `gcp-skill://...`):** resolvidas sob demanda pelo Hub/Broker com cache em disco. **Bloqueadas no nosso Release Kit offline** para garantir funcionamento atrás de VPC-SC e firewall corporativo.
 
@@ -200,7 +200,7 @@ No Scion, a comunicação multi-agente combina **três canais complementares**:
 | **`hub`** | Permite DM entre projetos no mesmo Hub (desligado por padrão, exige 3 gates) | Coordenação cross-repo controlada por admin. |
 
 > [!WARNING]
-> **Padrão do Preston (`eng-manager/agents.md`):** mesmo quando `--message-mode project` está ativo, **workers (`developer`, `code-reviewer`) não conversam diretamente entre si**. O `eng-manager` (ou *issue owner*) lê o relatório do revisor e repassa achados objetivos com `arquivo:linha` ao desenvolvedor. Isso preserva a revisão cega e evita debates infinitos entre dois agentes sem autoridade de decisão.
+> **Padrão SEP (`eng-manager/agents.md`):** mesmo quando `--message-mode project` está ativo, **workers (`developer`, `code-reviewer`) não conversam diretamente entre si**. O `eng-manager` (ou *issue owner*) lê o relatório do revisor e repassa achados objetivos com `arquivo:linha` ao desenvolvedor. Isso preserva a revisão cega e evita debates infinitos entre dois agentes sem autoridade de decisão.
 
 ### 2.3 Anatomia Completa do Filesystem no Scion (Mounts, Backing Storage e Isolamento)
 
@@ -342,7 +342,7 @@ bash build-release-images.sh v0.4.0-preview.3 -- \
 
 ### 3.2 Exemplo Prático: Preciso de Tools Específicas para um Tester (Sem Forkar o Upstream!)
 
-Suponha que no seu projeto GECX o **`gecx-eval-tester`** precise de **`sox`** (manipulação de áudio 8 kHz/16 kHz), **`k6`** (teste de carga em webhooks de fulfillment), **`cxas-scrapi==1.11.0`** e os schemas em `/opt/gecx-foundry` — mas você **não quer forkar** o repositório do Preston nem reescrever o build do Scion a cada release.
+Suponha que no seu projeto GECX o **`gecx-eval-tester`** precise de **`sox`** (manipulação de áudio 8 kHz/16 kHz), **`k6`** (teste de carga em webhooks de fulfillment), **`cxas-scrapi==1.11.0`** e os schemas em `/opt/gecx-foundry` — mas você **não quer forkar** o repositório `scion-frontiers/agent-team` nem reescrever o build do Scion a cada release.
 
 **A solução limpa é criar um Dockerfile fino de ~10 linhas que herda (`FROM`) da imagem oficial/espelhada do harness:**
 
@@ -376,7 +376,7 @@ Zero merge de fork! Você só atualiza a variável `UPSTREAM_HARNESS_IMAGE` para
 **Como entregar essa imagem SÓ para o tester (sem inchar os containers de `developer` e `architect`)?**
 Lembre-se de que **`image:` dentro de um template é ignorado com aviso**. Use uma das **3 vias oficiais** (em ordem de recomendação):
 
-1. **Harness-Config dedicado (recomendado para uso recorrente):** crie uma variante copiando o bundle base (`cp -r ~/.scion/harness-configs/gemini-cli ~/.scion/harness-configs/gecx-audio-tester`), aponte `image:` em `config.yaml` para o `@sha256:` da sua imagem derivada, publique com `scion harness-config sync gecx-audio-tester` e spawne o tester com `--harness-config gecx-audio-tester`.
+1. **Harness-Config dedicado (recomendado para uso recorrente):** crie uma variante copiando o bundle base (`cp -r ~/.scion/harness-configs/gecx-antigravity-vertex ~/.scion/harness-configs/gecx-audio-tester`), aponte `image:` em `config.yaml` para o `@sha256:` da sua imagem derivada, publique globalmente com `scion harness-config sync gecx-audio-tester --global` e spawne o tester com `--harness-config gecx-audio-tester`.
 2. **Flag `--image` no spawn (prioridade #1 da cadeia de precedência):**
    ```bash
    scion start eval-audio -t gecx-eval-tester \
@@ -387,21 +387,60 @@ Lembre-se de que **`image:` dentro de um template é ignorado com aviso**. Use u
 3. **Sidecar (`services:` no `scion-agent.yaml`):** quando a ferramenta do tester é um **daemon separado** (por exemplo, mock de API bancária, simulador SIP/HTTP ou Chromium headless na porta `9222`), declare-a como sidecar com `ready_check` TCP/HTTP em vez de empilhar tudo no container do agente.
 
 > [!NOTE]
-> **Onde entra o `packs/gecx/Dockerfile` do nosso repositório?** Hoje [packs/gecx/Dockerfile](../packs/gecx/Dockerfile) gera uma imagem Python enxuta (`core-gcp-fde-base` + `cxas 1.11.0` + `/opt/gecx-foundry`) otimizada para execução determinística de Level 1 offline em CI (`docker run --network=none`) e scripts do runner. Para rodar um agente LLM interativo no Broker com `cxas` pré-instalado, basta derivar da imagem `scion-gemini-cli` ou `scion-claude` seguindo exatamente a receita acima.
+> **Separação entre imagem lean de CI (`<pack>-runtime`) e imagem de agente Scion (`<pack>-antigravity-runtime` / `<pack>-claude-runtime`):** [packs/gecx/Dockerfile](../packs/gecx/Dockerfile) compila por padrão sobre `python:3.12-slim-bookworm` para execução rápida e determinística no CI (`gecx-verdict-gate.yml`). Ao executar `stage-release-kit.sh --mode rebuild --antigravity-base-image <scion-antigravity>`, o mesmo pipeline compila automaticamente a imagem completa com `sciontool`, `git >= 2.48` e `cxas 1.11.0`, carimbando o digest `@sha256:` nos `harness-configs/*/config.yaml`.
 
 ---
 
-## Parte 4 — Como os 15 Agentes da Fábrica GECX São Construídos (Estratégia Completa do Preston)
+## Parte 4 — Como os 16 Agentes da Fábrica GECX São Construídos (Hierarquia SEP `v0.4.0`)
 
-Na v0.2.0, `packs/gecx` incorpora **100% da biblioteca `scion-frontiers/agent-team@08faf48`** (todos os 13 papéis + as 5 skills Apache-2.0 de processo SEP vendored offline em `vendor/agent-team/`) somada aos **2 especialistas split-SA do Sandbox GECX**, compondo **15 templates prefixados `gecx-*`** e **10 skills no Hub Skill Bank** — tudo validado sob o teto de **1.800 linhas totais por papel**.
+Na `v0.4.0`, `packs/gecx` incorpora **100% da biblioteca `scion-frontiers/agent-team@08faf48`** (todos os 13 papéis + as 5 skills Apache-2.0 de processo SEP vendored offline em `vendor/agent-team/`), somada aos **2 especialistas split-SA do Sandbox GECX** e ao **16º papel `gecx-kaizen-analyst` (`v0.3.0+`)**, compondo **16 templates prefixados `gecx-*`** e **11 skills no Hub Skill Bank** — tudo validado sob o teto de **1.800 linhas totais por papel**.
+
+```mermaid
+flowchart LR
+    subgraph ORCH["Orquestração (--role full • factory-worker)"]
+        C["gecx-coordinator"] --> EM["gecx-eng-manager"]
+    end
+    subgraph DISC["Descoberta & Design (baseline)"]
+        INV["gecx-investigator"]
+        ARC["gecx-architect"]
+        RES["gecx-researcher"]
+    end
+    subgraph ENG["Engenharia & Revisão Cega (baseline)"]
+        DEV["gecx-developer"]
+        REV["gecx-code-reviewer"]
+        TST["gecx-test-engineer"]
+        SEC["gecx-security-auditor"]
+        SUP["qa • doc • release • web"]
+    end
+    subgraph SBX["Sandbox Split-SA (baseline)"]
+        DEP["gecx-deployer (SA deployer)"]
+        EVL["gecx-eval-tester (SA evaluator)"]
+    end
+    subgraph KZ["Kaizen Closed-Loop (weekly-kaizen --wake)"]
+        KA["gecx-kaizen-analyst (baseline)"]
+    end
+    C --> INV
+    C --> ARC
+    C --> RES
+    C --> KA
+    EM --> DEV
+    EM --> REV
+    EM --> TST
+    EM --> SEC
+    EM --> SUP
+    EM --> DEP
+    EM --> EVL
+```
 
 ![Anatomia de um Agente Scion v0.4 em packs/gecx](assets/scion_template_anatomy.png)
 
-![Estratégia Completa do Preston (15 Papéis) e Camadas de Imagem Docker](assets/preston_hierarchy_and_images.png)
+*(Ilustração de referência do baseline `v0.2.0` com 15 papéis — expandido em `v0.4.0` para 16 papéis com a inclusão de `gecx-kaizen-analyst` no diagrama acima.)*
+
+![Hierarquia SEP e Camadas de Imagem Docker](assets/preston_hierarchy_and_images.png)
 
 ### 4.1 Anatomia de um Template Gerado (`build.sh --release-kit`)
 
-Cada um dos 15 diretórios em `dist/gecx-kit/templates/` segue estritamente a spec Scion v0.4 (`local/templates.md`):
+Cada um dos 16 diretórios em `/tmp/gecx-kit/templates/` segue estritamente a spec Scion v0.4 (`local/templates.md`):
 
 - **Nome = nome da pasta** (sem campo `name:` dentro do YAML).
 - **Chaves de ambiente proibidas no template:** zero `image`, `resources`, `volumes`, `kubernetes`, `hub`, `telemetry`.
@@ -425,9 +464,9 @@ skills:
 - uri: skill://scion/global/artifact-durability
 ```
 
-### 4.2 Catálogo Completo dos 15 Papéis de `packs/gecx v0.2.0`
+### 4.2 Catálogo Completo dos 16 Papéis de `packs/gecx v0.4.0`
 
-| Template no Hub | `--role` Hub | SA GCP | Skills de Papel (além das 5 do Projeto) | Linhas Totais (Teto 1800) | Função na Hierarquia do Preston |
+| Template no Hub | `--role` Hub | SA GCP | Skills de Papel (além das 5 do Projeto) | Linhas Totais (Teto 1800) | Função na Hierarquia SEP |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **`gecx-coordinator`** | **`full`** | `worker` | `SEP`, `state-continuity`, `artifact-durability` | 1.040 | Raiz do portfólio (2–3 issues) ou **Dedicated Issue Owner** em Depth-3. **Iniciado pelo cliente.** |
 | **`gecx-eng-manager`** | **`full`** | `worker` | `SEP`, `state-continuity`, `artifact-durability` | 954 | Decompõe o design aprovado em fases, sequencia infra compartilhada, gerencia `N` devs e reviewers em paralelo. |
@@ -444,6 +483,7 @@ skills:
 | **`gecx-doc-writer`** | `baseline` | `worker` | `artifact-durability` | 328 | Documentação técnica, runbooks e ADRs (base `agent-team`). |
 | **`gecx-release-notes`** | `baseline` | `worker` | `artifact-durability`, `release-notes-daily` | 436 | Consolidação de changelogs e notas de versão (base `agent-team`). |
 | **`gecx-web-builder`** | `baseline` | `worker` | `artifact-durability` | 302 | Protótipos web e páginas de apoio (base `agent-team`). |
+| **`gecx-kaizen-analyst`** | `baseline` | `worker` | `gcp-kaizen-analyst`, `artifact-durability` | <= 500 | Ciclo semanal closed-loop (`weekly-kaizen`): roda `kaizen_collect.py` (0 tokens), verifica `Kaizen-Ref:` e propõe melhorias na Escada de 4 Degraus. |
 
 ### 4.3 Como Criar, Importar ou Editar um Especialista
 
@@ -452,9 +492,9 @@ skills:
 
 ---
 
-## Parte 5 — Smoke Test Passo a Passo: Construindo um Agente GECX Complexo (Depth-3 do Preston)
+## Parte 5 — Smoke Test Passo a Passo: Construindo um Agente GECX Complexo (Depth-3 SEP)
 
-Vamos percorrer **um cenário real de smoke test complexo**, desenhado exatamente para exercitar a hierarquia completa **Depth-3** do Preston (`coordinator → Issue Owner → investigator + architect + eng-manager → múltiplos developers + blind cross-vendor reviewer + test-engineer + security-auditor → deployer + eval-tester`).
+Vamos percorrer **um cenário real de smoke test complexo**, desenhado exatamente para exercitar a hierarquia completa **Depth-3 SEP** (`coordinator → Issue Owner → investigator + architect + eng-manager → múltiplos developers + blind reviewer + test-engineer + security-auditor → deployer + eval-tester`).
 
 > **Cenário do Smoke Test (`Telecom_Support_Center` — Multi-Agente):**
 > Construir um app CX Agent Studio com **3 sub-agentes especializados**, **1 camada compartilhada de autenticação/anti-PII** e **verificação ponta a ponta**:
@@ -492,15 +532,14 @@ camada compartilhada de auth + 3 sub-agentes independentes + auditoria de segura
 5. Valide no Sandbox via gecx-deployer + gecx-eval-tester e pare no PR pronto para minha revisao humana.
 EOF
 
-# Dispare o coordinator (sempre sob principal do cliente, --role full, SA worker)
+# Dispare o coordinator (sempre sob principal do cliente, --role full, SA worker, tier genérico Vertex AI)
 scion start coordinator \
   -t gecx-coordinator \
   --role full \
   --service-account factory-worker \
-  --harness-config antigravity-vertex \
-  --harness-auth vertex-ai \
-  --model gemini-3.1-pro-preview \
-  --thinking-level high \
+  --harness-config gecx-antigravity-vertex \
+  --model extra-large \
+  --thinking-level 100 \
   --task-file /tmp/smoke-test-brief.md \
   --wait-ready
 ```
@@ -541,7 +580,7 @@ sequenceDiagram
     Sbx-->>Human: PR pronto com Verdict Gate para revisao humana
 ```
 
-**Quatro detalhes finos do Preston que você vai observar acontecendo ao vivo nesse smoke test:**
+**Quatro detalhes finos do processo SEP que você vai observar acontecendo ao vivo nesse smoke test:**
 
 1. **O design NÃO entra em loop de `code-reviewer`:** conforme §2 do `software-engineering-process`, artefatos de arquitetura/prosa vão **direto para você** discutir e aprovar no Chat ou via `scion message @<issue-owner> "Design aprovado, pode seguir para o eng-manager."`.
 2. **Sequenciamento antes do fan-out:** o `gecx-eng-manager` não dispara 4 devs ao mesmo tempo para brigarem pelo `app.json`. Primeiro um dev entrega e valida `REQ-101` (base compartilhada + auth callback). Só depois ele abre 3 `gecx-developer` em paralelo (`dev-billing`, `dev-tech`, `dev-plans`).
@@ -588,7 +627,7 @@ stateDiagram-v2
 | **Destravar prompt `y/n` no terminal** | `scion keys <agente> "Enter"` (uma tecla por chamada) |
 | **Ver e responder decisões abertas** | `scion decisions list` → `scion decisions show <id>` → `scion decisions record` |
 | **Assumir terminal tmux ao vivo** | `scion attach <agente>` (`Ctrl-b d` para sair) |
-| **Agendar um lembrete ou verificação futura** | `scion hub schedule create ...` (`hosted/user/scheduling.md`) |
+| **Agendar um ciclo recorrente (ex. Kaizen semanal)** | `scion schedule create-recurring --name weekly-kaizen --cron "0 17 * * 5" --time-zone America/Sao_Paulo --type message --agent coordinator --wake --message "..."` |
 | **Pausar tudo no fim do expediente** | `scion suspend --all` (ou `scion suspend <agente>` num `idle` para travá-lo como `user`) |
 | **Retomar no dia seguinte** | `scion resume coordinator` |
 
@@ -657,4 +696,4 @@ Nunca altere `packs/gecx` para regras de um único cliente (tom de voz, fluxos p
 - **Specs, ADRs, Artifacts & Decisions Nativas:** [Using Artifacts & Track-Changes Reviews](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/artifacts.md), [Artifacts Reference](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/artifacts.md) e [Decisions (`web.decisions`)](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/messaging.md).
 - **Templates, Skills & Imagens:** [Templates & Roles](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/templates.md), [Agent Config Reference](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/agent-config.md), [Skills Authoring](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/skills.md), [Skill Registry & Federation](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/single-node/skill-registry.md), [Building Custom Images](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/custom-images.md) e [Harness Settings](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/harness-settings.md).
 - **Comunicação, Dashboard & Segurança:** [Web Dashboard](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/workstation/dashboard.md), [Messaging & Notifications](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/messaging.md), [Messaging Authorization](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/messaging-authorization.md), [Permissions, Roles & Ancestry (`hosted/ha/permissions.md`)](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/ha/permissions.md), [Permissions & AK1 Kernel](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/permissions-policy.md), [Agent Lifecycle & Triage](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/agent-lifecycle.md) e [Coding Agent CLI](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/coding-agent-cli.md).
-- **Estratégia do Preston (`scion-frontiers/agent-team`):** [Repositório @ `08faf48`](https://github.com/scion-frontiers/agent-team/tree/08faf48269da7d8dd0a20c4e5ca5093afb37495d) e [Software Engineering Process (`SKILL.md`)](https://github.com/scion-frontiers/agent-team/blob/08faf48269da7d8dd0a20c4e5ca5093afb37495d/skills/software-engineering-process/SKILL.md).
+- **Hierarquia SEP (`scion-frontiers/agent-team`):** [Repositório @ `08faf48`](https://github.com/scion-frontiers/agent-team/tree/08faf48269da7d8dd0a20c4e5ca5093afb37495d) e [Software Engineering Process (`SKILL.md`)](https://github.com/scion-frontiers/agent-team/blob/08faf48269da7d8dd0a20c4e5ca5093afb37495d/skills/software-engineering-process/SKILL.md).

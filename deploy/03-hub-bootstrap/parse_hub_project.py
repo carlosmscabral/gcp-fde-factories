@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
-"""Validated YAML parser and Vertex AI harness renderer for .factory/hub-project.yaml.
+"""Validated YAML parser, overlay skill checker, and Vertex AI harness renderer for Stage 03.
 
-Enforces pack matching, blocks ../ path traversal on overlay_skills, defaults weekly Kaizen
-scheduling to enabled=true, and fails closed if Claude Vertex AI is requested without explicit
-manual Vertex AI Model Garden opt-in (`harnesses.claude_model_garden_enabled: true`).
+Enforces hub-project.schema.json validation, pack matching, path-traversal protection on
+overlay_skills, 300-line / non-colliding overlay skill budgets, default weekly Kaizen
+scheduling, fail-closed Claude Vertex AI opt-in, and fail-closed rejection of placeholder
+or zero-digest container images before syncing harness-configs to Scion Hub.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import pathlib
+import re
 import sys
 from typing import Any
 
 import yaml
 
+SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 MODEL_GARDEN_URL = "https://console.cloud.google.com/vertex-ai/publishers/anthropic/model-garden/claude-opus-5-5"
+ZERO_DIGEST = "@sha256:" + ("0" * 64)
+MAX_OVERLAY_SKILL_LINES = 300
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "pack": "",
@@ -24,6 +29,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "limits": {
         "default_max_duration": "2h",
         "default_max_turns": 60,
+        "default_max_model_calls": 150,
         "auto_suspend_idle": True,
     },
     "exclude_skills": [],
@@ -33,6 +39,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "schedule_cron": "0 17 * * 5",
         "time_zone": "America/Sao_Paulo",
         "coordinator_agent": "coordinator",
+        "enable_gcp_obs": False,
     },
     "harnesses": {
         "default": "antigravity-vertex",
@@ -42,6 +49,38 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "model_routing": {},
 }
+
+
+def _find_hub_project_schema() -> pathlib.Path | None:
+    """Locates schemas/hub-project.schema.json inside a Release Kit or catalog repo."""
+    candidates = (
+        SCRIPT_DIR.parent / "schemas" / "hub-project.schema.json",
+        SCRIPT_DIR.parent.parent / "schemas" / "hub-project.schema.json",
+        pathlib.Path("/opt/gcp-fde/schemas/hub-project.schema.json"),
+    )
+    for cand in candidates:
+        if cand.is_file():
+            return cand
+    return None
+
+
+def _validate_hub_schema(raw: dict[str, Any]) -> None:
+    """Validates raw YAML mapping against hub-project.schema.json when jsonschema is available."""
+    schema_path = _find_hub_project_schema()
+    if schema_path is None:
+        return
+    try:
+        from jsonschema import Draft202012Validator
+    except ImportError:
+        return
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    validator = Draft202012Validator(schema)
+    errs = [
+        f"{'/'.join(str(p) for p in err.path) or '<root>'}: {err.message}"
+        for err in sorted(validator.iter_errors(raw), key=lambda e: list(e.path))
+    ]
+    if errs:
+        raise ValueError("hub-project.schema.json validation failed: " + " | ".join(errs))
 
 
 def parse_hub_project(repo_dir: pathlib.Path, expected_pack: str = "") -> dict[str, Any]:
@@ -54,6 +93,8 @@ def parse_hub_project(repo_dir: pathlib.Path, expected_pack: str = "") -> dict[s
     raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(f"{cfg_path} must contain a YAML mapping.")
+
+    _validate_hub_schema(raw)
 
     pack = str(raw.get("pack") or "")
     if expected_pack and pack and pack != expected_pack:
@@ -71,6 +112,7 @@ def parse_hub_project(repo_dir: pathlib.Path, expected_pack: str = "") -> dict[s
     limits = {
         "default_max_duration": str(raw_limits.get("default_max_duration") or "2h"),
         "default_max_turns": int(raw_limits.get("default_max_turns") or 60),
+        "default_max_model_calls": int(raw_limits.get("default_max_model_calls") or 150),
         "auto_suspend_idle": bool(raw_limits.get("auto_suspend_idle", True)),
     }
 
@@ -92,15 +134,11 @@ def parse_hub_project(repo_dir: pathlib.Path, expected_pack: str = "") -> dict[s
         "schedule_cron": str(raw_kz.get("schedule_cron") or "0 17 * * 5"),
         "time_zone": str(raw_kz.get("time_zone") or "America/Sao_Paulo"),
         "coordinator_agent": str(raw_kz.get("coordinator_agent") or "coordinator"),
+        "enable_gcp_obs": bool(raw_kz.get("enable_gcp_obs", False)),
     }
 
     raw_h = raw.get("harnesses") if isinstance(raw.get("harnesses"), dict) else {}
-    has_explicit_h = "harnesses" in raw and isinstance(raw.get("harnesses"), dict)
-    claude_enabled = bool(
-        raw_h["claude_model_garden_enabled"]
-        if "claude_model_garden_enabled" in raw_h
-        else (diversity == "cross-vendor" and not has_explicit_h)
-    )
+    claude_enabled = bool(raw_h.get("claude_model_garden_enabled", False))
     harnesses = {
         "default": str(raw_h.get("default") or "antigravity-vertex"),
         "claude_model_garden_enabled": claude_enabled,
@@ -122,7 +160,7 @@ def parse_hub_project(repo_dir: pathlib.Path, expected_pack: str = "") -> dict[s
             "Claude Vertex AI harness requested while harnesses.claude_model_garden_enabled is false. "
             f"Enable claude-opus-5-5 manually in Vertex AI Model Garden ({MODEL_GARDEN_URL}) and set "
             "harnesses.claude_model_garden_enabled: true, OR switch diversity_profile to 'cross-model' "
-            "(Antigravity gemini-4-neon-high + gemini-4-carbon-high)."
+            "(Antigravity extra-large + large)."
         )
 
     return {
@@ -138,17 +176,32 @@ def parse_hub_project(repo_dir: pathlib.Path, expected_pack: str = "") -> dict[s
     }
 
 
+def _assert_real_container_image(image_ref: str, src_path: pathlib.Path) -> None:
+    """Fails closed when a harness-config image still holds a placeholder or zero digest."""
+    if not image_ref or "REPLACE_" in image_ref or ZERO_DIGEST in image_ref:
+        raise ValueError(
+            f"Harness config '{src_path.name}' still references placeholder image '{image_ref}'. "
+            "Run stage-release-kit.sh --mode rebuild with --antigravity-base-image / --claude-base-image, "
+            "or pass --harness-image-antigravity / --harness-image-claude to bootstrap-hub-project.sh apply."
+        )
+
+
 def render_harness_config(
     src_yaml: pathlib.Path,
     dst_yaml: pathlib.Path,
     inference_project: str,
     gemini_location: str,
     claude_region: str,
+    image_override: str = "",
 ) -> None:
-    """Materializes customer Vertex AI project and location into a staged harness config.yaml."""
+    """Materializes customer Vertex AI project, region, and validated image into a staged config.yaml."""
     data = yaml.safe_load(src_yaml.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"Expected YAML mapping in {src_yaml}")
+    if image_override:
+        data["image"] = image_override
+    _assert_real_container_image(str(data.get("image") or ""), src_yaml)
+
     env = dict(data.get("env") or {})
     harness = str(data.get("harness") or "")
     if harness == "claude":
@@ -168,8 +221,24 @@ def render_harness_config(
     dst_yaml.write_text(yaml.safe_dump(data, sort_keys=False, width=120), encoding="utf-8")
 
 
+def check_overlay_skill(skill_dir: pathlib.Path, pack_skill_names: set[str]) -> None:
+    """Verifies an overlay skill directory has SKILL.md <= 300 lines and zero pack name collision."""
+    skill_md = skill_dir / "SKILL.md"
+    if not skill_md.is_file():
+        raise ValueError(f"Overlay skill missing SKILL.md: {skill_dir}")
+    sname = skill_dir.name
+    if sname in pack_skill_names:
+        raise ValueError(f"Overlay skill '{sname}' collides with an installed pack skill name.")
+    text = skill_md.read_text(encoding="utf-8")
+    lines = len(text.splitlines())
+    if lines > MAX_OVERLAY_SKILL_LINES:
+        raise ValueError(f"Overlay skill '{sname}' has {lines} lines (budget max: {MAX_OVERLAY_SKILL_LINES}).")
+    if re.search(r"(?:^|\s)gh://", text):
+        raise ValueError(f"Overlay skill '{sname}' contains a forbidden floating gh:// URI.")
+
+
 def main(argv: list[str] | None = None) -> int:
-    """CLI entrypoint parsing .factory/hub-project.yaml or rendering staged Vertex AI harness configs."""
+    """CLI entrypoint parsing hub-project.yaml, checking overlay skills, or rendering harness configs."""
     parser = argparse.ArgumentParser(description="Parse .factory/hub-project.yaml or render harness configs.")
     parser.add_argument("--repo", type=pathlib.Path)
     parser.add_argument("--expected-pack", default="")
@@ -178,8 +247,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--inference-project", default="")
     parser.add_argument("--gemini-location", default="global")
     parser.add_argument("--claude-region", default="global")
+    parser.add_argument("--pin-image", default="")
+    parser.add_argument("--check-overlay-skill", type=pathlib.Path)
+    parser.add_argument("--pack-skills-json", default="[]")
     args = parser.parse_args(argv)
     try:
+        if args.check_overlay_skill:
+            pack_names = set(json.loads(args.pack_skills_json))
+            check_overlay_skill(args.check_overlay_skill, pack_names)
+            return 0
         if args.render_harness_src and args.render_harness_dst:
             render_harness_config(
                 args.render_harness_src,
@@ -187,12 +263,13 @@ def main(argv: list[str] | None = None) -> int:
                 args.inference_project,
                 args.gemini_location,
                 args.claude_region,
+                image_override=args.pin_image,
             )
             return 0
         if not args.repo:
-            parser.error("--repo is required unless --render-harness-src/dst are provided.")
+            parser.error("--repo is required unless --render-harness-src/dst or --check-overlay-skill is set.")
         result = parse_hub_project(args.repo, expected_pack=args.expected_pack)
-    except (OSError, ValueError, yaml.YAMLError) as exc:
+    except (OSError, ValueError, yaml.YAMLError, json.JSONDecodeError) as exc:
         print(f"HUB-PROJECT PARSE ERROR: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(result, indent=2))

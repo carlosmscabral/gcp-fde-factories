@@ -5,9 +5,9 @@ description: Core Google Cloud FDE factory guardrails overriding periodic sweeps
 
 # GCP FDE Factory Guardrails
 
-## Rule 1 — Wake Only on External Delta Events
-- Do not schedule periodic coordinator sweeps every 15 to 30 minutes.
-- Wait for the external Delta Watcher (`scripts/delta-watcher`) or a human message to wake the coordinator.
+## Rule 1 — Wake Only on External Delta Events or Weekly Kaizen
+- Do not schedule frequent coordinator sweeps every 15 to 30 minutes.
+- Wait for the external Delta Watcher (`scripts/delta-watcher`), the scheduled `weekly-kaizen` message (`--wake`), or a human message to wake the coordinator.
 - source: https://github.com/GoogleCloudPlatform/scion
 
 ## Rule 2 — Enforce Model Diversity at Spawn
@@ -24,7 +24,7 @@ description: Core Google Cloud FDE factory guardrails overriding periodic sweeps
 
 ## Rule 4 — Enforce Least-Privilege SA Isolation
 - Never spawn `developer`, `architect`, or `code-reviewer` with a Sandbox Deployer or Evaluator Service Account.
-- Assign `gecx-sandbox-deployer` only to `gecx-deployer` and `gecx-sandbox-evaluator` only to `gecx-eval-tester`.
+- Assign `<prefix>-deployer` (`gecx-deployer` or `adk-deployer`) only to `<prefix>-deployer`, and `<prefix>-evaluator` (`gecx-evaluator` or `adk-evaluator`) only to `<prefix>-eval-tester`.
 - Never register DEV, HML, or PRD Service Accounts in the Scion Hub.
 - source: https://cloud.google.com/iam/docs/best-practices-service-accounts
 

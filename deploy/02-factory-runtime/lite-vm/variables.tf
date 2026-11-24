@@ -51,6 +51,17 @@ variable "scion_version" {
   default     = "v0.4.0-preview.3"
 }
 
+variable "scion_binary_sha256" {
+  description = "Pinned SHA-256 hex digest of scion-linux-amd64.tar.gz matching compat.yaml (verified offline before extraction)."
+  type        = string
+  default     = "d210505c58393f68ae719bc6185e71a3f0455caa1dce6e7798d6bc355663e17f"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{64}$", var.scion_binary_sha256))
+    error_message = "scion_binary_sha256 must be a 64-character lowercase SHA-256 hex digest."
+  }
+}
+
 variable "hub_public_url" {
   description = "Optional HTTPS public URL when behind an IAP Cloud Run proxy. Leave empty for IAP SSH loopback mode."
   type        = string

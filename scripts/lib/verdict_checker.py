@@ -1,14 +1,16 @@
-"""Multi-pack anti-forgery Verdict verifier for Contract 5 (GECX CES + ADK Agent Engine / GE App).
+"""Anti-forgery Verdict verification engine (Contract 5 — GECX and ADK packs).
 
-Enforces JSON schema, commit SHA, PR number, pack match, evals tree SHA-256, non-live downgrade
-policies, and live Sandbox API provenance (CES evaluationRuns, Vertex AI reasoningEngines, and
-Discovery Engine Gemini Enterprise agents).
+Verifies JSON Schema conformance, pack match, commit SHA, evals/ tree SHA-256 integrity,
+authorized not-verifiable surfaces, strict PR/commit displayName provenance binding,
+and live Sandbox API checks (paginated CES evaluationRuns, Vertex AI ReasoningEngine,
+and Discovery Engine Gemini Enterprise agents).
 """
 from __future__ import annotations
 
 import json
 import pathlib
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Callable
 
@@ -18,28 +20,47 @@ from scripts.lib.schema_validator import validate_against_schema
 FetchFn = Callable[[str, str, str], tuple[int, dict[str, Any]]]
 
 
-def default_sandbox_get(url: str, token: str, quota_project: str) -> tuple[int, dict[str, Any]]:
-    """Fetches a GCP Sandbox REST resource with Bearer authentication and quota project header."""
+def default_sandbox_get(url: str, access_token: str, quota_project: str) -> tuple[int, dict[str, Any]]:
+    """Executes an authenticated REST GET against CES, Vertex AI, or Discovery Engine APIs."""
     req = urllib.request.Request(
         url,
-        headers={"Authorization": f"Bearer {token}", "x-goog-user-project": quota_project},
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "x-goog-user-project": quota_project,
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             return resp.status, json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        return exc.code, {"error": exc.read().decode("utf-8", errors="replace")}
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
-        return 0, {"error": str(exc)}
-
-
-default_ces_get = default_sandbox_get
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        code = exc.code if isinstance(exc, urllib.error.HTTPError) else 0
+        return code, {"error": str(exc)}
 
 
 def _extract_project(resource_name: str) -> str:
-    """Extracts the GCP project ID from a standard projects/<id>/... resource name."""
+    """Extracts the GCP project segment from a projects/<project>/... resource path."""
     parts = resource_name.split("/")
-    return parts[1] if len(parts) >= 2 and parts[0] == "projects" else ""
+    if len(parts) >= 2 and parts[0] == "projects":
+        return parts[1]
+    return ""
+
+
+def _list_ces_runs_paginated(
+    base_url: str, access_token: str, sandbox_project: str, fetch_fn: FetchFn
+) -> tuple[bool, list[dict[str, Any]], str]:
+    """Fetches all pages of CES evaluationRuns under an ephemeral Sandbox app."""
+    runs: list[dict[str, Any]] = []
+    page_token = ""
+    for _ in range(20):
+        url = f"{base_url}?pageToken={urllib.parse.quote(page_token)}" if page_token else base_url
+        status, body = fetch_fn(url, access_token, sandbox_project)
+        if status != 200:
+            return False, [], f"CES API GET {url} returned HTTP {status}."
+        runs.extend(body.get("evaluationRuns", []) or [])
+        page_token = str(body.get("nextPageToken") or "")
+        if not page_token:
+            return True, runs, ""
+    return True, runs, ""
 
 
 def _verify_ces_runs(
@@ -49,33 +70,50 @@ def _verify_ces_runs(
     access_token: str,
     fetch_fn: FetchFn,
 ) -> list[str]:
-    """Verifies live CES evaluationRuns provenance for a GECX Verdict."""
+    """Verifies ephemeral CES app PR/commit binding and paginated evaluationRuns."""
     errors: list[str] = []
     app_name = str(verdict.get("ephemeral_app_name") or "")
+    if not app_name:
+        return ["GECX live-gcp-verified requires non-empty ephemeral_app_name."]
     if _extract_project(app_name) != sandbox_project:
-        return [f"GECX ephemeral_app_name project '{_extract_project(app_name)}' != sandbox_project '{sandbox_project}'."]
-    if not verdict.get("evaluation_run_ids"):
-        return ["GECX live-gcp-verified requires at least one evaluation_run_id."]
+        return [f"CES app project '{_extract_project(app_name)}' != sandbox_project '{sandbox_project}'."]
 
-    url = f"https://ces.googleapis.com/v1beta/{app_name}/evaluationRuns"
-    status, body = fetch_fn(url, access_token, sandbox_project)
-    if status != 200:
-        return [f"CES API GET {url} returned HTTP {status}: {body.get('error', '')}"]
+    pr_tag = f"PR-{verdict['pr_number']}"
+    sha7 = str(verdict["commit_sha"])[:7]
+    app_url = f"https://ces.googleapis.com/v1beta/{app_name}"
+    app_status, app_body = fetch_fn(app_url, access_token, sandbox_project)
+    if app_status == 200 and isinstance(app_body, dict) and "displayName" in app_body:
+        disp = str(app_body.get("displayName") or "")
+        if pr_tag not in disp or sha7 not in disp:
+            errors.append(f"CES app displayName '{disp}' is not bound to {pr_tag} and commit {sha7}.")
+    elif app_status != 200:
+        errors.append(f"CES app GET {app_url} failed provenance check (HTTP {app_status}).")
 
-    runs_by_name = {str(r.get("name")): r for r in body.get("evaluationRuns", [])}
+    ok, all_runs, err = _list_ces_runs_paginated(
+        f"https://ces.googleapis.com/v1beta/{app_name}/evaluationRuns",
+        access_token,
+        sandbox_project,
+        fetch_fn,
+    )
+    if not ok:
+        errors.append(err)
+        return errors
+
+    runs_by_name = {r.get("name"): r for r in all_runs if isinstance(r, dict)}
     target_sa = expected_evaluator_sa or str(verdict.get("expected_evaluator_sa") or "")
     for run_id in verdict["evaluation_run_ids"]:
         run = runs_by_name.get(run_id)
         if not run:
             errors.append(f"Claimed evaluationRun '{run_id}' does not exist in CES Sandbox.")
             continue
-        progress = run.get("progress") or {}
-        total = int(progress.get("totalCount", 0) or 0)
-        failed = int(progress.get("failedCount", 0) or 0)
-        if total <= 0:
+        state = str(run.get("state") or "")
+        if state and state.upper() not in ("SUCCEEDED", "COMPLETED", "STATE_UNSPECIFIED"):
+            errors.append(f"evaluationRun '{run_id}' ended in state '{state}'.")
+        prog = run.get("progress") or {}
+        if int(prog.get("totalCount", 0) or 0) <= 0:
             errors.append(f"evaluationRun '{run_id}' executed 0 test cases.")
-        if failed > 0:
-            errors.append(f"evaluationRun '{run_id}' recorded {failed} failed case(s).")
+        if int(prog.get("failedCount", 0) or 0) > 0:
+            errors.append(f"evaluationRun '{run_id}' recorded {prog['failedCount']} failed case(s).")
         initiated = str(run.get("initiatedBy") or "")
         if target_sa and initiated and target_sa not in initiated:
             errors.append(f"evaluationRun '{run_id}' initiatedBy '{initiated}' != expected SA '{target_sa}'.")
@@ -89,7 +127,7 @@ def _verify_adk_live(
     access_token: str,
     fetch_fn: FetchFn,
 ) -> list[str]:
-    """Verifies ADK Sandbox ReasoningEngine and Gemini Enterprise provenance bound to the PR."""
+    """Verifies ADK Sandbox ReasoningEngine and Gemini Enterprise provenance bound to PR and commit."""
     errors: list[str] = []
     v_sa = str(verdict.get("expected_evaluator_sa") or "")
     if not v_sa:
@@ -130,8 +168,10 @@ def _verify_adk_live(
                 errors.append(f"Gemini Enterprise GET {url} failed verification (HTTP {status}).")
             else:
                 disp = str(body.get("displayName") or "")
-                if "[CI]" not in disp:
-                    errors.append(f"Gemini Enterprise agent displayName '{disp}' lacks [CI] Sandbox prefix.")
+                if "[CI]" not in disp or pr_tag not in disp or sha7 not in disp:
+                    errors.append(
+                        f"Gemini Enterprise agent displayName '{disp}' is not bound to [CI], {pr_tag}, and commit {sha7}."
+                    )
     return errors
 
 

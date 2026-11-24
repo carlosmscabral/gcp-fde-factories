@@ -1,8 +1,10 @@
-"""Tests for the public clean-room sanitizer gate, PII patterns, file coverage, and false-positive corpus."""
+"""Tests for the public clean-room sanitizer gate, PII patterns, runtime denylist, and false-positive corpus."""
 from __future__ import annotations
 
 import hashlib
 import pathlib
+
+import pytest
 
 from scripts.lib.sanitizer import check_skill_sources, scan_repository, scan_text_for_leaks
 
@@ -14,14 +16,20 @@ def test_repository_passes_public_sanitization() -> None:
     assert scan_repository(REPO_ROOT) == []
 
 
-def test_sanitizer_blocks_internal_links_and_pii_but_allows_safe_prose() -> None:
-    """Verifies expanded regexes catch leaks without false positives on common code or Go/No-Go prose."""
+def test_sanitizer_blocks_internal_links_and_pii_but_allows_safe_prose(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verifies regexes and runtime denylist catch leaks without false positives on safe prose."""
+    denylist = tmp_path / "denylist.txt"
+    denylist.write_text("internal-lab-codename\nsynthetic-tenant-hub\n", encoding="utf-8")
+    monkeypatch.setenv("SANITIZER_DENYLIST_FILE", str(denylist))
+
     leaks = scan_text_for_leaks(
         "Check go/internal-doc, b/123456789, cl/6543210, user.c.googlers.com, alice@google.com.\n"
-        "Also argolis on line 2 and cabral-gecx-spk-hub with CPF 123.456.789-00.\n",
+        "Also internal-lab-codename on line 2 and synthetic-tenant-hub with CPF 123.456.789-00.\n",
         "sample.md",
     )
-    assert len(leaks) == 7 or len(leaks) >= 7
+    assert len(leaks) == 8
 
     # False-positive corpus: adk-go/tree/main, Go/No-Go, django/utils, public URLs, and dates must pass.
     clean = scan_text_for_leaks(
@@ -32,11 +40,19 @@ def test_sanitizer_blocks_internal_links_and_pii_but_allows_safe_prose() -> None
     assert clean == []
 
 
-def test_sanitizer_scans_dockerfiles_and_tfvars(tmp_path: pathlib.Path) -> None:
+def test_sanitizer_scans_dockerfiles_and_tfvars(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Negative test (IB-26): planted internal leaks inside Dockerfile and .tfvars files are caught."""
-    (tmp_path / "Dockerfile").write_text("FROM alpine\n# see go/secret-build-doc\n", encoding="utf-8")
-    (tmp_path / "demo.tfvars").write_text('project = "cabral-gecx-spk-hub"\n', encoding="utf-8")
-    hits = scan_repository(tmp_path, scan_tests=True)
+    denylist = tmp_path / "denylist.txt"
+    denylist.write_text("synthetic-private-hub\n", encoding="utf-8")
+    monkeypatch.setenv("SANITIZER_DENYLIST_FILE", str(denylist))
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "Dockerfile").write_text("FROM alpine\n# see go/secret-build-doc\n", encoding="utf-8")
+    (repo / "demo.tfvars").write_text('project = "synthetic-private-hub"\n', encoding="utf-8")
+    hits = scan_repository(repo, scan_tests=True)
     assert any("Dockerfile" in h for h in hits)
     assert any("demo.tfvars" in h for h in hits)
 

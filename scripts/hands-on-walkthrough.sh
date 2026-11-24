@@ -72,12 +72,12 @@ step_2() {
 
 step_3() {
   pause_step "STEP 3: Build Offline Release Kit (./build.sh --release-kit)" \
-    "Composes 16 prefix-isolated templates (zero external URIs, zero hardcoded models) and Hub Skill Bank directories into $KIT_OUT."
+    "Composes prefix-isolated templates (zero external URIs, zero hardcoded models) and Hub Skill Bank directories into $KIT_OUT."
   cd "$REPO_ROOT"
   ./build.sh --release-kit "packs/${PACK}" --out "$KIT_OUT"
   echo "--- Generated templates (notice ${PACK}- prefix, no model key) ---"
   ls -1 "$KIT_OUT/templates"
-  echo "--- Sample ${PACK}-${PACK}-deployer/scion-agent.yaml ---"
+  echo "--- Sample ${PACK}-deployer/scion-agent.yaml ---"
   cat "$KIT_OUT/templates/${PACK}-deployer/scion-agent.yaml"
   echo "--- Generated manifest.json summary ---"
   jq '{pack, pack_version, scion_tested, external_uris_remaining, templates: [.templates[].name], skills: [.skills[].name]}' "$KIT_OUT/manifest.json"

@@ -7,14 +7,28 @@ import os
 import pathlib
 import sys
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+for candidate in (str(SCRIPT_DIR), str(REPO_ROOT)):
+    if candidate not in sys.path:
+        sys.path.insert(0, candidate)
 
 from scripts.lib.verdict_checker import verify_verdict
 
 
-def main() -> int:
+def default_verdict_schema() -> pathlib.Path:
+    """Resolves verdict.schema.json inside either the source repo or container /opt/gcp-fde layout."""
+    for cand in (
+        SCRIPT_DIR / "schemas" / "verdict.schema.json",
+        REPO_ROOT / "schemas" / "verdict.schema.json",
+        pathlib.Path("/opt/gcp-fde/schemas/verdict.schema.json"),
+    ):
+        if cand.is_file():
+            return cand
+    return REPO_ROOT / "schemas" / "verdict.schema.json"
+
+
+def main(argv: list[str] | None = None) -> int:
     """Validates a PR Verdict JSON against schema, commit SHA, evals hash, and live Sandbox APIs."""
     parser = argparse.ArgumentParser(description="Verify PR Verdict provenance.")
     parser.add_argument("--verdict", required=True, type=pathlib.Path)
@@ -26,8 +40,8 @@ def main() -> int:
     parser.add_argument("--expected-pr-number", type=int, default=None)
     parser.add_argument("--allowed-surfaces", default="")
     parser.add_argument("--require-live", action="store_true")
-    parser.add_argument("--schema", type=pathlib.Path, default=REPO_ROOT / "schemas" / "verdict.schema.json")
-    args = parser.parse_args()
+    parser.add_argument("--schema", type=pathlib.Path, default=default_verdict_schema())
+    args = parser.parse_args(argv)
 
     allowed = {s.strip() for s in args.allowed_surfaces.split(",") if s.strip()} if args.allowed_surfaces else None
     errors = verify_verdict(

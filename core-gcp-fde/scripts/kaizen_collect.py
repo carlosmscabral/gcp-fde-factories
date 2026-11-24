@@ -7,6 +7,7 @@ Delegates all collection and schema validation logic to scripts/lib/kaizen_colle
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import pathlib
 import sys
@@ -49,18 +50,40 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--workarounds", type=pathlib.Path, default=None)
     parser.add_argument("--proposals", type=pathlib.Path, default=None)
     parser.add_argument("--history-dir", type=pathlib.Path, default=None)
+    parser.add_argument("--no-history", action="store_true", help="Disable dated snapshot archiving.")
     parser.add_argument("--toolchain-manifest", type=pathlib.Path, default=None)
     parser.add_argument("--time-zone", default="America/Sao_Paulo")
     parser.add_argument("--skip-drift", action="store_true")
     parser.add_argument("--enable-gcp-obs", action="store_true")
+    parser.add_argument(
+        "--gcp-obs-json",
+        type=pathlib.Path,
+        default=None,
+        help="Path to a pre-fetched Cloud Monitoring/Logging JSON summary object.",
+    )
     parser.add_argument("--out", type=pathlib.Path, required=True)
     parser.add_argument("--schema", type=pathlib.Path, default=REPO_ROOT / "schemas" / "kaizen-snapshot.schema.json")
     return parser.parse_args(argv)
 
 
+def _load_gcp_obs_payload(obs_path: pathlib.Path | None) -> tuple[dict[str, object] | None, str | None]:
+    """Reads an optional pre-fetched Cloud Monitoring/Logging JSON summary."""
+    if obs_path is None:
+        return None, None
+    try:
+        raw = json.loads(obs_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return None, f"gcp_observability: unreadable --gcp-obs-json '{obs_path}': {exc}"
+    if not isinstance(raw, dict):
+        return None, f"gcp_observability: --gcp-obs-json '{obs_path}' must contain a JSON object."
+    return raw, None
+
+
 def main(argv: list[str] | None = None) -> int:
     """Collects telemetry, validates against schema, and writes the snapshot JSON."""
     args = parse_args(argv)
+    resolved_history = None if args.no_history else (args.history_dir or (args.repo / ".factory" / "kaizen" / "snapshots"))
+    obs_payload, obs_err = _load_gcp_obs_payload(args.gcp_obs_json)
     snapshot = build_kaizen_snapshot(
         hub_url=args.hub_url,
         project_id=args.project_id,
@@ -70,13 +93,23 @@ def main(argv: list[str] | None = None) -> int:
         verdicts_dir=args.verdicts_dir,
         workarounds_path=args.workarounds or _default_workarounds(args.repo),
         proposals_path=args.proposals,
-        history_dir=args.history_dir,
+        history_dir=resolved_history,
         toolchain_manifest=args.toolchain_manifest or _default_toolchain_manifest(),
         include_drift=not args.skip_drift,
-        enable_gcp_obs=args.enable_gcp_obs,
+        enable_gcp_obs=bool(args.enable_gcp_obs or args.gcp_obs_json is not None),
+        gcp_obs_payload=obs_payload,
         time_zone=args.time_zone,
     )
-    errors = write_validated_snapshot(snapshot, args.out, args.schema, history_dir=args.history_dir)
+    if obs_err:
+        snapshot["source_errors"].append(obs_err[:240])
+    state_path = (args.proposals.parent / "proposals.state.json") if args.proposals else (args.repo / ".factory" / "kaizen" / "proposals.state.json")
+    errors = write_validated_snapshot(
+        snapshot,
+        args.out,
+        args.schema,
+        history_dir=resolved_history,
+        proposal_state_path=state_path if snapshot.get("proposal_verifications") else None,
+    )
     if errors:
         for err in errors:
             print(f"SNAPSHOT SCHEMA ERROR: {err}", file=sys.stderr)

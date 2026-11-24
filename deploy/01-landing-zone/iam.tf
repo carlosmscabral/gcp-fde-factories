@@ -272,13 +272,36 @@ resource "google_service_account_iam_member" "hub_mint_evaluator" {
   member             = "serviceAccount:${google_service_account.scion_hub.email}"
 }
 
-# Grant actAs on the 3 assignable SAs to customer operators so they pass enforce without Editor/Owner.
+# Grant actAs on the assignable SAs and Cloud Build submission rights to customer operators without Editor/Owner.
 resource "google_service_account_iam_member" "operator_act_as" {
   for_each = local.operator_sa_pairs
 
   service_account_id = each.value.sa_name
   role               = "roles/iam.serviceAccountUser"
   member             = each.value.member
+}
+
+resource "google_service_account_iam_member" "operator_builder_act_as" {
+  for_each = toset(var.factory_operator_members)
+
+  service_account_id = google_service_account.release_builder.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = each.value
+}
+
+resource "google_project_iam_member" "operator_cloudbuild_editor" {
+  for_each = toset(var.factory_operator_members)
+
+  project = var.hub_project_id
+  role    = "roles/cloudbuild.builds.editor"
+  member  = each.value
+}
+
+# Allow CI Evaluator SA to pull digest-pinned pack runtime images from the Hub Artifact Registry.
+resource "google_project_iam_member" "evaluator_ar_reader" {
+  project = var.hub_project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.sandbox_evaluator.email}"
 }
 
 # --- Inference Project Worker IAM ---
@@ -476,4 +499,50 @@ resource "google_project_iam_member" "kaizen_sandbox_logging" {
   project = var.sandbox_project_id
   role    = "roles/logging.viewer"
   member  = "serviceAccount:${google_service_account.kaizen_viewer[0].email}"
+}
+
+# --- Optional Keyless GitHub Actions Workload Identity Federation (for PR Verdict Gate + Janitor) ---
+
+resource "google_iam_workload_identity_pool" "github_actions" {
+  count = var.enable_github_wif ? 1 : 0
+
+  project                   = var.sandbox_project_id
+  workload_identity_pool_id = "${var.name_prefix}-gh-pool"
+  display_name              = "GitHub Actions Verdict Gate Pool"
+  description               = "Keyless OIDC federation strictly scoped to the customer repository for PR Verdict verification."
+}
+
+resource "google_iam_workload_identity_pool_provider" "github_oidc" {
+  count = var.enable_github_wif ? 1 : 0
+
+  project                            = var.sandbox_project_id
+  workload_identity_pool_id          = google_iam_workload_identity_pool.github_actions[0].workload_identity_pool_id
+  workload_identity_pool_provider_id = "github-oidc"
+  display_name                       = "GitHub Actions OIDC Provider"
+  attribute_mapping = {
+    "google.subject"       = "assertion.sub"
+    "attribute.repository" = "assertion.repository"
+    "attribute.actor"      = "assertion.actor"
+  }
+  attribute_condition = "assertion.repository == '${var.github_repository}'"
+
+  oidc {
+    issuer_uri = "https://token.actions.githubusercontent.com"
+  }
+}
+
+resource "google_service_account_iam_member" "wif_evaluator_impersonation" {
+  count = var.enable_github_wif ? 1 : 0
+
+  service_account_id = google_service_account.sandbox_evaluator.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_actions[0].name}/attribute.repository/${var.github_repository}"
+}
+
+resource "google_service_account_iam_member" "wif_janitor_impersonation" {
+  count = var.enable_github_wif ? 1 : 0
+
+  service_account_id = google_service_account.sandbox_janitor.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_actions[0].name}/attribute.repository/${var.github_repository}"
 }

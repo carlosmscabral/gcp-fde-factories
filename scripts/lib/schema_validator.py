@@ -1,6 +1,7 @@
-"""JSON Schema validator for all 5 factory contracts.
+"""JSON Schema validator for all factory contracts.
 
-Validates pack.yaml, compat.yaml, hub-project.yaml, and Verdict JSON against schemas/*.json.
+Validates pack.yaml, compat.yaml, hub-project.yaml, Verdict JSON, Kaizen snapshots,
+Kaizen proposals, factory profiles, and Gemini Enterprise manifests against schemas/*.json.
 """
 from __future__ import annotations
 
@@ -27,8 +28,3 @@ def validate_against_schema(payload: dict[str, Any], schema_path: pathlib.Path) 
 def validate_yaml_file(yaml_path: pathlib.Path, schema_path: pathlib.Path) -> list[str]:
     """Loads a YAML document and validates it against schema_path."""
     return validate_against_schema(load_yaml(yaml_path), schema_path)
-
-
-def validate_json_file(json_path: pathlib.Path, schema_path: pathlib.Path) -> list[str]:
-    """Loads a JSON document and validates it against schema_path."""
-    return validate_against_schema(load_json(json_path), schema_path)

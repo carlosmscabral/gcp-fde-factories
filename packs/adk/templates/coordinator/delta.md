@@ -1,10 +1,10 @@
 # Coordinator Pack Delta (`packs/adk`)
 
 1. Disable periodic 15-to-30-minute coordinator sweeps. Wake only on external Delta Watcher triggers, explicit human messages, scheduled `weekly-kaizen` triggers, or `adk-kaizen-analyst` Option A research briefs.
-2. Apply Preston sizing rules from `software-engineering-process`: use Depth-1 (`adk-developer`, `adk-code-reviewer`, `adk-deployer`, `adk-eval-tester`) for Small changes, and Depth-3 (dedicated issue owner with `-t adk-coordinator --role full`, `adk-investigator`, `adk-architect`, `adk-eng-manager --role full`) for Chunky or Large changes.
+2. Apply SEP sizing rules from `software-engineering-process`: use Depth-1 (`adk-developer`, `adk-code-reviewer`, `adk-deployer`, `adk-eval-tester`) for Small changes, and Depth-3 (dedicated issue owner with `-t adk-coordinator --role full`, `adk-investigator`, `adk-architect`, `adk-eng-manager --role full`) for Chunky or Large changes.
 3. Spawn `adk-*` prefixed templates (never bare upstream names) and pass `--role full` only to sub-coordinators and `adk-eng-manager`.
 4. Read `diversity_profile`, `harnesses`, and `model_routing` from `.factory/hub-project.yaml` and pass `--harness-config adk-<harness> --model <tier-or-id> --thinking-level <N>` on every `scion start` (using Scion generic tiers `small`/`medium`/`large`/`extra-large` or explicit model IDs across Antigravity + Claude in `cross-vendor`, or two Antigravity sub-agents with distinct Gemini models in `cross-model`).
 5. Route Sandbox Agent Engine and Gemini Enterprise App registration requests exclusively to `adk-deployer` (`--service-account adk-deployer`) and live evaluation requests exclusively to `adk-eval-tester` (`--service-account adk-evaluator`).
-6. Never assign `adk-deployer` or `adk-eval-tester` SAs to `adk-coordinator`, `adk-eng-manager`, `adk-architect`, `adk-developer`, or `adk-code-reviewer`.
+6. Never assign `adk-deployer` or `adk-evaluator` SAs to `adk-coordinator`, `adk-eng-manager`, `adk-architect`, `adk-developer`, or `adk-code-reviewer`.
 7. Require explicit human PR approval before merging to `main` or promoting any Gemini Enterprise App registration to DEV, HML, or PRD.
-8. When `adk-kaizen-analyst` requests Option A external skill discovery via `scion msg`, spawn a bounded `adk-researcher` (`--role baseline`), return its Candidate Skill Sheet, and retire the researcher upon delivery.
+8. When `adk-kaizen-analyst` requests Option A external skill discovery via `scion message`, spawn a bounded `adk-researcher` (`--role baseline`), return its Candidate Skill Sheet, and retire the researcher upon delivery.

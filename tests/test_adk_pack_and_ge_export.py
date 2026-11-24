@@ -126,6 +126,7 @@ def test_ge_export_supports_agent_engine_a2a_patch_and_rejects_bad_inputs(tmp_pa
     assert st == 200
     p_st, _ = patch_ge_agent(body["name"], a2a_spec, "tok-adk", "demo-ge-sandbox", http_fn=fake_http)
     assert p_st == 200
+    assert "authorizationConfig" in seen_calls[-1][1]  # B-15: updateMask must include authorizationConfig
     d_st, _ = delete_ge_agent(body["name"], "eu", "tok-adk", "demo-ge-sandbox", http_fn=fake_http)
     assert d_st == 200
     assert [m for m, _ in seen_calls] == ["POST", "PATCH", "DELETE"]
@@ -276,3 +277,36 @@ def test_adk_sandbox_gate_level1_honesty_and_dual_janitor(tmp_path: pathlib.Path
     assert any("reasoningEngines/old?force=true" in u for u in deleted_urls)
     assert any(ge_res in u for u in deleted_urls)
     assert len(summary["failures"]) == 1
+
+
+def test_adk_dockerfile_multistage_contract_and_offline_scaffold_smoke(tmp_path: pathlib.Path) -> None:
+    """Negative tests (B-12/B-25/B-10): final-stage USER check, scaffold offline pytest, and janitor skip_resources."""
+    from packs.adk.scripts.adk_sandbox_gate import validate_dockerfile_contract
+
+    for bad_name, content in (
+        ("root_group", "FROM python:3.12-slim\nUSER root:root\nCMD [\"adk\"]\n"),
+        ("uid_zero", "FROM python:3.12-slim\nUSER 0:1000\nCMD [\"adk\"]\n"),
+        ("var_user", "FROM python:3.12-slim\nUSER ${APP_USER}\nCMD [\"adk\"]\n"),
+        ("multistage_missing_user", "FROM python:3.12 AS builder\nUSER scion\nFROM python:3.12-slim\nCMD [\"adk\"]\n"),
+    ):
+        df = tmp_path / f"Dockerfile.{bad_name}"
+        df.write_text(content, encoding="utf-8")
+        assert validate_dockerfile_contract(df) != [], f"{bad_name} should fail"
+
+    # Scaffold offline smoke test must pass without google-adk installed (B-25).
+    smoke = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests/test_agent_smoke.py", "-q"],
+        cwd=str(REPO_ROOT / "packs/adk/repo-scaffold"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert smoke.returncode == 0, smoke.stdout + smoke.stderr
+
+    # Shared PATCH-reused GE agent with fresh updateTime or skip_resources must NOT be swept (B-10).
+    now = dt.datetime(2026, 11, 24, 15, 0, tzinfo=dt.timezone.utc)
+    ge_items = [
+        {"name": "agents/reused-fresh", "displayName": "[CI] PR-5", "createTime": "2026-11-20T00:00:00Z", "updateTime": "2026-11-24T14:30:00Z"},
+        {"name": "agents/pinned-skip", "displayName": "[CI] PR-4", "createTime": "2026-11-20T00:00:00Z"},
+    ]
+    assert select_expired_ci_resources(ge_items, now, max_age_hours=4.0, skip_resources={"agents/pinned-skip"}) == []

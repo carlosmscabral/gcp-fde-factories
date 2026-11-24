@@ -25,6 +25,7 @@ from scripts.lib.kaizen_verifier import (
     load_latest_prior_snapshot,
     load_proposals,
     verify_proposals,
+    write_proposal_state,
 )
 from scripts.lib.schema_validator import validate_against_schema
 
@@ -166,8 +167,9 @@ def write_validated_snapshot(
     schema_path: pathlib.Path,
     history_dir: pathlib.Path | None = None,
     today: dt.date | None = None,
+    proposal_state_path: pathlib.Path | None = None,
 ) -> list[str]:
-    """Validates snapshot against schema, writes out_path, and archives a dated copy when history_dir is set."""
+    """Validates snapshot against schema, writes out_path, archives dated history, and persists proposal state."""
     errors = validate_against_schema(snapshot, schema_path)
     if errors:
         return errors
@@ -179,4 +181,6 @@ def write_validated_snapshot(
         date_slug = (today or dt.datetime.now(ZoneInfo(tz)).date()).isoformat()
         history_dir.mkdir(parents=True, exist_ok=True)
         (history_dir / f"{date_slug}.json").write_text(rendered, encoding="utf-8")
+    if proposal_state_path is not None and snapshot.get("proposal_verifications"):
+        write_proposal_state(proposal_state_path, snapshot["proposal_verifications"])
     return []

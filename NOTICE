@@ -33,3 +33,8 @@ licenses. No files are copied from repositories without an explicit license.
    - License: Apache-2.0
    - Version: v1.15.0 (Commit 2fa159a803aceec3b4df808901e53a08a6f1fb2a)
    - URL: https://github.com/google/agents-cli
+
+7. google/adk-python (Agent Development Kit runtime and evaluation framework)
+   - License: Apache-2.0
+   - Version: v2.15.0 (Commit 802db43abdc6344096967e8ad24ba5e4ae64836b)
+   - URL: https://github.com/google/adk-python

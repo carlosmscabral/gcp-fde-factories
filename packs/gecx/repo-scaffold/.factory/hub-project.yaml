@@ -2,13 +2,17 @@
 # Validated against schemas/hub-project.schema.json.
 # Opinionated Vertex AI default using Scion generic semantic tiers (`small`, `medium`, `large`, `extra-large`)
 # plus canonical `thinking_level` (0-100) so concrete models evolve automatically with upstream Scion.
-# Any role may still specify an explicit Vertex AI model ID when needed.
-# Set harnesses.claude_model_garden_enabled: false and diversity_profile: "cross-model" if Claude is not enabled in Model Garden.
+# Defaults to `cross-model` with `claude_model_garden_enabled: false` (fail-closed) so Day-1 deploy works
+# immediately on Vertex AI Gemini without manual Anthropic Model Garden activation.
+# To enable cross-vendor Claude Opus reviews after activating Anthropic Claude in Vertex AI Model Garden:
+#   1. Set diversity_profile: "cross-vendor"
+#   2. Set harnesses.claude_model_garden_enabled: true
+#   3. Set code-reviewer and security-auditor harness: "claude-vertex", model: "large", thinking_level: 75
 schema_version: "1"
 pack: "gecx"
 pack_version: "0.4.0"
 mode: "sandbox-direct"
-diversity_profile: "cross-vendor"
+diversity_profile: "cross-model"
 
 limits:
   default_max_duration: "2h"
@@ -18,7 +22,7 @@ limits:
 
 harnesses:
   default: "antigravity-vertex"
-  claude_model_garden_enabled: true
+  claude_model_garden_enabled: false
   vertex_gemini_location: "global"
   vertex_claude_region: "global"
 
@@ -36,13 +40,13 @@ model_routing:
     model: "extra-large"
     thinking_level: 100
   code-reviewer:
-    harness: "claude-vertex"
+    harness: "antigravity-vertex"
     model: "large"
-    thinking_level: 75
+    thinking_level: 100
   security-auditor:
-    harness: "claude-vertex"
+    harness: "antigravity-vertex"
     model: "large"
-    thinking_level: 75
+    thinking_level: 100
   kaizen-analyst:
     harness: "antigravity-vertex"
     model: "extra-large"
@@ -57,6 +61,7 @@ kaizen:
   schedule_cron: "0 17 * * 5"
   time_zone: "America/Sao_Paulo"
   coordinator_agent: "coordinator"
+  enable_gcp_obs: false
 
 exclude_skills: []
 overlay_skills: []

@@ -24,8 +24,11 @@ images:
   example-pack-runtime: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/factory-images/example-pack-runtime@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 models:
-  claude_reviewer: "claude-sonnet-4-6"
-  gemini_developer: "gemini-3.1-pro-preview"
+  antigravity_default: "gemini-4-neon-high"
+  antigravity_reviewer_alt: "gemini-4-carbon-high"
+  antigravity_fast: "gemini-4-hydrogen-medium"
+  claude_default: "claude-opus-5-5"
+  claude_fast: "claude-sonnet-5-5"
 
 canary:
   run_id: "template-pack-skeleton-2026-11-24"

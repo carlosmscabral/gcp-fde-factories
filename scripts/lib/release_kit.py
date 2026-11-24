@@ -1,4 +1,4 @@
-"""Offline Release Kit builder composing Preston's 13 agent-team roles plus domain specialists.
+"""Offline Release Kit builder composing the 13 scion-frontiers/agent-team (SEP) roles plus domain specialists.
 
 Produces a self-contained customer handoff directory with:
 - Zero external gh:// or floating GitHub URLs in generated templates.
@@ -237,15 +237,25 @@ def _copy_build_and_deploy_assets(
             ignore=ignore_cache,
         )
 
-    shutil.copytree(repo_root / "scripts" / "lib", out_dir / "scripts" / "lib", ignore=ignore_cache)
+    ignore_kit_lib = shutil.ignore_patterns(
+        "__pycache__",
+        "*.pyc",
+        "sanitizer.py",
+        "release_kit.py",
+        "budget_engine.py",
+        "lock_verifier.py",
+    )
+    shutil.copytree(repo_root / "scripts" / "lib", out_dir / "scripts" / "lib", ignore=ignore_kit_lib)
     shutil.copy2(repo_root / "scripts" / "verify-verdict.py", out_dir / "scripts" / "verify-verdict.py")
     shutil.copytree(repo_root / "schemas", out_dir / "schemas", ignore=ignore_cache)
 
-    (out_dir / "packs" / pack_name).mkdir(parents=True, exist_ok=True)
-    shutil.copy2(repo_root / pack_cfg["runtime_image"]["dockerfile"], out_dir / pack_cfg["runtime_image"]["dockerfile"])
+    dockerfile_rel = str(pack_cfg["runtime_image"]["dockerfile"])
+    (out_dir / dockerfile_rel).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(repo_root / dockerfile_rel, out_dir / dockerfile_rel)
     toolchain_manifest_rel: str | None = None
     if (pack_dir / "toolchain-manifest.json").exists():
         toolchain_manifest_rel = f"packs/{pack_name}/toolchain-manifest.json"
+        (out_dir / toolchain_manifest_rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(pack_dir / "toolchain-manifest.json", out_dir / toolchain_manifest_rel)
     if (pack_dir / "scripts").is_dir():
         shutil.copytree(pack_dir / "scripts", out_dir / "packs" / pack_name / "scripts", ignore=ignore_cache)

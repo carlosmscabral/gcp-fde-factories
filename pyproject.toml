@@ -1,6 +1,10 @@
+[build-system]
+requires = ["setuptools>=69.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "gcp-fde-factories"
-version = "0.1.0"
+version = "0.4.0"
 description = "Reusable, empirically validated Scion software factory packs for Google Cloud FDEs."
 requires-python = ">=3.12"
 dependencies = [
@@ -12,6 +16,10 @@ dependencies = [
 dev = [
   "pytest>=8.3.0",
 ]
+
+[tool.setuptools]
+packages = []
+py-modules = []
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

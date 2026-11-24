@@ -237,6 +237,8 @@ def test_kaizen_collect_cli_degrades_gracefully_offline_hermetic(tmp_path: pathl
             str(REPO_ROOT / "packs/gecx/repo-scaffold"),
             "--scratchpad",
             str(tmp_path / "missing-scratchpad"),
+            "--history-dir",
+            str(tmp_path / "snapshots"),
             "--out",
             str(out_file),
         ],
@@ -250,3 +252,106 @@ def test_kaizen_collect_cli_degrades_gracefully_offline_hermetic(tmp_path: pathl
     assert data["schema_version"] == "1"
     assert data["sources_status"]["hub_metrics"] == "skipped"
     assert data["sources_status"]["gcp_observability"] == "skipped"
+
+
+def test_kaizen_verifier_hardening_and_cli_obs_json(tmp_path: pathlib.Path) -> None:
+    """Negative tests (B-02/B-03/B-04/B-16/B-17/B-18/D-02): malformed JSONL, missing merged_at, commit trailers, and --gcp-obs-json."""
+    from scripts.lib.kaizen_verifier import load_proposals
+
+    props_file = tmp_path / "proposals.jsonl"
+    valid_base = {
+        "schema_version": "1",
+        "proposal_id": "KZ-2026-11-24-01",
+        "created_date_brt": "2026-11-24",
+        "status": "proposed",
+        "ladder_step": 2,
+        "target_metric": "avg_review_rounds",
+        "baseline_value": 3.0,
+        "rollback_criterion": {
+            "window_merged_prs": 1,
+            "operator": "<=",
+            "target_value": 2.0,
+            "expected_delta_description": "Reduce review rounds below two.",
+            "revert_target": "hub-project.yaml",
+        },
+        "anti_reward_hacking_attestation": {
+            "preserves_code_reviewer": True,
+            "preserves_evals_coverage": True,
+            "preserves_iam_boundaries": True,
+        },
+    }
+    updated = {**valid_base, "baseline_value": 2.5}
+    props_file.write_text(
+        json.dumps(valid_base) + "\n"
+        + '{"proposal_id":"KZ-2026-11-24-99"}\n'  # schema-invalid, must be skipped without crash (B-02)
+        + json.dumps(updated) + "\n",  # duplicate ID must deduplicate keeping last entry (B-04)
+        encoding="utf-8",
+    )
+    loaded, errs = load_proposals(props_file)
+    assert len(loaded) == 1 and loaded[0]["baseline_value"] == 2.5
+    assert any("schema invalid" in e for e in errs)
+
+    # Missing merged_at_utc on implemented proposal MUST stay measuring (never count pre-merge PRs, B-03).
+    no_ts_res = verify_proposals(
+        [{**valid_base, "status": "implemented", "merged_at_utc": None}],
+        [{"number": 10, "createdAt": "2026-11-19T10:00:00", "mergedAt": "2026-11-19T11:00:00", "reviews": []}],
+        {},
+        {"tool_error_rates": []},
+    )
+    assert no_ts_res[0]["status"] == "measuring"
+    assert no_ts_res[0]["prs_observed"] == 0
+
+    # Unknown rollback operator must be rejected cleanly (B-17) and commit-body Kaizen-Ref must match (B-18).
+    bad_op = {**valid_base, "rollback_criterion": {**valid_base["rollback_criterion"], "operator": "=="}}
+    assert verify_proposals([bad_op], [], {}, {"tool_error_rates": []})[0]["status"] == "rejected"
+
+    commit_ref_prs = [
+        {
+            "number": 60,
+            "title": "chore: update limits",
+            "body": "",
+            "commits": [{"messageHeadline": "tune", "messageBody": "Kaizen-Ref: KZ-2026-11-24-01"}],
+            "createdAt": "2026-11-20T10:00:00Z",
+            "mergedAt": "2026-11-20T12:00:00Z",
+            "reviews": [{"state": "APPROVED"}],
+        },
+        {
+            "number": 61,
+            "title": "feat: follow-up",
+            "body": "",
+            "createdAt": "2026-11-21T10:00:00",  # naive timestamp normalized to UTC (B-02)
+            "mergedAt": "2026-11-21T11:00:00",
+            "reviews": [{"state": "APPROVED"}],
+        },
+    ]
+    matched = verify_proposals([valid_base], commit_ref_prs, {}, {"tool_error_rates": []})
+    assert matched[0]["status"] == "verified_pass" and matched[0]["implemented_pr_number"] == 60
+
+    # CLI --gcp-obs-json loads Tier-B JSON cleanly and archives dated snapshot into history_dir (D-02/B-06).
+    obs_file = tmp_path / "obs.json"
+    obs_file.write_text(json.dumps({"window_days": 7, "tokens_total": 42000}), encoding="utf-8")
+    hist_dir = tmp_path / "history"
+    out_snap = tmp_path / "snap-obs.json"
+    clean_env = {k: v for k, v in os.environ.items() if not k.startswith("SCION_")}
+    clean_env["HOME"] = str(tmp_path)
+    res_obs = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "core-gcp-fde/scripts/kaizen_collect.py"),
+            "--repo", str(tmp_path),
+            "--proposals", str(props_file),
+            "--history-dir", str(hist_dir),
+            "--gcp-obs-json", str(obs_file),
+            "--out", str(out_snap),
+        ],
+        env=clean_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res_obs.returncode == 0, res_obs.stderr
+    obs_snap = json.loads(out_snap.read_text(encoding="utf-8"))
+    assert obs_snap["sources_status"]["gcp_observability"] == "ok"
+    assert obs_snap["gcp_observability"]["tokens_total"] == 42000
+    assert list(hist_dir.glob("*.json"))
+    assert (tmp_path / "proposals.state.json").is_file()

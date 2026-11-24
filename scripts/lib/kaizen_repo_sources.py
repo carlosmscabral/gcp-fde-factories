@@ -31,13 +31,16 @@ def clean_token_str(raw: Any, max_len: int = 80) -> str:
 
 
 def _parse_iso(raw: Any) -> dt.datetime | None:
-    """Parses an ISO-8601 UTC timestamp string into an aware datetime."""
+    """Parses an ISO-8601 timestamp string and normalizes naive values to UTC."""
     if not raw or not isinstance(raw, str):
         return None
     try:
-        return dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        parsed = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
 
 
 def collect_github_ci(
@@ -57,8 +60,8 @@ def collect_github_ci(
 
     rc, pr_out, err = run_cmd(
         [
-            "gh", "pr", "list", "--state", "merged", "--limit", "25",
-            "--json", "number,title,body,createdAt,mergedAt,mergeCommit,reviews",
+            "gh", "pr", "list", "--state", "merged", "--limit", "60",
+            "--json", "number,title,body,createdAt,mergedAt,mergeCommit,reviews,commits",
         ],
         repo_dir,
     )
