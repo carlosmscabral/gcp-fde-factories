@@ -1,0 +1,22 @@
+# Declarative Hub project overlay for packs/adk (Contract 2 v2).
+# Reconciled by deploy/03-hub-bootstrap/bootstrap-hub-project.sh.
+schema_version: "1"
+pack: "adk"
+pack_version: "0.1.0"
+mode: "sandbox-direct"
+diversity_profile: "cross-vendor"
+
+limits:
+  default_max_duration: "2h"
+  default_max_turns: 60
+  default_max_model_calls: 150
+  auto_suspend_idle: true
+
+exclude_skills: []
+overlay_skills: []
+
+kaizen:
+  enabled: true
+  schedule_cron: "0 17 * * 5"
+  time_zone: "America/Sao_Paulo"
+  enable_gcp_obs: false

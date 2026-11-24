@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://gcp-fde-factories.local/schemas/verdict.schema.json",
   "title": "Verifiable Factory Verdict (Contract 5)",
-  "description": "Anti-forgery PR verdict record checked against the live CES evaluationRuns API in CI.",
+  "description": "Anti-forgery PR verdict record checked against live GCP Sandbox APIs (CES, Vertex AI Agent Engine, or Gemini Enterprise) in CI.",
   "type": "object",
   "required": [
     "schema_version",
@@ -18,12 +18,17 @@
   "additionalProperties": false,
   "properties": {
     "schema_version": { "type": "string", "const": "1" },
+    "pack": { "type": "string", "enum": ["gecx", "adk", "agent-platform"] },
     "pr_number": { "type": "integer", "minimum": 1 },
     "commit_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
     "diversity_profile": { "type": "string", "enum": ["cross-vendor", "cross-model", "single-family"] },
     "ephemeral_app_name": {
       "type": ["string", "null"],
-      "pattern": "^projects/[a-z0-9-]+/locations/[a-z0-9-]+/apps/[A-Za-z0-9-]+$"
+      "pattern": "^projects/[a-z0-9-]+/locations/[a-z0-9-]+/(apps|reasoningEngines)/[A-Za-z0-9-]+$"
+    },
+    "ge_agent_resource": {
+      "type": ["string", "null"],
+      "pattern": "^projects/[a-z0-9-]+/locations/[a-z0-9-]+/collections/default_collection/engines/[A-Za-z0-9_-]+/assistants/[A-Za-z0-9_-]+/agents/[A-Za-z0-9_-]+$"
     },
     "evaluation_run_ids": {
       "type": "array",
@@ -65,11 +70,28 @@
     {
       "if": { "properties": { "verdict": { "const": "live-gcp-verified" } } },
       "then": {
-        "required": ["ephemeral_app_name", "evaluation_run_ids", "expected_evaluator_sa"],
-        "properties": {
-          "ephemeral_app_name": { "type": "string" },
-          "evaluation_run_ids": { "type": "array", "minItems": 1 }
-        }
+        "required": ["expected_evaluator_sa"],
+        "anyOf": [
+          {
+            "required": ["ephemeral_app_name", "evaluation_run_ids"],
+            "properties": {
+              "ephemeral_app_name": { "type": "string", "pattern": "/apps/" },
+              "evaluation_run_ids": { "type": "array", "minItems": 1 }
+            }
+          },
+          {
+            "required": ["ephemeral_app_name"],
+            "properties": {
+              "ephemeral_app_name": { "type": "string", "pattern": "/reasoningEngines/" }
+            }
+          },
+          {
+            "required": ["ge_agent_resource"],
+            "properties": {
+              "ge_agent_resource": { "type": "string" }
+            }
+          }
+        ]
       }
     },
     {

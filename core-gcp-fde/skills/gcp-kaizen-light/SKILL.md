@@ -10,9 +10,10 @@ description: Lightweight continuous improvement rules for flow metrics, hygiene 
 - Avoid growing prompt instructions indefinitely when a Python check enforces the invariant at zero token cost.
 - source: https://github.com/scion-frontiers/agent-team
 
-## 2. Track Hygiene Work Explicitly
+## 2. Track Hygiene Work and Lead Events Explicitly
 - Open a `priority:hygiene` issue whenever a pack skill approaches 300 lines or a `WORKAROUNDS.yaml` item approaches 90 days.
-- Measure total role context across Layers 0, 1, and 2 using `scripts/budget-check.py`.
+- Measure total role context across Layers 0, 1, and 2 using `./build.sh --check <pack-dir>`.
+- When a coordinator or engineering manager triggers an Andon Cord escalation or resolves an agent stall, append one JSON line to `/scion-volumes/scratchpad/kaizen-events.jsonl` for the Kaizen Analyst.
 - source: https://github.com/scion-frontiers/agent-team
 
 ## 3. Clean-Room Reverse Kaizen Rule

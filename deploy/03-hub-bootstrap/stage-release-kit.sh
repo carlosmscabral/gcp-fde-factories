@@ -31,6 +31,7 @@ done
 [[ -n "$KIT_DIR" && -n "$LANDING_ZONE_JSON" ]] || usage
 AR_URL="$(jq -r '.artifact_registry_url.value' "$LANDING_ZONE_JSON")"
 HUB_PROJECT="$(jq -r '.hub_project_id.value' "$LANDING_ZONE_JSON")"
+PACK_NAME="$(jq -r '.pack' "$KIT_DIR/manifest.json")"
 PACK_VERSION="$(jq -r '.pack_version' "$KIT_DIR/manifest.json")"
 GCLOUD_ARGS=()
 if [[ -n "$GCLOUD_CONFIG" ]]; then
@@ -66,7 +67,7 @@ case "$MODE" in
       --region="$(jq -r '.region.value' "$LANDING_ZONE_JSON")" \
       "${SA_ARGS[@]}" \
       --config="$SCRIPT_DIR/cloudbuild.yaml" \
-      --substitutions="_AR_URL=${AR_URL},_PACK_VERSION=${PACK_VERSION}"
+      --substitutions="_AR_URL=${AR_URL},_PACK=${PACK_NAME},_PACK_VERSION=${PACK_VERSION}"
     ;;
   *)
     echo "Invalid --mode '$MODE'. Use mirror or rebuild." >&2

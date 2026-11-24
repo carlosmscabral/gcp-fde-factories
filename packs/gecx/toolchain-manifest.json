@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "pack": "gecx",
+  "pack_version": "0.4.0",
+  "baked_binaries": {
+    "python": "3.12",
+    "uv": "0.6.14",
+    "pytest": "8.x",
+    "cxas": "1.11.0",
+    "git": "2.48+",
+    "jq": "1.6+",
+    "curl": "7.88+",
+    "bash": "5.x"
+  },
+  "heavy_test_candidates": ["playwright", "chromium", "jdk", "mvn", "gradle"]
+}

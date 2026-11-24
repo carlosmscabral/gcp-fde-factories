@@ -117,9 +117,11 @@ do_apply() {
     if [[ -n "$TARGET_REPO" && -f "$TARGET_REPO/.factory/hub-project.yaml" ]]; then
       mode="$(grep -E '^mode:' "$TARGET_REPO/.factory/hub-project.yaml" | awk '{print $2}' | tr -d '\"' || echo sandbox-direct)"
     fi
+    local pack_prefix
+    pack_prefix="$(jq -r '.pack_prefix // .pack // "gecx"' "$KIT_DIR/manifest.json")"
     if [[ "$mode" == "sandbox-direct" ]]; then
-      register_and_verify_sa "$dep_sa" "$sbx_p" "gecx-deployer"
-      register_and_verify_sa "$eval_sa" "$sbx_p" "gecx-evaluator"
+      register_and_verify_sa "$dep_sa" "$sbx_p" "${pack_prefix}-deployer"
+      register_and_verify_sa "$eval_sa" "$sbx_p" "${pack_prefix}-evaluator"
     else
       echo "MODE ci-only: skipping Sandbox Deployer and Evaluator SA registration on Hub."
     fi
@@ -161,17 +163,42 @@ do_apply() {
 
 do_overlay_sync() {
   [[ -n "$TARGET_REPO" ]] || { echo "--repo is required for overlay-sync" >&2; exit 2; }
-  if [[ ! -d "$TARGET_REPO/skills" ]]; then
-    echo "No customer overlay skills/ directory found in $TARGET_REPO."
-    return 0
+  local published=0
+  if [[ -f "$TARGET_REPO/.factory/hub-project.yaml" ]] && command -v python3 >/dev/null 2>&1; then
+    while IFS=$'\t' read -r rel_dir sver; do
+      [[ -n "$rel_dir" ]] || continue
+      local sdir="$TARGET_REPO/$rel_dir"
+      [[ -d "$sdir" ]] || continue
+      local sname
+      sname="$(basename "$sdir")"
+      scion skills publish "$sdir" --scope project --version "${sver:-1.0.0}" --hub "$HUB_URL"
+      scion project skills add "skill://${sname}" --hub "$HUB_URL" || true
+      published=1
+    done < <(python3 -c '
+import pathlib, sys, yaml
+cfg = yaml.safe_load(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")) or {}
+for item in cfg.get("overlay_skills", []):
+    print(f"{item.get(\"dir\", \"\")}\t{item.get(\"version\", \"1.0.0\")}")
+' "$TARGET_REPO/.factory/hub-project.yaml" 2>/dev/null || true)
   fi
-  for sdir in "$TARGET_REPO"/skills/*; do
-    [[ -d "$sdir" ]] || continue
-    local sname
-    sname="$(basename "$sdir")"
-    scion skills publish "$sdir" --scope project --version "1.0.0" --hub "$HUB_URL"
-    scion project skills add "skill://${sname}" --hub "$HUB_URL" || true
-  done
+  if [[ "$published" -eq 0 && -d "$TARGET_REPO/skills" ]]; then
+    for sdir in "$TARGET_REPO"/skills/*; do
+      [[ -d "$sdir" ]] || continue
+      local sname
+      sname="$(basename "$sdir")"
+      scion skills publish "$sdir" --scope project --version "1.0.0" --hub "$HUB_URL"
+      scion project skills add "skill://${sname}" --hub "$HUB_URL" || true
+      published=1
+    done
+  fi
+  if [[ "$published" -eq 0 ]]; then
+    echo "No customer overlay skills/ directory found in $TARGET_REPO."
+  fi
+  if [[ -f "$TARGET_REPO/.factory/hub-project.yaml" ]] && grep -Eq '^[[:space:]]*enabled:[[:space:]]*true' "$TARGET_REPO/.factory/hub-project.yaml"; then
+    local pack_prefix
+    pack_prefix="$(jq -r '.pack_prefix // .pack // "gecx"' "$KIT_DIR/manifest.json")"
+    echo "KAIZEN HINT: schedule weekly telemetry via scion schedule create-recurring --template ${pack_prefix}-kaizen-analyst --hub $HUB_URL"
+  fi
   echo "OVERLAY SYNC COMPLETE."
 }
 

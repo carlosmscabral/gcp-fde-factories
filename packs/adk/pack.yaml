@@ -1,0 +1,250 @@
+# Pack 2 Factory Pack manifest for Google Cloud Agent Development Kit (ADK) + Gemini Enterprise Export.
+# Uses Preston's full 13-role agent-team hierarchy plus split-SA Sandbox roles and Kaizen Analyst
+# (16 offline prefix-scoped templates, 11 Hub Skill Bank skills).
+schema_version: "1"
+
+pack:
+  name: "adk"
+  prefix: "adk"
+  version: "0.1.0"
+  status: "pilot"
+  description: "Google Cloud Agent Development Kit (ADK) autonomous software factory pack with Vertex AI Agent Engine runtime, adk eval gates, Gemini Enterprise App export (adkAgentDefinition and A2A), and closed-loop Kaizen."
+
+upstream:
+  agent_team_repo: "scion-frontiers/agent-team"
+  agent_team_commit: "08faf48269da7d8dd0a20c4e5ca5093afb37495d"
+  skills_lock: "skills.lock"
+
+specialist_templates:
+  # --- Orchestration tier (--role full: can create and supervise child agents) ---
+  - name: "coordinator"
+    base_role: "coordinator"
+    delta_dir: "templates/coordinator"
+    hub_role: "full"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "software-engineering-process"
+      - "agent-state-continuity"
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  - name: "eng-manager"
+    base_role: "eng-manager"
+    delta_dir: "templates/eng-manager"
+    hub_role: "full"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "software-engineering-process"
+      - "agent-state-continuity"
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  # --- Discovery, architecture, implementation, review, and security (--role baseline) ---
+  - name: "architect"
+    base_role: "architect"
+    delta_dir: "templates/architect"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  - name: "investigator"
+    base_role: "investigator"
+    delta_dir: "templates/investigator"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
+      - "software-engineering-process"
+    strip_hardcoded_model: true
+
+  - name: "developer"
+    base_role: "developer"
+    delta_dir: "templates/developer"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  - name: "code-reviewer"
+    base_role: "code-reviewer"
+    delta_dir: "templates/code-reviewer"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "code-review"
+      - "software-engineering-process"
+    strip_hardcoded_model: true
+
+  - name: "test-engineer"
+    base_role: "test-engineer"
+    delta_dir: "templates/test-engineer"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  - name: "security-auditor"
+    base_role: "security-auditor"
+    delta_dir: "templates/security-auditor"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  # --- ADK split-SA Sandbox + Gemini Enterprise export verification lane (--role baseline) ---
+  - name: "adk-deployer"
+    base_role: "developer"
+    delta_dir: "templates/adk-deployer"
+    hub_role: "baseline"
+    sandbox_sa_slot: "deployer"
+    role_skills:
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  - name: "adk-eval-tester"
+    base_role: "qa-tester"
+    delta_dir: "templates/adk-eval-tester"
+    hub_role: "baseline"
+    sandbox_sa_slot: "evaluator"
+    role_skills:
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  # --- Closed-loop Kaizen diagnostics (--role baseline, Option A via coordinator) ---
+  - name: "kaizen-analyst"
+    base_role: "investigator"
+    delta_dir: "templates/kaizen-analyst"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "gcp-kaizen-analyst"
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  # --- Supporting roles inherited cleanly from pinned agent-team@08faf48 ---
+  - name: "qa-tester"
+    base_role: "qa-tester"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  - name: "researcher"
+    base_role: "researcher"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  - name: "doc-writer"
+    base_role: "doc-writer"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+  - name: "release-notes"
+    base_role: "release-notes"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
+      - "release-notes-daily"
+    strip_hardcoded_model: true
+
+  - name: "web-builder"
+    base_role: "web-builder"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
+project_skills:
+  # Attached project-wide to every ADK agent (guardrails + ADK/GE domain contracts)
+  - name: "gcp-fde-guardrails"
+    local_dir: "core-gcp-fde/skills/gcp-fde-guardrails"
+    version: "0.4.0"
+    scope: "global"
+    attach_to_project: true
+  - name: "gcp-sandbox-contract"
+    local_dir: "core-gcp-fde/skills/gcp-sandbox-contract"
+    version: "0.4.0"
+    scope: "global"
+    attach_to_project: true
+  - name: "gcp-kaizen-light"
+    local_dir: "core-gcp-fde/skills/gcp-kaizen-light"
+    version: "0.4.0"
+    scope: "global"
+    attach_to_project: true
+  - name: "adk-domain-guardrails"
+    local_dir: "packs/adk/skills/adk-domain-guardrails"
+    version: "0.1.0"
+    scope: "global"
+    attach_to_project: true
+  - name: "adk-ge-export-contract"
+    local_dir: "packs/adk/skills/adk-ge-export-contract"
+    version: "0.1.0"
+    scope: "global"
+    attach_to_project: true
+
+  # Published to Hub Skill Bank (offline) and mounted selectively via role_skills
+  - name: "gcp-kaizen-analyst"
+    local_dir: "core-gcp-fde/skills/gcp-kaizen-analyst"
+    version: "0.4.0"
+    scope: "global"
+    attach_to_project: false
+  - name: "software-engineering-process"
+    local_dir: "vendor/agent-team/skills/software-engineering-process"
+    version: "0.2.0"
+    scope: "global"
+    attach_to_project: false
+  - name: "agent-state-continuity"
+    local_dir: "vendor/agent-team/skills/agent-state-continuity"
+    version: "0.2.0"
+    scope: "global"
+    attach_to_project: false
+  - name: "artifact-durability"
+    local_dir: "vendor/agent-team/skills/artifact-durability"
+    version: "0.2.0"
+    scope: "global"
+    attach_to_project: false
+  - name: "code-review"
+    local_dir: "vendor/agent-team/skills/code-review"
+    version: "0.2.0"
+    scope: "global"
+    attach_to_project: false
+  - name: "release-notes-daily"
+    local_dir: "vendor/agent-team/skills/release-notes-daily"
+    version: "0.2.0"
+    scope: "global"
+    attach_to_project: false
+
+runtime_image:
+  dockerfile: "packs/adk/Dockerfile"
+  harness_configs:
+    - "core-gcp-fde/harness-configs/claude-vertex.yaml"
+    - "core-gcp-fde/harness-configs/antigravity-vertex.yaml"
+
+context_budget:
+  max_total_lines_per_role: 1800
+  max_lines_per_pack_skill: 300
+  max_delta_rules: 15
+
+verification:
+  level1_offline_commands:
+    - "pytest tests/ -q"
+    - "python3 /opt/adk-factory/ge_export.py validate --manifest ge_manifest.json"
+  level2_sandbox_runner: "packs/adk/scripts/adk-eval-runner.sh"
+  not_verifiable_in_sandbox:
+    - "production-3lo-oauth-consent-ui"
+    - "private-onprem-mcp-psc-endpoint"
+    - "customer-corp-idp-group-acls"

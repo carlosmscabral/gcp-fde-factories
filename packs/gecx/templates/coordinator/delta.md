@@ -8,3 +8,4 @@
 6. Never assign `gecx-deployer` or `gecx-eval-tester` SAs to `gecx-coordinator`, `gecx-eng-manager`, `gecx-architect`, `gecx-developer`, or `gecx-code-reviewer`.
 7. Require a human PR approval on every pull request in v1. Never auto-merge to `main`.
 8. Escalate immediately if a PR changes telephony, SIP, SBC, VAIC, DTMF, or CCaaS surfaces and require the `not-verifiable-in-sandbox` verdict level.
+9. When `gecx-kaizen-analyst` requests Option A external skill discovery via `scion msg`, spawn a bounded `gecx-researcher` (`--role baseline`), return its Candidate Skill Sheet to `gecx-kaizen-analyst`, and retire the researcher upon delivery.

@@ -328,3 +328,128 @@ resource "google_project_iam_member" "janitor_service_usage" {
   role    = "roles/serviceusage.serviceUsageConsumer"
   member  = "serviceAccount:${google_service_account.sandbox_janitor.email}"
 }
+
+# --- Optional Multi-Pack ADK + Gemini Enterprise Sandbox Custom Roles (Explicit, Zero Wildcards) ---
+
+resource "google_project_iam_custom_role" "adk_sandbox_deployer" {
+  count = var.enable_adk_sandbox_roles ? 1 : 0
+
+  project     = var.sandbox_project_id
+  role_id     = "adkSandboxDeployer"
+  title       = "ADK and Gemini Enterprise Sandbox Ephemeral Deployer"
+  description = "Deploys ephemeral Vertex AI Agent Engine runtimes and registers ephemeral Sandbox agents in Gemini Enterprise."
+  permissions = [
+    "aiplatform.reasoningEngines.create",
+    "aiplatform.reasoningEngines.delete",
+    "aiplatform.reasoningEngines.get",
+    "aiplatform.reasoningEngines.list",
+    "aiplatform.reasoningEngines.query",
+    "aiplatform.reasoningEngines.update",
+    "discoveryengine.agents.create",
+    "discoveryengine.agents.delete",
+    "discoveryengine.agents.get",
+    "discoveryengine.agents.list",
+    "discoveryengine.agents.update",
+    "storage.objects.create",
+    "storage.objects.delete",
+    "storage.objects.get",
+    "storage.objects.list",
+  ]
+
+  depends_on = [google_project_service.enabled]
+}
+
+resource "google_project_iam_custom_role" "adk_sandbox_evaluator" {
+  count = var.enable_adk_sandbox_roles ? 1 : 0
+
+  project     = var.sandbox_project_id
+  role_id     = "adkSandboxEvaluator"
+  title       = "ADK and Gemini Enterprise Sandbox Evaluator"
+  description = "Queries ephemeral Vertex AI Agent Engine runtimes and inspects Gemini Enterprise Sandbox agents without mutating them."
+  permissions = [
+    "aiplatform.reasoningEngines.get",
+    "aiplatform.reasoningEngines.list",
+    "aiplatform.reasoningEngines.query",
+    "discoveryengine.agents.get",
+    "discoveryengine.agents.list",
+  ]
+
+  depends_on = [google_project_service.enabled]
+}
+
+resource "google_project_iam_custom_role" "adk_sandbox_janitor" {
+  count = var.enable_adk_sandbox_roles ? 1 : 0
+
+  project     = var.sandbox_project_id
+  role_id     = "adkSandboxJanitor"
+  title       = "ADK and Gemini Enterprise Sandbox Ephemeral Janitor"
+  description = "Lists and deletes expired [CI] Vertex AI Agent Engine runtimes and Gemini Enterprise Sandbox registrations."
+  permissions = [
+    "aiplatform.reasoningEngines.delete",
+    "aiplatform.reasoningEngines.get",
+    "aiplatform.reasoningEngines.list",
+    "discoveryengine.agents.delete",
+    "discoveryengine.agents.get",
+    "discoveryengine.agents.list",
+  ]
+
+  depends_on = [google_project_service.enabled]
+}
+
+resource "google_project_iam_member" "deployer_adk_custom_role" {
+  count = var.enable_adk_sandbox_roles ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = google_project_iam_custom_role.adk_sandbox_deployer[0].id
+  member  = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+}
+
+resource "google_project_iam_member" "evaluator_adk_custom_role" {
+  count = var.enable_adk_sandbox_roles ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = google_project_iam_custom_role.adk_sandbox_evaluator[0].id
+  member  = "serviceAccount:${google_service_account.sandbox_evaluator.email}"
+}
+
+resource "google_project_iam_member" "janitor_adk_custom_role" {
+  count = var.enable_adk_sandbox_roles ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = google_project_iam_custom_role.adk_sandbox_janitor[0].id
+  member  = "serviceAccount:${google_service_account.sandbox_janitor.email}"
+}
+
+# --- Optional Tier-B Read-Only Kaizen Observability Service Account (v0.3.0) ---
+
+resource "google_service_account" "kaizen_viewer" {
+  count = var.enable_kaizen_gcp_obs ? 1 : 0
+
+  project      = var.inference_project_id
+  account_id   = "${var.name_prefix}-kaizen"
+  display_name = "Factory Kaizen Read-Only Telemetry Viewer"
+}
+
+resource "google_service_account_iam_member" "hub_mint_kaizen_viewer" {
+  count = var.enable_kaizen_gcp_obs ? 1 : 0
+
+  service_account_id = google_service_account.kaizen_viewer[0].name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_service_account.scion_hub.email}"
+}
+
+resource "google_project_iam_member" "kaizen_inference_monitoring" {
+  count = var.enable_kaizen_gcp_obs ? 1 : 0
+
+  project = var.inference_project_id
+  role    = "roles/monitoring.viewer"
+  member  = "serviceAccount:${google_service_account.kaizen_viewer[0].email}"
+}
+
+resource "google_project_iam_member" "kaizen_sandbox_logging" {
+  count = var.enable_kaizen_gcp_obs ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = "roles/logging.viewer"
+  member  = "serviceAccount:${google_service_account.kaizen_viewer[0].email}"
+}

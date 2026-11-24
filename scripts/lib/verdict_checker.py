@@ -63,33 +63,51 @@ def verify_verdict(
 
     if level == "live-gcp-verified":
         if not access_token or not sandbox_project:
-            errors.append("live-gcp-verified requires live CES API verification with access_token and sandbox_project.")
+            errors.append("live-gcp-verified requires live Sandbox API verification with access_token and sandbox_project.")
             return errors
 
-        app_name = verdict["ephemeral_app_name"]
-        url = f"https://ces.googleapis.com/v1beta/{app_name}/evaluationRuns"
-        status, body = fetch_fn(url, access_token, sandbox_project)
-        if status != 200:
-            errors.append(f"CES API GET {url} returned HTTP {status}: {body.get('error', '')}")
-            return errors
+        app_name = str(verdict.get("ephemeral_app_name") or "")
+        ge_agent = str(verdict.get("ge_agent_resource") or "")
 
-        runs_by_name = {str(r.get("name")): r for r in body.get("evaluationRuns", [])}
-        target_sa = expected_evaluator_sa or str(verdict.get("expected_evaluator_sa") or "")
+        if "/apps/" in app_name:
+            url = f"https://ces.googleapis.com/v1beta/{app_name}/evaluationRuns"
+            status, body = fetch_fn(url, access_token, sandbox_project)
+            if status != 200:
+                errors.append(f"CES API GET {url} returned HTTP {status}: {body.get('error', '')}")
+                return errors
 
-        for run_id in verdict["evaluation_run_ids"]:
-            run = runs_by_name.get(run_id)
-            if not run:
-                errors.append(f"Claimed evaluationRun '{run_id}' does not exist in CES Sandbox.")
-                continue
-            progress = run.get("progress") or {}
-            total = int(progress.get("totalCount", 0) or 0)
-            failed = int(progress.get("failedCount", 0) or 0)
-            if total <= 0:
-                errors.append(f"evaluationRun '{run_id}' executed 0 test cases.")
-            if failed > 0:
-                errors.append(f"evaluationRun '{run_id}' recorded {failed} failed case(s).")
-            initiated = str(run.get("initiatedBy") or "")
-            if target_sa and initiated and target_sa not in initiated:
-                errors.append(f"evaluationRun '{run_id}' initiatedBy '{initiated}' != expected SA '{target_sa}'.")
+            runs_by_name = {str(r.get("name")): r for r in body.get("evaluationRuns", [])}
+            target_sa = expected_evaluator_sa or str(verdict.get("expected_evaluator_sa") or "")
+
+            for run_id in verdict["evaluation_run_ids"]:
+                run = runs_by_name.get(run_id)
+                if not run:
+                    errors.append(f"Claimed evaluationRun '{run_id}' does not exist in CES Sandbox.")
+                    continue
+                progress = run.get("progress") or {}
+                total = int(progress.get("totalCount", 0) or 0)
+                failed = int(progress.get("failedCount", 0) or 0)
+                if total <= 0:
+                    errors.append(f"evaluationRun '{run_id}' executed 0 test cases.")
+                if failed > 0:
+                    errors.append(f"evaluationRun '{run_id}' recorded {failed} failed case(s).")
+                initiated = str(run.get("initiatedBy") or "")
+                if target_sa and initiated and target_sa not in initiated:
+                    errors.append(f"evaluationRun '{run_id}' initiatedBy '{initiated}' != expected SA '{target_sa}'.")
+
+        if "/reasoningEngines/" in app_name:
+            loc = app_name.split("/locations/", 1)[1].split("/", 1)[0]
+            url = f"https://{loc}-aiplatform.googleapis.com/v1beta1/{app_name}"
+            status, body = fetch_fn(url, access_token, sandbox_project)
+            if status != 200 or body.get("name") != app_name:
+                errors.append(f"Vertex AI Agent Engine GET {url} failed verification (HTTP {status}).")
+
+        if ge_agent:
+            loc = ge_agent.split("/locations/", 1)[1].split("/", 1)[0]
+            prefix = "" if loc == "global" else f"{loc}-"
+            url = f"https://{prefix}discoveryengine.googleapis.com/v1alpha/{ge_agent}"
+            status, body = fetch_fn(url, access_token, sandbox_project)
+            if status != 200 or body.get("name") != ge_agent:
+                errors.append(f"Gemini Enterprise GET {url} failed verification (HTTP {status}).")
 
     return errors

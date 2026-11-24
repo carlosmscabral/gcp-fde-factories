@@ -1,7 +1,7 @@
 # Runtime container layer for packs/gecx.
 # Installs pinned cxas-scrapi==1.11.0 (from wheelhouse if present) and vendors unmodified
 # cxas-agent-foundry scripts, references, and assets (Apache-2.0) into /opt/gecx-foundry/.
-ARG CORE_BASE_IMAGE=core-gcp-fde-base:0.1.0
+ARG CORE_BASE_IMAGE=core-gcp-fde-base:0.4.0
 FROM ${CORE_BASE_IMAGE}
 
 ARG CXAS_VERSION=1.11.0
@@ -14,6 +14,7 @@ RUN uv pip install --system --no-cache "cxas-scrapi==${CXAS_VERSION}"
 
 # Vendor unmodified Apache-2.0 cxas-agent-foundry scripts, references, and assets at pinned commit.
 COPY NOTICE "${GECX_FOUNDRY_DIR}/NOTICE"
+COPY packs/gecx/toolchain-manifest.json "${GCP_FDE_DIR}/gecx-toolchain-manifest.json"
 RUN mkdir -p /tmp/foundry-fetch "${GECX_FOUNDRY_DIR}" \
     && curl -fsSL "https://github.com/GoogleCloudPlatform/cxas-scrapi/archive/${FOUNDRY_COMMIT}.tar.gz" \
        | tar -xz -C /tmp/foundry-fetch --strip-components=1 \

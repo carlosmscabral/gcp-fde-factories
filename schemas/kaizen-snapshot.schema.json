@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gcp-fde-factories.local/schemas/kaizen-snapshot.schema.json",
+  "title": "Kaizen Multi-Source Telemetry Snapshot (v0.3.0)",
+  "description": "Validates the 0-token JSON snapshot emitted by core-gcp-fde/scripts/kaizen_collect.py.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "collected_at_utc",
+    "sources_status",
+    "hub_metrics",
+    "control_plane",
+    "github_ci",
+    "scratchpad",
+    "repo_drift",
+    "gcp_observability"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "const": "1" },
+    "collected_at_utc": { "type": "string", "format": "date-time" },
+    "hub_project_id": { "type": ["string", "null"] },
+    "sources_status": {
+      "type": "object",
+      "required": [
+        "hub_metrics",
+        "scion_control_plane",
+        "github_ci",
+        "scratchpad",
+        "repo_drift",
+        "gcp_observability"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "hub_metrics": { "type": "string", "enum": ["ok", "skipped", "error"] },
+        "scion_control_plane": { "type": "string", "enum": ["ok", "skipped", "error"] },
+        "github_ci": { "type": "string", "enum": ["ok", "skipped", "error"] },
+        "scratchpad": { "type": "string", "enum": ["ok", "skipped", "error"] },
+        "repo_drift": { "type": "string", "enum": ["ok", "skipped", "error"] },
+        "gcp_observability": { "type": "string", "enum": ["ok", "skipped", "error"] }
+      }
+    },
+    "hub_metrics": {
+      "type": "object",
+      "required": ["project_summary", "agents", "tool_error_rates"],
+      "additionalProperties": false,
+      "properties": {
+        "project_summary": { "type": ["object", "null"] },
+        "agents": { "type": "array", "items": { "type": "object" } },
+        "tool_error_rates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["tool", "calls", "errors", "error_rate"],
+            "properties": {
+              "tool": { "type": "string" },
+              "calls": { "type": "integer", "minimum": 0 },
+              "errors": { "type": "integer", "minimum": 0 },
+              "error_rate": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        }
+      }
+    },
+    "control_plane": {
+      "type": "object",
+      "required": [
+        "agent_count",
+        "stalled_agents",
+        "limits_exceeded_agents",
+        "artifacts_count",
+        "decisions_count"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "agent_count": { "type": "integer", "minimum": 0 },
+        "stalled_agents": { "type": "array", "items": { "type": "string" } },
+        "limits_exceeded_agents": { "type": "array", "items": { "type": "string" } },
+        "artifacts_count": { "type": ["integer", "null"] },
+        "decisions_count": { "type": ["integer", "null"] }
+      }
+    },
+    "github_ci": {
+      "type": "object",
+      "required": [
+        "merged_prs",
+        "avg_review_rounds",
+        "avg_lead_time_hours",
+        "failed_ci_runs",
+        "hygiene_issues_open"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "merged_prs": { "type": "integer", "minimum": 0 },
+        "avg_review_rounds": { "type": ["number", "null"] },
+        "avg_lead_time_hours": { "type": ["number", "null"] },
+        "failed_ci_runs": { "type": "integer", "minimum": 0 },
+        "hygiene_issues_open": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "scratchpad": {
+      "type": "object",
+      "required": [
+        "verdict_counts",
+        "sandbox_ledger_entries",
+        "kaizen_events_count",
+        "workarounds_expiring_soon"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "verdict_counts": { "type": "object" },
+        "sandbox_ledger_entries": { "type": "integer", "minimum": 0 },
+        "kaizen_events_count": { "type": "integer", "minimum": 0 },
+        "workarounds_expiring_soon": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "component", "days_remaining"],
+            "properties": {
+              "id": { "type": "string" },
+              "component": { "type": "string" },
+              "days_remaining": { "type": "integer" }
+            }
+          }
+        }
+      }
+    },
+    "repo_drift": {
+      "type": "object",
+      "required": ["drift_detected", "missing_binaries", "notes"],
+      "additionalProperties": false,
+      "properties": {
+        "drift_detected": { "type": "boolean" },
+        "missing_binaries": { "type": "array", "items": { "type": "string" } },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "gcp_observability": {
+      "type": ["object", "null"]
+    }
+  }
+}

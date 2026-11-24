@@ -99,7 +99,7 @@ def compose_specialist_template(
         f"# Operational Instructions: {full_name}",
         (
             "Scion prepends platform workspace orientation and `sciontool status` signals automatically.\n"
-            "When spawning sibling or child roles, always use the prefix-scoped `gecx-*` template names."
+            f"When spawning sibling or child roles, always use the prefix-scoped `{pack_prefix}-*` template names."
         ),
     ]
     if delta_text:
@@ -181,26 +181,44 @@ def build_release_kit(repo_root: pathlib.Path, pack_dir: pathlib.Path, out_dir: 
     shutil.copy2(repo_root / "NOTICE", out_dir / "NOTICE")
 
     # Include build contexts needed when customers choose --mode rebuild (cloudbuild.yaml).
+    ignore_cache = shutil.ignore_patterns("__pycache__", "*.pyc")
     (out_dir / "core-gcp-fde" / "images").mkdir(parents=True, exist_ok=True)
     shutil.copy2(
         repo_root / "core-gcp-fde" / "images" / "base.Dockerfile",
         out_dir / "core-gcp-fde" / "images" / "base.Dockerfile",
     )
-    (out_dir / "packs" / pack_cfg["pack"]["name"]).mkdir(parents=True, exist_ok=True)
+    if (repo_root / "core-gcp-fde" / "scripts").is_dir():
+        shutil.copytree(
+            repo_root / "core-gcp-fde" / "scripts",
+            out_dir / "core-gcp-fde" / "scripts",
+            ignore=ignore_cache,
+        )
+    shutil.copytree(repo_root / "scripts" / "lib", out_dir / "scripts" / "lib", ignore=ignore_cache)
+    shutil.copytree(repo_root / "schemas", out_dir / "schemas", ignore=ignore_cache)
+
+    pack_name = str(pack_cfg["pack"]["name"])
+    (out_dir / "packs" / pack_name).mkdir(parents=True, exist_ok=True)
     shutil.copy2(
         repo_root / pack_cfg["runtime_image"]["dockerfile"],
         out_dir / pack_cfg["runtime_image"]["dockerfile"],
     )
+    toolchain_manifest_rel: str | None = None
+    if (pack_dir / "toolchain-manifest.json").exists():
+        toolchain_manifest_rel = f"packs/{pack_name}/toolchain-manifest.json"
+        shutil.copy2(pack_dir / "toolchain-manifest.json", out_dir / toolchain_manifest_rel)
+    if (pack_dir / "scripts").is_dir():
+        shutil.copytree(pack_dir / "scripts", out_dir / "packs" / pack_name / "scripts", ignore=ignore_cache)
 
     manifest: dict[str, Any] = {
         "schema_version": "1",
-        "pack": pack_cfg["pack"]["name"],
+        "pack": pack_name,
         "pack_prefix": prefix,
         "pack_version": pack_cfg["pack"]["version"],
         "scion_tested": compat_cfg["scion"]["tested"],
         "scion_binary_sha256": compat_cfg["scion"]["binary_sha256"],
         "agent_team_commit": agent_team_commit,
         "images": compat_cfg["images"],
+        "toolchain_manifest": toolchain_manifest_rel,
         "templates": templates_meta,
         "skills": skills_meta,
         "external_uris_remaining": 0,

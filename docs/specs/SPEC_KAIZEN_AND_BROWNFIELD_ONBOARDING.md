@@ -1,12 +1,12 @@
 # Especificação Formal — Motor Kaizen Closed-Loop (`v0.3.0`) e Onboarding Dinâmico Brownfield (`v0.4.0`)
 
-**Status:** Aprovada em sessão `/grill-me` (implementação agendada após o smoke test manual da `v0.2.0`)
-**Data:** 23/11/2026 (BRT)
-**Baseline Protegido:** `packs/gecx v0.2.0`, `scion v0.4.0-preview.3`, `scion-frontiers/agent-team@08faf48`
-**Escopo:** Evolução de `core-gcp-fde/` (Camada 1), `packs/gecx/` (Camada 2) e Overlay `.factory/` (Camada 3), sem alterações na Camada 0 (`vendor/agent-team/`).
+**Status:** Implementada no repositório (`packs/gecx v0.4.0` e `packs/adk v0.1.0`), aguardando validação live em Argolis após o smoke test manual da `v0.2.0`
+**Data:** 24/11/2026 (BRT)
+**Baseline Protegido:** `packs/gecx v0.2.0` (live em Argolis), `scion v0.4.0-preview.3`, `scion-frontiers/agent-team@08faf48`
+**Escopo:** Evolução de `core-gcp-fde/` (Camada 1), `packs/gecx/` e `packs/adk/` (Camada 2) e Overlay `.factory/` (Camada 3), sem alterações na Camada 0 (`vendor/agent-team/`).
 
 > [!NOTE]
-> Esta especificação registra decisões arquiteturais e contratos verificáveis para as releases `v0.3.0` e `v0.4.0`. A release `v0.2.0` permanece congelada no repositório e no ambiente de validação até o término do smoke test manual.
+> Esta especificação registra decisões arquiteturais e contratos verificáveis para as releases `v0.3.0` e `v0.4.0`. O ambiente live de validação da `v0.2.0` em Argolis permanece intacto até o término do smoke test manual.
 
 ---
 

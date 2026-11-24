@@ -11,10 +11,11 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.lib.budget_engine import check_context_budget, check_workarounds_ttl
+from scripts.lib.io_utils import load_json
 from scripts.lib.lock_verifier import scan_for_floating_uris, verify_skills_lock
 from scripts.lib.release_kit import build_release_kit
 from scripts.lib.sanitizer import scan_repository
-from scripts.lib.schema_validator import validate_yaml_file
+from scripts.lib.schema_validator import validate_against_schema, validate_yaml_file
 
 
 def run_check(pack_rel: str) -> int:
@@ -29,6 +30,26 @@ def run_check(pack_rel: str) -> int:
     overlay_cfg = pack_dir / "repo-scaffold" / ".factory" / "hub-project.yaml"
     if overlay_cfg.exists():
         errors.extend(validate_yaml_file(overlay_cfg, schemas_dir / "hub-project.schema.json"))
+
+    # Verify v0.3.0/v0.4.0/ADK schemas parse cleanly and pack manifests match their contracts.
+    for schema_name in ("kaizen-snapshot.schema.json", "factory-profile.schema.json", "ge-export.schema.json"):
+        schema_path = schemas_dir / schema_name
+        if not schema_path.exists():
+            errors.append(f"Missing required schema: {schema_path}")
+        else:
+            load_json(schema_path)
+
+    toolchain_path = pack_dir / "toolchain-manifest.json"
+    if toolchain_path.exists():
+        tc = load_json(toolchain_path)
+        if not isinstance(tc.get("baked_binaries"), dict) or not tc.get("pack"):
+            errors.append(
+                f"Invalid toolchain-manifest.json at {toolchain_path}: requires 'pack' and 'baked_binaries' object."
+            )
+
+    ge_manifest_path = pack_dir / "repo-scaffold" / "ge_manifest.json"
+    if ge_manifest_path.exists():
+        errors.extend(validate_against_schema(load_json(ge_manifest_path), schemas_dir / "ge-export.schema.json"))
 
     errors.extend(verify_skills_lock(REPO_ROOT / "skills.lock"))
     errors.extend(scan_for_floating_uris(pack_dir))

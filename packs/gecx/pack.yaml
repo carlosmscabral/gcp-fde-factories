@@ -6,9 +6,9 @@ schema_version: "1"
 pack:
   name: "gecx"
   prefix: "gecx"
-  version: "0.2.0"
+  version: "0.4.0"
   status: "pilot"
-  description: "Google Cloud Customer Engagement Suite (GECX / CES) autonomous software factory pack with full 13-role SEP hierarchy and split-SA Sandbox verification."
+  description: "Google Cloud Customer Engagement Suite (GECX / CES) autonomous software factory pack with full 13-role SEP hierarchy, split-SA Sandbox verification, and closed-loop Kaizen."
 
 upstream:
   agent_team_repo: "scion-frontiers/agent-team"
@@ -115,6 +115,17 @@ specialist_templates:
       - "artifact-durability"
     strip_hardcoded_model: true
 
+  # --- Closed-loop Kaizen diagnostics (--role baseline, Option A via coordinator) ---
+  - name: "kaizen-analyst"
+    base_role: "investigator"
+    delta_dir: "templates/kaizen-analyst"
+    hub_role: "baseline"
+    sandbox_sa_slot: "worker"
+    role_skills:
+      - "gcp-kaizen-analyst"
+      - "artifact-durability"
+    strip_hardcoded_model: true
+
   # --- Supporting roles inherited cleanly from pinned agent-team@08faf48 ---
   - name: "qa-tester"
     base_role: "qa-tester"
@@ -171,9 +182,14 @@ project_skills:
     attach_to_project: true
   - name: "gcp-kaizen-light"
     local_dir: "core-gcp-fde/skills/gcp-kaizen-light"
-    version: "0.2.0"
+    version: "0.4.0"
     scope: "global"
     attach_to_project: true
+  - name: "gcp-kaizen-analyst"
+    local_dir: "core-gcp-fde/skills/gcp-kaizen-analyst"
+    version: "0.4.0"
+    scope: "global"
+    attach_to_project: false
   - name: "gecx-foundry-adapter"
     local_dir: "packs/gecx/skills/gecx-foundry-adapter"
     version: "0.2.0"

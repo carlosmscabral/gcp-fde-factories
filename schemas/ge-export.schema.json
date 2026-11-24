@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gcp-fde-factories.local/schemas/ge-export.schema.json",
+  "title": "Gemini Enterprise (GE App) Export Manifest (packs/adk)",
+  "description": "Validates declarative export configuration for registering ADK agents into Gemini Enterprise via adkAgentDefinition or a2aAgentDefinition.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "export_mode",
+    "display_name",
+    "description",
+    "gemini_enterprise"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "const": "1" },
+    "export_mode": { "type": "string", "enum": ["agent_engine", "a2a"] },
+    "display_name": { "type": "string", "minLength": 3, "maxLength": 120 },
+    "description": { "type": "string", "minLength": 10, "maxLength": 1000 },
+    "tool_description": { "type": "string", "minLength": 5, "maxLength": 1000 },
+    "gemini_enterprise": {
+      "type": "object",
+      "required": ["project_id", "location", "endpoint_location", "app_id"],
+      "additionalProperties": false,
+      "properties": {
+        "project_id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{4,30}$" },
+        "location": { "type": "string", "enum": ["global", "us", "eu"] },
+        "endpoint_location": { "type": "string", "enum": ["global", "us", "eu"] },
+        "app_id": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{3,80}$" },
+        "assistant_id": { "type": "string", "default": "default_assistant" }
+      }
+    },
+    "agent_engine": {
+      "type": "object",
+      "required": ["reasoning_engine_resource"],
+      "additionalProperties": false,
+      "properties": {
+        "reasoning_engine_resource": {
+          "type": "string",
+          "pattern": "^projects/[a-z0-9-]+/locations/[a-z0-9-]+/reasoningEngines/[A-Za-z0-9_-]+$"
+        }
+      }
+    },
+    "a2a": {
+      "type": "object",
+      "required": ["protocol_version", "url", "version", "default_input_modes", "default_output_modes", "skills"],
+      "additionalProperties": false,
+      "properties": {
+        "protocol_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "url": { "type": "string", "pattern": "^https://" },
+        "version": { "type": "string", "minLength": 1 },
+        "streaming": { "type": "boolean", "default": true },
+        "default_input_modes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "default_output_modes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "skills": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "description"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "minLength": 2 },
+              "name": { "type": "string", "minLength": 2 },
+              "description": { "type": "string", "minLength": 5 },
+              "tags": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "tool_authorizations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^projects/[a-z0-9-]+/locations/[a-z0-9-]+/authorizations/[A-Za-z0-9_-]+$"
+      },
+      "default": []
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "export_mode": { "const": "agent_engine" } } },
+      "then": { "required": ["agent_engine"] }
+    },
+    {
+      "if": { "properties": { "export_mode": { "const": "a2a" } } },
+      "then": { "required": ["a2a"] }
+    }
+  ]
+}

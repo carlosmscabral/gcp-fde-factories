@@ -71,3 +71,7 @@ output "budget_pubsub_topic" {
 output "sandbox_staging_bucket" {
   value = google_storage_bucket.sandbox_staging.name
 }
+
+output "kaizen_viewer_sa_email" {
+  value = var.enable_kaizen_gcp_obs ? google_service_account.kaizen_viewer[0].email : null
+}

@@ -2,7 +2,7 @@
 # bootstrap-hub-project.sh rejects any Hub whose scion version is not in scion.tested.
 schema_version: "1"
 pack: gecx
-pack_version: "0.1.0"
+pack_version: "0.4.0"
 
 scion:
   tested:

@@ -1,0 +1,51 @@
+name: ADK Anti-Forgery Verdict & GE Export Gate
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  verify-adk-and-ge-export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Block unapproved evals/ edits alongside agent/ code
+        env:
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          CHANGED="$(git diff --name-only origin/${{ github.base_ref }}...HEAD)"
+          if grep -q '^agent/' <<< "$CHANGED" && grep -q '^evals/' <<< "$CHANGED"; then
+            if ! grep -q 'eval-change-approved' <<< "$PR_LABELS"; then
+              echo "FAIL: PR modifies agent/ and evals/ without human label 'eval-change-approved'." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Scan evals/ and ge_manifest.json for PII
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+          pats = [re.compile(r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b"), re.compile(r"\b(?:\d{4}[- ]?){3}\d{4}\b")]
+          for root in [pathlib.Path("evals"), pathlib.Path("ge_manifest.json")]:
+              files = [root] if root.is_file() else (list(root.rglob("*")) if root.exists() else [])
+              for f in files:
+                  if f.is_file():
+                      txt = f.read_text(encoding="utf-8", errors="ignore")
+                      for p in pats:
+                          if p.search(txt):
+                              print(f"PII detected in {f}", file=sys.stderr)
+                              sys.exit(1)
+          print("PII scan clean.")
+          PY
+
+      - name: Validate Gemini Enterprise export bundle offline
+        run: |
+          python3 packs/adk/scripts/ge_export.py validate --manifest ge_manifest.json
+          python3 packs/adk/scripts/ge_export.py export --manifest ge_manifest.json --out dist/ge-export

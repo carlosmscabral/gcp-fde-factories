@@ -1,0 +1,22 @@
+{
+  "schema_version": "1",
+  "api_service": "discoveryengine.googleapis.com",
+  "api_version": "v1alpha",
+  "collection_path_template": "projects/{project_id}/locations/{location}/collections/default_collection/engines/{app_id}/assistants/{assistant_id}/agents",
+  "supported_export_modes": ["agent_engine", "a2a"],
+  "required_payload_fields": {
+    "common": ["displayName", "description"],
+    "agent_engine": ["adkAgentDefinition.provisionedReasoningEngine.reasoningEngine"],
+    "a2a": ["a2aAgentDefinition.jsonAgentCard"]
+  },
+  "required_agent_card_fields": [
+    "protocolVersion",
+    "name",
+    "description",
+    "url",
+    "version",
+    "defaultInputModes",
+    "defaultOutputModes",
+    "skills"
+  ]
+}

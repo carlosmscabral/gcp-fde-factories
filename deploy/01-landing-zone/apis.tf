@@ -26,15 +26,18 @@ locals {
     "billingbudgets.googleapis.com",
   ]
 
-  sandbox_apis = [
-    "ces.googleapis.com",
-    "aiplatform.googleapis.com",
-    "texttospeech.googleapis.com",
-    "storage.googleapis.com",
-    "serviceusage.googleapis.com",
-    "iamcredentials.googleapis.com",
-    "logging.googleapis.com",
-  ]
+  sandbox_apis = concat(
+    [
+      "ces.googleapis.com",
+      "aiplatform.googleapis.com",
+      "texttospeech.googleapis.com",
+      "storage.googleapis.com",
+      "serviceusage.googleapis.com",
+      "iamcredentials.googleapis.com",
+      "logging.googleapis.com",
+    ],
+    var.enable_adk_sandbox_roles ? ["discoveryengine.googleapis.com"] : [],
+  )
 
   project_api_pairs = merge(
     { for api in local.hub_apis : "${var.hub_project_id}/${api}" => { project = var.hub_project_id, api = api } },

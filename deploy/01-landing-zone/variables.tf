@@ -73,3 +73,15 @@ variable "factory_operator_members" {
   type        = list(string)
   default     = []
 }
+
+variable "enable_adk_sandbox_roles" {
+  description = "If true, enables Discovery Engine API and adds explicit non-wildcard ADK Agent Engine and Gemini Enterprise Sandbox custom roles."
+  type        = bool
+  default     = false
+}
+
+variable "enable_kaizen_gcp_obs" {
+  description = "If true, creates an optional read-only Kaizen telemetry Service Account with Monitoring and Logging Viewer roles (Tier B)."
+  type        = bool
+  default     = false
+}
