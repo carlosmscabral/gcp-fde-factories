@@ -1,7 +1,7 @@
 """Thin ADK composition root exporting root_agent (<= 250 lines).
 
-All prompts, configuration, and tool handlers stay in dedicated submodules so CloudPickle
-serializes cleanly by module reference for Vertex AI Agent Engine deployments.
+All prompts, configuration, and tool handlers stay in dedicated submodules so the container
+image builds cleanly and imports remain deterministic with lazy I/O.
 """
 from __future__ import annotations
 

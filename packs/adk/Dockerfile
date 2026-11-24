@@ -9,7 +9,6 @@ ARG ADK_VERSION=2.15.0
 ARG AIPLATFORM_VERSION=2.10.0
 ARG A2A_SDK_VERSION=1.3.1
 ARG AGENTS_CLI_VERSION=1.15.0
-ARG CLOUDPICKLE_VERSION=3.1.2
 ARG PYTEST_VERSION=9.2.0
 
 ENV ADK_FACTORY_DIR=/opt/adk-factory
@@ -20,16 +19,14 @@ RUN uv pip install --system --no-cache \
       "google-cloud-aiplatform==${AIPLATFORM_VERSION}" \
       "a2a-sdk==${A2A_SDK_VERSION}" \
       "google-agents-cli==${AGENTS_CLI_VERSION}" \
-      "cloudpickle==${CLOUDPICKLE_VERSION}" \
       "pytest==${PYTEST_VERSION}"
 
-# Package ADK verification gate, CloudPickle fallback checker, GE exporter, Janitor, and toolchain manifest.
+# Package ADK verification gate, GE exporter, Janitor, and toolchain manifest.
 COPY packs/adk/scripts/ "${ADK_FACTORY_DIR}/"
 COPY packs/adk/toolchain-manifest.json "${GCP_FDE_DIR}/adk-toolchain-manifest.json"
 COPY NOTICE "${ADK_FACTORY_DIR}/NOTICE"
 RUN chmod +x "${ADK_FACTORY_DIR}/ge_export.py" "${ADK_FACTORY_DIR}/adk_sandbox_gate.py" \
-      "${ADK_FACTORY_DIR}/cloudpickle_check.py" "${ADK_FACTORY_DIR}/adk-eval-runner.sh" \
-      "${ADK_FACTORY_DIR}/sandbox_janitor.py"
+      "${ADK_FACTORY_DIR}/adk-eval-runner.sh" "${ADK_FACTORY_DIR}/sandbox_janitor.py"
 
 USER scion
 RUN adk --version >/dev/null \

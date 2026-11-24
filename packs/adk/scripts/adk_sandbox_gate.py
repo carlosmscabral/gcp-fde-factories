@@ -2,7 +2,7 @@
 """Split-SA Level 1 + Level 2 verification runner and Contract 5 Verdict emitter for packs/adk.
 
 Enforces real split-SA separation:
-- Level 1 (offline, scrubbed HOME/ADC): pytest, CloudPickle check, and GE export bundle check.
+- Level 1 (offline, scrubbed HOME/ADC): pytest, root Dockerfile contract check, and GE export bundle check.
   Emits 'static-check-only' when no unit tests executed and 'unit-test-verified' only when pytest passes.
 - Level 2 deploy phase (Deployer SA only): refuses non-sandbox targets, registers or PATCHes
   ephemeral Gemini Enterprise agent bound to --reasoning-engine, records ledger entry.
@@ -61,6 +61,20 @@ def _default_verdict_schema() -> pathlib.Path:
         if cand.is_file():
             return cand
     return REPO_ROOT / "schemas" / "verdict.schema.json"
+
+
+def validate_dockerfile_contract(dockerfile: pathlib.Path) -> list[str]:
+    """Verifies root Dockerfile declares FROM, a non-root USER, and CMD or ENTRYPOINT."""
+    lines = [ln.strip() for ln in dockerfile.read_text(encoding="utf-8").splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    errors: list[str] = []
+    if not any(ln.upper().startswith("FROM ") for ln in lines):
+        errors.append("Dockerfile missing FROM instruction.")
+    users = [ln.split(None, 1)[1].strip() for ln in lines if ln.upper().startswith("USER ") and len(ln.split(None, 1)) > 1]
+    if not users or users[-1] in ("root", "0", "0:0"):
+        errors.append("Dockerfile must end with a non-root USER instruction.")
+    if not any(ln.upper().startswith(("CMD ", "CMD[", "ENTRYPOINT ", "ENTRYPOINT[")) for ln in lines):
+        errors.append("Dockerfile missing CMD or ENTRYPOINT instruction.")
+    return errors
 
 
 def run_cli(cmd: list[str], env: dict[str, str], cwd: pathlib.Path, timeout: int = 180) -> subprocess.CompletedProcess[str]:
@@ -163,6 +177,17 @@ def main(argv: list[str] | None = None) -> int:
                 return _write_verdict(args, evals_dir, gates_executed, ["l1:ge-export-bundle", "l2:adk-eval"], "verifier-failed", exit_code=1)
         else:
             gates_skipped.append("l1:pytest")
+
+        dockerfile = repo / "Dockerfile"
+        if dockerfile.is_file():
+            df_errs = validate_dockerfile_contract(dockerfile)
+            gates_executed.append("l1:dockerfile-contract")
+            if df_errs:
+                for err in df_errs:
+                    print(f"DOCKERFILE CONTRACT FAILED: {err}", file=sys.stderr)
+                return _write_verdict(args, evals_dir, gates_executed, ["l1:ge-export-bundle", "l2:adk-eval"], "verifier-failed", exit_code=1)
+        else:
+            gates_skipped.append("l1:dockerfile-contract")
 
         ge_manifest_path = repo / args.ge_manifest
         spec: dict[str, Any] | None = None

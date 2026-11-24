@@ -9,7 +9,7 @@ description: Opinionated Dockerfile-first ADK 2.15+ deployment using upstream go
 - Default every ADK project to container-based deployment via a root `Dockerfile` and `agents-cli deploy` (`agent_runtime`, `cloud_run`, or `gke`).
 - Follow the mounted upstream `google-agents-cli-*` skills (`workflow`, `scaffold`, `adk-code`, `eval`, `deploy`, `publish`, `observability`) as the primary reference.
 - Keep `agent/agent.py` as a thin composition root (`<= 250` lines) exporting `root_agent`, with prompts, config, and tools in separate submodules.
-- Run `python3 /opt/adk-factory/cloudpickle_check.py --repo-dir .` only as a fallback when a brownfield repo uses legacy source-pickle deployment.
+- Validate the root `Dockerfile` contract (non-root user, explicit `adk api_server` entrypoint, pinned dependencies) before any Sandbox deploy.
 - source: https://github.com/google/agents-cli
 
 ## 2. MCP Toolsets, Memory Gating, and Model Location

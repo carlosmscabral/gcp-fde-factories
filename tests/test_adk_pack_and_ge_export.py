@@ -150,6 +150,10 @@ def test_adk_sandbox_gate_level1_honesty_and_dual_janitor(tmp_path: pathlib.Path
         (REPO_ROOT / "packs/adk/repo-scaffold/ge_manifest.json").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
+    (repo / "Dockerfile").write_text(
+        (REPO_ROOT / "packs/adk/repo-scaffold/Dockerfile").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
 
     verdict_out = tmp_path / "verdict.json"
     commit = "b" * 40
@@ -170,7 +174,30 @@ def test_adk_sandbox_gate_level1_honesty_and_dual_janitor(tmp_path: pathlib.Path
     assert res.returncode == 0, res.stderr
     vdata = json.loads(verdict_out.read_text(encoding="utf-8"))
     assert vdata["verdict"] == "static-check-only"
+    assert "l1:dockerfile-contract" in vdata["gates_executed"]
     assert verify_verdict(verdict_out, VERDICT_SCHEMA, commit, repo / "evals") == []
+
+    # Negative test: root-only Dockerfile missing CMD fails Level 1 closed.
+    bad_df_repo = tmp_path / "bad-df-repo"
+    bad_df_repo.mkdir()
+    (bad_df_repo / "evals").mkdir()
+    (bad_df_repo / "Dockerfile").write_text("FROM python:3.12-slim\nUSER root\n", encoding="utf-8")
+    bad_res = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "packs/adk/scripts/adk_sandbox_gate.py"),
+            "--repo-dir", str(bad_df_repo),
+            "--pr-number", "13",
+            "--commit-sha", commit,
+            "--mode", "level1-only",
+            "--verdict-out", str(tmp_path / "bad-verdict.json"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert bad_res.returncode == 1
+    assert json.loads((tmp_path / "bad-verdict.json").read_text(encoding="utf-8"))["verdict"] == "verifier-failed"
 
     # Verify live ADK Verdict passes ONLY when ReasoningEngine, GE agent, l2:adk-eval, and PR/SHA displayName match.
     ge_res = "projects/sbx/locations/global/collections/default_collection/engines/eng-1/assistants/default_assistant/agents/ag-1"

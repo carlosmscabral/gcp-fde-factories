@@ -1,4 +1,4 @@
-"""Deterministic starter tools kept separate from agent/agent.py for clean CloudPickle serialization."""
+"""Deterministic starter tools kept in a dedicated submodule for modular testing and lazy I/O."""
 from __future__ import annotations
 
 
