@@ -131,18 +131,44 @@ do_backup() {
   echo "BACKUP COMPLETE: $dir (templates_backed_up=$pulled)"
 }
 
+resolve_project_id() {
+  # Resolves --project <slug> to a Hub project UUID and exports SCION_HUB_PROJECT_ID.
+  # Works around Scion v0.4.0-preview.3 where `scion service-accounts --project <slug>`
+  # treats <slug> as a local grove directory name and clears hub.project_id (HC-02 F5).
+  if [[ -n "${SCION_HUB_PROJECT_ID:-}" ]]; then
+    echo "$SCION_HUB_PROJECT_ID"
+    return 0
+  fi
+  if [[ -n "$PROJECT_SLUG" && -n "${SCION_HUB_TOKEN:-}" ]]; then
+    local resolved
+    resolved="$(curl -sf -H "Authorization: Bearer ${SCION_HUB_TOKEN}" "${HUB_URL%/}/api/v1/projects" \
+      | jq -r --arg s "$PROJECT_SLUG" '((if type == "array" then . else (.projects // .items // []) end)[] | select(.slug == $s or .name == $s) | .id) // empty' | head -n 1 || true)"
+    if [[ -n "$resolved" ]]; then
+      export SCION_HUB_PROJECT_ID="$resolved"
+      echo "$resolved"
+      return 0
+    fi
+  fi
+  echo ""
+}
+
 register_and_verify_sa() {
   local sa_email="$1" project_id="$2" label="$3"
   local sa_list_json existing_id sa_id
-  sa_list_json="$(scion --format json service-accounts list "${PROJ_FLAGS[@]}" --hub "$HUB_URL")"
+  local sa_proj_flags=("${PROJ_FLAGS[@]}")
+  # Omit --project on `scion service-accounts` when SCION_HUB_PROJECT_ID is exported (HC-02 F5).
+  if [[ -n "${SCION_HUB_PROJECT_ID:-}" ]]; then
+    sa_proj_flags=()
+  fi
+  sa_list_json="$(scion --format json service-accounts list "${sa_proj_flags[@]}" --hub "$HUB_URL")"
   existing_id="$(jq -r --arg email "$sa_email" '((if type == "array" then . else (.serviceAccounts // .items // []) end)[] | select(.email == $email) | .id) // empty' <<< "$sa_list_json" | head -n 1)"
   if [[ -n "$existing_id" ]]; then
     sa_id="$existing_id"
     echo "EXISTING SA: $label ($sa_email -> $sa_id)"
   else
-    sa_id="$(scion service-accounts add "$sa_email" --gcp-project "$project_id" --name "$label" "${PROJ_FLAGS[@]}" --hub "$HUB_URL" --format json | jq -re '.id')"
+    sa_id="$(scion service-accounts add "$sa_email" --gcp-project "$project_id" --name "$label" "${sa_proj_flags[@]}" --hub "$HUB_URL" --format json | jq -re '.id')"
   fi
-  scion service-accounts verify "$sa_id" "${PROJ_FLAGS[@]}" --hub "$HUB_URL" --format json | jq -e '.verified == true' >/dev/null
+  scion service-accounts verify "$sa_id" "${sa_proj_flags[@]}" --hub "$HUB_URL" --format json | jq -e '.verified == true' >/dev/null
   echo "VERIFIED SA: $label ($sa_email)"
 }
 
@@ -266,6 +292,11 @@ do_apply() {
   done
 
   # 4. Register and verify factory SAs idempotently (never register sandbox_janitor on the Hub).
+  local resolved_proj_id
+  resolved_proj_id="$(resolve_project_id)"
+  if [[ -n "$resolved_proj_id" ]]; then
+    export SCION_HUB_PROJECT_ID="$resolved_proj_id"
+  fi
   if [[ -n "$LANDING_ZONE_JSON" ]]; then
     local inf_p sbx_p worker_sa dep_sa eval_sa
     inf_p="$(jq -re '.inference_project_id.value' "$LANDING_ZONE_JSON")"
@@ -274,8 +305,12 @@ do_apply() {
     dep_sa="$(jq -re '.sandbox_deployer_sa_email.value' "$LANDING_ZONE_JSON")"
     eval_sa="$(jq -re '.sandbox_evaluator_sa_email.value' "$LANDING_ZONE_JSON")"
 
+    local id_proj_flags=("${PROJ_FLAGS[@]}")
+    if [[ -n "${SCION_HUB_PROJECT_ID:-}" ]]; then
+      id_proj_flags=()
+    fi
     register_and_verify_sa "$worker_sa" "$inf_p" "factory-worker"
-    scion project identity default set "$worker_sa" "${PROJ_FLAGS[@]}" --hub "$HUB_URL"
+    scion project identity default set "$worker_sa" "${id_proj_flags[@]}" --hub "$HUB_URL"
 
     if [[ "$mode" == "sandbox-direct" ]]; then
       register_and_verify_sa "$dep_sa" "$sbx_p" "${pack_prefix}-deployer"
@@ -299,15 +334,16 @@ do_apply() {
   scion hub settings set server.hub.auto_suspend_idle "$auto_susp" --hub "$HUB_URL"
 
   # Set project-scope Vertex AI env vars (injectionMode=always) so container-side harness provisioners
-  # (e.g. antigravity/provision.py) receive GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION in
-  # auth-candidates.json (HC-01 F24).
-  if [[ -n "$inf_proj" && -n "${SCION_HUB_TOKEN:-}" && -n "$PROJECT_SLUG" ]]; then
-    local proj_id
-    proj_id="$(curl -sf -H "Authorization: Bearer ${SCION_HUB_TOKEN}" "${HUB_URL%/}/api/v1/projects" \
-      | jq -r --arg s "$PROJECT_SLUG" '((if type == "array" then . else (.projects // .items // []) end)[] | select(.slug == $s or .name == $s) | .id) // empty' | head -n 1 || true)"
+  # (e.g. antigravity/provision.py) and ADC quotaProject routing receive inference_project_id on both
+  # Lite VM and GKE cross-project topologies (HC-01 F24, HC-02 F8).
+  if [[ -n "$inf_proj" && -n "${SCION_HUB_TOKEN:-}" ]]; then
+    local proj_id="${resolved_proj_id:-}"
+    if [[ -z "$proj_id" && -n "$PROJECT_SLUG" ]]; then
+      proj_id="$(resolve_project_id)"
+    fi
     if [[ -n "$proj_id" ]]; then
       local kv k v
-      for kv in "GOOGLE_CLOUD_PROJECT=${inf_proj}" "GOOGLE_CLOUD_LOCATION=${gemini_loc}" "GOOGLE_GENAI_USE_VERTEXAI=true"; do
+      for kv in "GOOGLE_CLOUD_PROJECT=${inf_proj}" "GOOGLE_CLOUD_QUOTA_PROJECT=${inf_proj}" "GOOGLE_CLOUD_LOCATION=${gemini_loc}" "GOOGLE_GENAI_USE_VERTEXAI=true"; do
         k="${kv%%=*}"; v="${kv#*=}"
         curl -sf -X PUT \
           -H "Authorization: Bearer ${SCION_HUB_TOKEN}" \

@@ -234,12 +234,15 @@ def render_harness_config(
         env["CLOUD_ML_REGION"] = claude_region
         if inference_project:
             env["GOOGLE_CLOUD_PROJECT"] = inference_project
+            env["GOOGLE_CLOUD_QUOTA_PROJECT"] = inference_project
             env["ANTHROPIC_VERTEX_PROJECT_ID"] = inference_project
     elif harness == "antigravity":
         env["GOOGLE_GENAI_USE_VERTEXAI"] = "true"
         env["GOOGLE_CLOUD_LOCATION"] = gemini_location
         if inference_project:
+            # Antigravity CLI 1.5.14 in AGY_ADC_AUTH mode routes Vertex AI through ADC quotaProject (HC-02 F8).
             env["GOOGLE_CLOUD_PROJECT"] = inference_project
+            env["GOOGLE_CLOUD_QUOTA_PROJECT"] = inference_project
     data["env"] = env
     dst_yaml.parent.mkdir(parents=True, exist_ok=True)
     dst_yaml.write_text(yaml.safe_dump(data, sort_keys=False, width=120), encoding="utf-8")

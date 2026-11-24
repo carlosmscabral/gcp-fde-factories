@@ -4,6 +4,16 @@
 # Binds 0.0.0.0 on the VPC-private VM (zero public IP) with container_hub_endpoint=http://scion-hub.internal:8080
 # so Docker agents run on bridge networking with isolated metadata interception (HC-01 F6/F7/F14/F19).
 
+# Configure bounded APT HTTP/HTTPS timeouts before package_update to prevent mirror CLOSE-WAIT stalls (HC-02 F3).
+bootcmd:
+  - |
+    mkdir -p /etc/apt/apt.conf.d
+    cat > /etc/apt/apt.conf.d/99-scion-timeouts <<'APTCONF'
+    Acquire::http::Timeout "30";
+    Acquire::https::Timeout "30";
+    Acquire::Retries "3";
+    APTCONF
+
 package_update: true
 
 packages:
@@ -98,7 +108,7 @@ runcmd:
 %{ endif ~}
       broker:
         container_hub_endpoint: "http://scion-hub.internal:8080"
-%{ if length(oidc_allowed_domains) > 0 ~}
+%{ if length(oidc_allowed_domains) > 0 || length(oidc_allowed_gcp_projects) > 0 ~}
       federation:
         enabled: true
         trusted_issuers:
@@ -106,10 +116,18 @@ runcmd:
             jwks_url: "https://www.googleapis.com/oauth2/v3/certs"
             issuer_type: "user"
             expected_audience: "32555940559.apps.googleusercontent.com"
+%{ if length(oidc_allowed_domains) > 0 ~}
             allowed_domains:
 %{ for dom in oidc_allowed_domains ~}
               - "${dom}"
 %{ endfor ~}
+%{ endif ~}
+%{ if length(oidc_allowed_gcp_projects) > 0 ~}
+            allowed_gcp_projects:
+%{ for proj in oidc_allowed_gcp_projects ~}
+              - "${proj}"
+%{ endfor ~}
+%{ endif ~}
 %{ endif ~}
     EOF
     fi

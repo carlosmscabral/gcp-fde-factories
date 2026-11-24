@@ -20,19 +20,24 @@ flowchart TB
   ADR010["ADR-010<br/>Scion Hardening & Pins"]
   ADR011["ADR-011<br/>Public Clean-Room Gate"]
   ADR012["ADR-012<br/>Functional Hillclimbing"]
+  ADR013["ADR-013<br/>Cross-Project Quota & ADK SA"]
 
   ADR001 --> ADR004
   ADR001 --> ADR008
   ADR001 --> ADR009
   ADR002 --> ADR003
   ADR002 --> ADR010
+  ADR002 --> ADR013
   ADR003 --> ADR005
+  ADR003 --> ADR013
   ADR004 --> ADR010
   ADR006 --> ADR010
+  ADR006 --> ADR013
   ADR007 --> ADR012
   ADR005 --> ADR012
   ADR010 --> ADR012
   ADR011 --> ADR004
+  ADR012 --> ADR013
 ```
 
 ## Decision Index
@@ -51,6 +56,7 @@ flowchart TB
 | [ADR-010](ADR-010-scion-hardening-and-pinned-supply-chain.md) | Scion Hub Hardening and Pinned Supply Chain | Accepted | INV-06, INV-14 | `compat.yaml`, `deploy/02-factory-runtime/lite-vm/cloud-init.tftpl` |
 | [ADR-011](ADR-011-public-clean-room-and-runtime-denylist.md) | Public Clean-Room Gate and Runtime Denylist | Accepted | INV-15 | `scripts/sanitize-public-check.py`, `scripts/lib/sanitizer.py` |
 | [ADR-012](ADR-012-functional-hillclimbing-e2e-qualification.md) | Functional-First Live Hillclimbing Qualification | Accepted | INV-16 | [HILLCLIMBING_CHARTER.md](../HILLCLIMBING_CHARTER.md) |
+| [ADR-013](ADR-013-cross-project-adc-quota-and-sandbox-runtime-sa.md) | Cross-Project ADC Quota Routing and Same-Project ADK Runtime SA | Accepted | INV-02, INV-03, INV-09, INV-13 | `deploy/01-landing-zone/iam.tf`, `parse_hub_project.py`, `ge_payload.py` |
 
 ## Lifecycle Rules
 

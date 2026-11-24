@@ -1,0 +1,52 @@
+# Enterprise GCP Administrative Prerequisites (`deploy/`)
+
+This guide lists Google Cloud Organization Policies, IAM boundaries, service-agent materialization rules, and licensing prerequisites discovered during live Hillclimbing runs (`HC-01` and `HC-02`).
+Customer platform, security, network, and FinOps administrators must review this checklist before running Stage 01 on hardened enterprise projects.
+
+---
+
+## 1. Organization and Security Administrators (IAM and Org Policies)
+
+| Prerequisite or Org Policy | Exact Symptom if Missing | Action Before or During Stage 01 | Source |
+| :--- | :--- | :--- | :--- |
+| **Cold-start core APIs** (`serviceusage`, `cloudresourcemanager`, `iam`) | Terraform fails with `USER_PROJECT_DENIED` on brand-new projects when `user_project_override = true`. | Enable the three core APIs on each target project and wait `20` seconds for propagation before running `terraform apply`. | `HC-01 F2`, `HC-02 F1` |
+| **Compute Engine default SA without `roles/editor`** | GKE pods enter `ImagePullBackOff` with HTTP `403` pulling images from `hub_project_id` Artifact Registry. | Set `enable_gke_api = true` in Stage 01 to provision the least-privilege `<prefix>-gke-node@` SA (`roles/container.defaultNodeServiceAccount` + `roles/artifactregistry.reader`) and pass `--service-account` to `gcloud container clusters create`. | `HC-02 F4` |
+| **`constraints/iam.disableCrossProjectServiceAccountUsage`** | Vertex AI Agent Engine and Cloud Run in `sandbox_project_id` reject attaching `worker@inference_project_id` with `400 INVALID_ARGUMENT: You do not have permission to act as service_account`. | Set `enable_adk_sandbox_roles = true` in Stage 01 to provision the same-project `<prefix>-adk-runtime@<sandbox_project_id>` SA with predict-only rights on `inference_project_id` and zero write rights on `sandbox_project_id`. | `HC-02 F10` |
+| **Non-Owner operator spawning under `gcp_iam_check_mode=enforce`** | Non-Owner users receive HTTP `403 identity_assign_denied` or Policy Troubleshooter `UNKNOWN_INFO`. | Enable `policytroubleshooter.googleapis.com` on `hub_project_id` (automated in Stage 01), add operators to `factory_operator_members`, keep `gcp_iam_deny_unknown_policy = "fail-open"` unless org-level `roles/iam.denyReviewer` is granted (`WK-004`), and add federated non-admin users to the Scion `hub-members` group (`WK-006`). | `HC-01 F17`, `HC-02 F6`, `M2.4` |
+| **Service Account OIDC callers (`lite-vm`)** | Scion rejects SA OIDC tokens with `service account project not allowed`. | Pass `oidc_allowed_gcp_projects = ["<hub_project_id>"]` in Stage 02 `lite-vm` when automated operators authenticate via SA OIDC tokens. | `HC-02 F6` |
+| **Zero-PII CES and ADK Custom Roles** | Predefined `roles/ces.*` inherit `contactcenterinsights.*`, while `adkSandboxDeployer` without `discoveryengine.agents.manage` triggers license errors on shared agents. | Use Stage 01 explicit Custom Roles (`gecxSandboxDeployer`, `gecxSandboxEvaluator`, `gecxSandboxJanitor`, `adkSandboxDeployer`, `adkSandboxEvaluator`, `adkSandboxJanitor`, `vertexInferencePredict`). | `HC-01 F26/F27`, `HC-02 F12` |
+| **Corporate boot images and CMEK (`trustedImageProjects`, `restrictNonCmekServices`)** | VM creation fails when public Ubuntu images or Google-managed keys are blocked by Org Policy. | Override `boot_image` and `boot_disk_kms_key_self_link` in Stage 02 `lite-vm/variables.tf`. | `ADR-010` |
+
+---
+
+## 2. Network Administrators (Custom VPC, Shared VPC, and Filestore CSI)
+
+| Prerequisite or Org Policy | Exact Symptom if Missing | Action Before or During Stage 01 / Stage 02 | Source |
+| :--- | :--- | :--- | :--- |
+| **`constraints/compute.skipDefaultNetworkCreation` (No `default` VPC)** | GKE Filestore CSI `standard-rwx` StorageClass fails with `network 'default' does not exist`. | Create a custom `StorageClass` referencing `parameters.network: <vpc_name>` (exported by Stage 01 output `vpc_name`) and set `volumeBindingMode: Immediate` so Filestore binds before the first agent launch. | `HC-02 F7` |
+| **Private-nodes GKE control plane access** | `kubectl` and Helm time out when connecting to a private-nodes GKE cluster. | Enable `--enable-dns-access` or explicit Master Authorized Networks on the GKE cluster. | `HC-01 F9` |
+| **No Public External IPs on Hub VM** | Org Policy `constraints/compute.vmExternalIpAccess` blocks VM creation with external IPs. | Stage 02 `lite-vm` omits `access_config` by default, routes egress via Stage 01 Cloud NAT, and connects operators via IAP TCP forwarding (`35.235.240.0/20`). | `ADR-002`, `ADR-010` |
+| **In-cluster HTTPS on GKE (`hub_transport_policy`)** | Scion Kubernetes broker refuses `http://` in-cluster Hub URLs. | Terminate TLS in-cluster (Ingress, Gateway, or internal TLS Service) and mount `SCION_HUB_CA_CERT` when using a private CA. | `HC-01 F22` |
+
+---
+
+## 3. Platform and Runtime Administrators (Cloud Build, Vertex AI, and Scion)
+
+| Prerequisite or Platform Rule | Exact Symptom if Missing | Action Required | Source |
+| :--- | :--- | :--- | :--- |
+| **Three-project ADC `quotaProject` routing (`hub != inf != sbx`)** | Antigravity CLI `1.5.14` (`AGY_ADC_AUTH=true`) routes Vertex AI calls to metadata `project-id` (`hub` on GKE, `sbx` on VM deployer/eval), causing `403` or `SERVICE_DISABLED`. | `parse_hub_project.py` and `bootstrap-hub-project.sh` inject `GOOGLE_CLOUD_QUOTA_PROJECT=<inference_project_id>` into harness configs and project env (`injectionMode=always`). | `HC-02 F8`, `ADR-013` |
+| **Cloud Build custom SA logging (`cloudbuild-hub-gke.yaml`)** | Building the upstream GKE Hub image under `release_builder` SA fails on the default Cloud Build logs bucket. | Pass `--gcs-log-dir=gs://<sandbox_staging_bucket>/cloudbuild-logs` when invoking `gcloud builds submit` with `--service-account`. | `HC-02 F2` |
+| **Late materialization of `gcp-sa-aiplatform-re`** | First cross-project Dockerfile deploy to Vertex AI Agent Engine fails with internal error `code 13` because `service-<sbx_num>@gcp-sa-aiplatform-re` lacks `roles/artifactregistry.reader` on `hub_project_id`. | After the first ReasoningEngine API call materializes the service agent in `sandbox_project_id`, set `enable_agent_engine_re_ar_reader = true` in Stage 01 and run `terraform apply` (or bind `roles/artifactregistry.reader` on `hub_project_id`). | `HC-02 F11` |
+| **Vertex AI Agent Engine reserved env vars and regional sessions** | Passing `GOOGLE_CLOUD_PROJECT` or `GOOGLE_CLOUD_QUOTA_PROJECT` in `deploymentSpec.env` fails with `400 FAILED_PRECONDITION`. Setting container `GOOGLE_CLOUD_LOCATION=global` breaks regional `VertexAiSessionService`. | Omit reserved project env vars from `deploymentSpec.env`. Keep container `GOOGLE_CLOUD_LOCATION` regional (such as `us-central1`) and set `global` only on Gemini model client calls. | `HC-02 F9`, `HC-02 F14` |
+| **Numeric project numbers in GCP resource names** | Discovery Engine `v1alpha` and Vertex AI `ReasoningEngine` return `projects/<project_number>/...` rather than `projects/<project_id>/...`. | Pass `--quota-project-number` / `--sandbox-project-number` (or set `SANDBOX_PROJECT_NUMBER` from Stage 01 output `sandbox_project_number`) to `ge_export.py` and `adk_sandbox_gate.py`. | `HC-02 F13` |
+| **Persistent Hub storage on GKE** | Upstream `deploy/helm/scion-hub` defaults to `emptyDir` SQLite, wiping Hub state on pod restart. | Mount a `ReadWriteOnce` PersistentVolumeClaim (`scion-hub-home`) or Cloud SQL Postgres before running Stage 03 bootstrap. | `HC-01 F25`, `M5.4` |
+
+---
+
+## 4. Billing, FinOps, and Licensing Administrators
+
+| Prerequisite | Exact Symptom if Missing | Action Required | Source |
+| :--- | :--- | :--- | :--- |
+| **Active Gemini Enterprise Billing Account License** | `ge_export.py register` (`Discovery Engine v1alpha agents:create`) fails with `400 FAILED_PRECONDITION: an active Gemini Enterprise license is not available`, even for Project Owners. Project-level `licenseConfigs.create` is deprecated by Google Cloud. | Purchase or allocate an active Gemini Enterprise `billingAccountLicenseConfig` on the customer Billing Account and distribute seats to `sandbox_project_id` before running live Gemini Enterprise agent registration. | `HC-02 F12` |
+| **Vertex AI Model Garden opt-in for Claude (`cross-vendor` only)** | Model Garden returns `404` or `403` when `diversity_profile: cross-vendor` is enabled without prior opt-in. | Enable Claude in Vertex AI Model Garden manually on `inference_project_id`, then set `harnesses.claude_model_garden_enabled: true` in `.factory/hub-project.yaml`. Day-1 default `cross-model` requires 1P Gemini only. | `ADR-006` |
+| **Inference Project Budget Alert and Kill-Switch** | Unchecked autonomous loops consume unexpected Vertex AI spend. | Stage 01 attaches a Billing Budget Alert (`monthly_budget_usd`) on `inference_project_id` publishing to `budget_pubsub_topic`, paired with Scion `max_turns` and `max_model_calls` limits. | `ADR-002` |

@@ -63,11 +63,11 @@ def _esc(val: Any) -> str:
 def _status_pill(status: str) -> str:
     """Maps a gate or finding status string to a styled status badge."""
     low = status.lower()
-    if low in ("pass", "fixed", "live-gcp-verified"):
+    if low in ("pass", "fixed", "live-gcp-verified", "completed"):
         cls = "pass"
-    elif low in ("partial", "workaround", "minor"):
+    elif low in ("partial", "workaround", "minor", "verifier-blocked"):
         cls = "warn"
-    elif low in ("planned", "planned_for_hc02"):
+    elif low.startswith("planned"):
         cls = "purple"
     else:
         cls = "fail"
@@ -131,7 +131,7 @@ def _render_progression_svg(runs: list[dict[str, Any]]) -> str:
             int(ev["manual_friction_count"]["showstoppers"]),
             int(ev["mock_to_reality_escape_rate"]["count"]),
         ))
-    points.append(("HC-02 Target", 90.0, 0, 0))
+    points.append(("Wave 1 Target", 90.0, 0, 0))
 
     col_w = 135
     svg_w = max(460, 70 + len(points) * col_w)
@@ -149,7 +149,7 @@ def _render_progression_svg(runs: list[dict[str, Any]]) -> str:
         fp_h = max(3, int(round((fp_pct / 100.0) * max_h)))
         sh_h = int(round((shows / max_err) * max_h)) if shows else 3
         es_h = int(round((esc / max_err) * max_h)) if esc else 3
-        is_target = label == "HC-02 Target"
+        is_target = label == "Wave 1 Target"
         op = ' opacity="0.65" stroke-dasharray="3 2"' if is_target else ""
         parts.append(f'<rect x="{x0}" y="{base_y - fp_h}" width="24" height="{fp_h}" rx="3" fill="#1a73e8"{op}/>')
         parts.append(f'<text x="{x0 + 12}" y="{base_y - fp_h - 5}" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor">{fp_pct:.0f}%</text>')
@@ -223,15 +223,22 @@ def _render_run_panel(run: dict[str, Any], is_latest: bool) -> str:
     )
     adk_turn = track_b.get("turn", {})
     adk_probes = track_b.get("iam_probes", {})
+    sec_box = ""
+    if "security_highlight" in track_b:
+        sec_box = f'<div class="proof-box sec"><strong>Live Security &amp; Cross-Project Proof:</strong> {_esc(track_b["security_highlight"])}</div>'
+    elif "worker_reasoning_engine_before_fix" in adk_probes:
+        sec_box = (
+            f'<div class="proof-box sec"><strong>F27 Live Security Re-Probe (Worker SA):</strong> '
+            f'Before fix <span class="mono">POST reasoningEngines = HTTP {_esc(adk_probes.get("worker_reasoning_engine_before_fix", ""))}</span> -&gt; '
+            f'After predict-only custom role <span class="mono">POST reasoningEngines = HTTP {_esc(adk_probes.get("worker_reasoning_engine_after_fix", ""))}</span> '
+            f'and <span class="mono">Vertex AI predict = HTTP {_esc(adk_probes.get("worker_vertex_predict_after_fix", ""))}</span>.</div>'
+        )
     adk_html = (
         f'<div class="proof-box ok"><strong>{_esc(adk_turn.get("endpoint", ""))}</strong><br/>'
         f'Prompt: {_esc(adk_turn.get("input", ""))}<br/>'
         f'<span class="mono">{_esc(adk_turn.get("tool_call", ""))} -&gt; HTTP {_esc(adk_turn.get("http_status", ""))}</span><br/>'
         f'&ldquo;{_esc(adk_turn.get("response", ""))}&rdquo;</div>'
-        f'<div class="proof-box sec"><strong>F27 Live Security Re-Probe (Worker SA):</strong> '
-        f'Before fix <span class="mono">POST reasoningEngines = HTTP {_esc(adk_probes.get("worker_reasoning_engine_before_fix", ""))}</span> -&gt; '
-        f'After predict-only custom role <span class="mono">POST reasoningEngines = HTTP {_esc(adk_probes.get("worker_reasoning_engine_after_fix", ""))}</span> '
-        f'and <span class="mono">Vertex AI predict = HTTP {_esc(adk_probes.get("worker_vertex_predict_after_fix", ""))}</span>.</div>'
+        f"{sec_box}"
     )
 
     f_rows: list[str] = []
@@ -248,13 +255,25 @@ def _render_run_panel(run: dict[str, Any], is_latest: bool) -> str:
             f'<td>{_status_pill(item["status"])}</td></tr>'
         )
 
-    add_rows = "".join(
-        f'<tr><td class="mono"><strong>{_esc(gid)}</strong></td>'
-        f'<td><strong>{_esc(g["name"])}</strong></td>'
-        f'<td>{_esc(g["criteria"])}</td>'
-        f'<td>{_status_pill(g["status"])}</td></tr>'
-        for gid, g in add_v2.get("gates", {}).items()
-    )
+    additive_cards: list[str] = []
+    for block_key, block in run.get("additive_gates", {}).items():
+        b_rows = "".join(
+            f'<tr><td class="mono"><strong>{_esc(gid)}</strong></td>'
+            f'<td><strong>{_esc(g["name"])}</strong>'
+            + (f'<br/><span class="kpi-note">{_esc(g["evidence"])}</span>' if g.get("evidence") else "")
+            + f'</td><td>{_esc(g.get("criteria", ""))}</td>'
+            f'<td>{_status_pill(g["status"])}</td></tr>'
+            for gid, g in block.get("gates", {}).items()
+        )
+        additive_cards.append(
+            f'<div class="card" style="margin-bottom:18px;">'
+            f'<h2>Additive Gates: <span class="mono">additive_gates.{_esc(block_key)}</span> {_status_pill(str(block.get("status", "planned")))}</h2>'
+            f'<p class="sub" style="margin-bottom:12px;">Target topology: <strong>{_esc(block.get("topology_target", ""))}</strong> '
+            f'({block.get("gate_count", len(block.get("gates", {})))} versioned extension gates alongside immutable <span class="mono">core_v1</span>).</p>'
+            f'<table><thead><tr><th>Gate</th><th>Extension Requirement &amp; Evidence</th><th>Pass Criteria</th><th>State</th></tr></thead>'
+            f'<tbody>{b_rows}</tbody></table></div>'
+        )
+    additive_html = "".join(additive_cards)
 
     hidden_cls = "" if is_latest else " hidden"
     wk_count = sum(1 for f in findings if f["status"] == "workaround")
@@ -266,7 +285,7 @@ def _render_run_panel(run: dict[str, Any], is_latest: bool) -> str:
       <div class="kpi-val">{fp_pct:.1f}%</div>
       <p class="kpi-note">{fp_cnt}/{total_g} core_v1 gates passed on Attempt 1 without workarounds. End-of-round: {ev['end_of_round_pass_count']}/{total_g} PASS, {ev['end_of_round_partial_count']} PARTIAL.</p>
       <div class="bar-track"><div class="bar-fill bar-info" style="width:{fp_pct:.1f}%"></div></div>
-      <div class="bar-caption"><span>Baseline: {fp_pct:.1f}%</span><span>HC-02 Target: &gt;=90%</span></div>
+      <div class="bar-caption"><span>Measured: {fp_pct:.1f}%</span><span>Wave 1 Target: &gt;=90%</span></div>
     </div>
     <div class="card">
       <div class="kpi-label">2. Manual Friction Count</div>
@@ -314,14 +333,7 @@ def _render_run_panel(run: dict[str, Any], is_latest: bool) -> str:
     </table>
   </div>
 
-  <div class="card">
-    <h2>Additive Gates Roadmap: <span class="mono">additive_gates.v2_cross_project</span></h2>
-    <p class="sub" style="margin-bottom:12px;">Target topology for next round: <strong>{_esc(add_v2.get('topology_target', ''))}</strong> ({add_v2.get('gate_count', 0)} versioned extension gates added alongside immutable <span class="mono">core_v1</span>).</p>
-    <table>
-      <thead><tr><th>Gate</th><th>Extension Requirement</th><th>Pass Criteria</th><th>State</th></tr></thead>
-      <tbody>{add_rows}</tbody>
-    </table>
-  </div>
+  {additive_html}
 </section>
 """
 
@@ -364,7 +376,7 @@ def render_dashboard_html(runs: list[dict[str, Any]], ledger_sha256: str) -> str
   </header>
 
   <div class="card" style="margin-bottom:18px;">
-    <h2>Cross-Round Evolution (core_v1 Immutable Baseline vs. HC-02 Target)</h2>
+    <h2>Cross-Round Evolution (core_v1 Immutable Baseline vs. Wave 1 Target)</h2>
     <div class="svg-box">{_render_progression_svg(runs)}</div>
   </div>
 

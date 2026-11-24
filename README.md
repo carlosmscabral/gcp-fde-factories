@@ -2,7 +2,7 @@
 
 **Reusable Autonomous Software Factories for Google Cloud Forward Deployed Engineers (FDEs)** — built on **Google Cloud Scion (`v0.4.0-preview.3`)**, **`scion-frontiers/agent-team` (SEP)**, **Vertex AI-first generic model tiers**, **split-SA Sandbox verification**, **closed-loop Kaizen**, and **zero-overwrite Brownfield onboarding**.
 
-> **Release `acém` (`v0.4.0`):** Self-contained offline Release Kits, zero static GCP keys, fail-closed IAM and container image validation, and dual active domain packs (`packs/gecx` + `packs/adk`).
+> **Release `acém` (`v0.4.0`):** Self-contained offline Release Kits, zero static GCP keys, fail-closed IAM and container image validation, dual active domain packs (`packs/gecx` + `packs/adk`), and an empirical [Enterprise GCP Prerequisites Checklist](deploy/ENTERPRISE_PREREQUISITES.md) plus live [Hillclimbing Qualification Ledger](docs/HILLCLIMBING_CHARTER.md).
 
 ---
 

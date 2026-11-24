@@ -236,6 +236,12 @@ def register_ge_agent(
     return http_fn("POST", url, headers, payload)
 
 
+def _validate_resource_project(resource_project: str, quota_project: str, quota_project_number: str = "") -> bool:
+    """Checks whether a GCP resource project segment matches quota_project ID or explicit numeric project number."""
+    allowed = {p for p in (quota_project.strip(), quota_project_number.strip()) if p}
+    return resource_project in allowed
+
+
 def patch_ge_agent(
     agent_resource_name: str,
     spec: dict[str, Any],
@@ -244,13 +250,18 @@ def patch_ge_agent(
     display_name_override: str = "",
     reasoning_engine_override: str = "",
     http_fn: HttpRequestFn = default_http_request,
+    quota_project_number: str = "",
 ) -> tuple[int, dict[str, Any]]:
     """Updates an existing Sandbox Gemini Enterprise agent via PATCH to avoid daily creation quota 429s."""
     m = GE_AGENT_RESOURCE_RE.match(agent_resource_name)
     if not m:
         raise ValueError(f"Invalid Gemini Enterprise agent resource name: '{agent_resource_name}'")
-    if m.group(1) != quota_project:
-        raise ValueError(f"Refusing cross-project PATCH: resource project '{m.group(1)}' != '{quota_project}'.")
+    if not _validate_resource_project(m.group(1), quota_project, quota_project_number):
+        raise ValueError(
+            f"Refusing cross-project PATCH: resource project '{m.group(1)}' does not match "
+            f"'{quota_project}'"
+            + (f" or project number '{quota_project_number}'." if quota_project_number else " (pass --quota-project-number for numeric GCP paths).")
+        )
     loc = m.group(2)
     prefix = "" if loc == "global" else f"{loc}-"
     payload = build_ge_registration_payload(
@@ -281,13 +292,18 @@ def delete_ge_agent(
     token: str,
     quota_project: str,
     http_fn: HttpRequestFn = default_http_request,
+    quota_project_number: str = "",
 ) -> tuple[int, dict[str, Any]]:
     """Deletes a validated Gemini Enterprise agent resource, refusing non-agent or cross-project paths."""
     m = GE_AGENT_RESOURCE_RE.match(agent_resource_name)
     if not m:
         raise ValueError(f"Refusing DELETE on non-agent Discovery Engine path: '{agent_resource_name}'")
-    if m.group(1) != quota_project:
-        raise ValueError(f"Refusing cross-project DELETE: resource project '{m.group(1)}' != '{quota_project}'.")
+    if not _validate_resource_project(m.group(1), quota_project, quota_project_number):
+        raise ValueError(
+            f"Refusing cross-project DELETE: resource project '{m.group(1)}' does not match "
+            f"'{quota_project}'"
+            + (f" or project number '{quota_project_number}'." if quota_project_number else " (pass --quota-project-number for numeric GCP paths).")
+        )
     loc = endpoint_location or m.group(2)
     prefix = "" if loc == "global" else f"{loc}-"
     url = f"https://{prefix}discoveryengine.googleapis.com/v1alpha/{agent_resource_name}"

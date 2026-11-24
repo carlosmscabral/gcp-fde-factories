@@ -246,6 +246,32 @@ resource "google_project_iam_member" "builder_storage_viewer" {
   member  = "serviceAccount:${google_service_account.release_builder.email}"
 }
 
+# Dedicated least-privilege GKE node SA when enable_gke_api is true (HC-02 F4).
+# Prevents 403 ImagePullBackOff on hardened projects where the Compute Engine default SA lacks roles/editor.
+resource "google_service_account" "gke_node" {
+  count = var.enable_gke_api ? 1 : 0
+
+  project      = var.hub_project_id
+  account_id   = "${var.name_prefix}-gke-node"
+  display_name = "Scion GKE Node Pool Runtime (Least Privilege)"
+}
+
+resource "google_project_iam_member" "gke_node_default" {
+  count = var.enable_gke_api ? 1 : 0
+
+  project = var.hub_project_id
+  role    = "roles/container.defaultNodeServiceAccount"
+  member  = "serviceAccount:${google_service_account.gke_node[0].email}"
+}
+
+resource "google_project_iam_member" "gke_node_ar_reader" {
+  count = var.enable_gke_api ? 1 : 0
+
+  project = var.hub_project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.gke_node[0].email}"
+}
+
 # --- Scion Hub Server IAM (required by gcp_iam_check_mode=enforce + assign SA minting) ---
 
 resource "google_project_iam_member" "hub_security_reviewer" {
@@ -499,6 +525,7 @@ resource "google_project_iam_custom_role" "adk_sandbox_deployer" {
     "discoveryengine.agents.delete",
     "discoveryengine.agents.get",
     "discoveryengine.agents.list",
+    "discoveryengine.agents.manage",
     "discoveryengine.agents.update",
     "run.operations.get",
     "run.services.create",
@@ -545,6 +572,7 @@ resource "google_project_iam_custom_role" "adk_sandbox_janitor" {
     "discoveryengine.agents.delete",
     "discoveryengine.agents.get",
     "discoveryengine.agents.list",
+    "discoveryengine.agents.manage",
     "run.services.delete",
     "run.services.get",
     "run.services.list",
@@ -577,6 +605,65 @@ resource "google_service_account_iam_member" "deployer_worker_act_as" {
   service_account_id = google_service_account.worker.name
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+}
+
+# Same-project Sandbox ADK Runtime SA for Cloud Run and Agent Engine workloads (HC-02 F10).
+# Avoids cross-project SA attachment rejections under constraints/iam.disableCrossProjectServiceAccountUsage
+# while holding predict-only rights on inference_project_id and zero write rights on sandbox_project_id.
+resource "google_service_account" "adk_runtime" {
+  count = var.enable_adk_sandbox_roles ? 1 : 0
+
+  project      = var.sandbox_project_id
+  account_id   = "${var.name_prefix}-adk-runtime"
+  display_name = "ADK Sandbox Container Runtime (Predict-Only)"
+}
+
+resource "google_service_account_iam_member" "deployer_adk_runtime_act_as" {
+  count = var.enable_adk_sandbox_roles ? 1 : 0
+
+  service_account_id = google_service_account.adk_runtime[0].name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+}
+
+resource "google_project_iam_member" "adk_runtime_inference_predict" {
+  count = var.enable_adk_sandbox_roles ? 1 : 0
+
+  project = var.inference_project_id
+  role    = google_project_iam_custom_role.inference_vertex_predict.id
+  member  = "serviceAccount:${google_service_account.adk_runtime[0].email}"
+}
+
+resource "google_project_iam_member" "adk_runtime_inference_usage" {
+  count = var.enable_adk_sandbox_roles ? 1 : 0
+
+  project = var.inference_project_id
+  role    = "roles/serviceusage.serviceUsageConsumer"
+  member  = "serviceAccount:${google_service_account.adk_runtime[0].email}"
+}
+
+resource "google_project_iam_member" "adk_runtime_sandbox_predict" {
+  count = var.enable_adk_sandbox_roles ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = google_project_iam_custom_role.sandbox_evaluator_predict.id
+  member  = "serviceAccount:${google_service_account.adk_runtime[0].email}"
+}
+
+resource "google_project_iam_member" "adk_runtime_sandbox_usage" {
+  count = var.enable_adk_sandbox_roles ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = "roles/serviceusage.serviceUsageConsumer"
+  member  = "serviceAccount:${google_service_account.adk_runtime[0].email}"
+}
+
+resource "google_project_iam_member" "adk_runtime_hub_ar_reader" {
+  count = var.enable_adk_sandbox_roles ? 1 : 0
+
+  project = var.hub_project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.adk_runtime[0].email}"
 }
 
 resource "google_project_iam_member" "deployer_hub_cloudbuild_editor" {

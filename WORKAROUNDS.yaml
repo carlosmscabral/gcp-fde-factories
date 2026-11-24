@@ -48,3 +48,12 @@ workarounds:
     reason: "HC-01 (F10) proved first-time federated OIDC user creation sets users.role='admin' without inserting the super-admin RoleBinding, and subsequent applyLiveSignInPolicy skips ensureSuperAdminBinding when oldRole == newRole."
     mitigation: "Restart the persistent Hub once after the initial OIDC sign-in so startup backfillSuperAdminBinding creates the binding, or transition role via bootstrap runbook."
     removal_test: "Sign in as a new federated OIDC admin on next Scion release and verify PUT /api/v1/admin/server-config succeeds on first request without restart."
+
+  - id: "WK-006"
+    component: "scion==v0.4.0-preview.3"
+    added_date: "2026-11-24"
+    expires_date: "2027-02-22"
+    summary: "Federated non-admin OIDC users must be added to the hub-members group to resolve global Hub Skill Bank skills."
+    reason: "HC-02 (HC02-F6) proved federated OIDC user provisioning creates member users without adding them to the hub-members group (which carries global skill.read), causing skill_resolution_failed on agent start."
+    mitigation: "Add newly provisioned non-admin OIDC operators to the hub-members group via POST /api/v1/groups/<hub-members-id>/members (role=member) during onboarding."
+    removal_test: "Sign in as a new non-admin OIDC user on next Scion release and verify scion start resolves global skills without manual hub-members group insertion."

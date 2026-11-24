@@ -158,6 +158,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--mode", default="level1-only", choices=["level1-only", "sandbox-live"])
     p.add_argument("--phase", default="evaluate", choices=["deploy", "evaluate"])
     p.add_argument("--sandbox-project", default="")
+    p.add_argument("--sandbox-project-number", default=os.environ.get("SANDBOX_PROJECT_NUMBER", ""))
     p.add_argument("--reasoning-engine", default="")
     p.add_argument("--sandbox-ge-agent", default="", help="Existing Sandbox GE agent resource to PATCH instead of POST.")
     p.add_argument("--ge-agent-state-file", type=pathlib.Path, default=None, help="JSON handoff file from deploy to evaluate phase.")
@@ -216,15 +217,23 @@ def _write_verdict(
     return exit_code
 
 
-def _validate_reasoning_engine_project(reasoning_engine: str, sandbox_project: str) -> str | None:
-    """Verifies --reasoning-engine belongs to sandbox_project when supplied."""
+def _validate_reasoning_engine_project(
+    reasoning_engine: str,
+    sandbox_project: str,
+    sandbox_project_number: str = "",
+) -> str | None:
+    """Verifies --reasoning-engine belongs to sandbox_project ID or explicit numeric sandbox_project_number."""
     if not reasoning_engine:
         return None
     m = REASONING_ENGINE_RE.match(reasoning_engine)
     if not m:
         return f"Invalid --reasoning-engine resource format: '{reasoning_engine}'."
-    if m.group(1) != sandbox_project:
-        return f"Refusing cross-project --reasoning-engine '{m.group(1)}' != sandbox '{sandbox_project}'."
+    allowed = {p for p in (sandbox_project.strip(), sandbox_project_number.strip()) if p}
+    if m.group(1) not in allowed:
+        return (
+            f"Refusing cross-project --reasoning-engine '{m.group(1)}' != sandbox '{sandbox_project}'"
+            + (f" or number '{sandbox_project_number}'." if sandbox_project_number else " (pass --sandbox-project-number for numeric GCP paths).")
+        )
     return None
 
 
@@ -293,7 +302,7 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return _write_verdict(args, diversity_profile, evals_dir, gates_executed, _remaining_gates(gates_executed), "verifier-blocked", exit_code=1)
-        re_err = _validate_reasoning_engine_project(args.reasoning_engine, args.sandbox_project)
+        re_err = _validate_reasoning_engine_project(args.reasoning_engine, args.sandbox_project, args.sandbox_project_number)
         if re_err:
             print(f"REFUSED: {re_err}", file=sys.stderr)
             return _write_verdict(args, diversity_profile, evals_dir, gates_executed, _remaining_gates(gates_executed), "verifier-blocked", exit_code=1)
@@ -302,7 +311,13 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if args.sandbox_ge_agent:
                 st, body = patch_ge_agent(
-                    args.sandbox_ge_agent, spec, deployer_tok, args.sandbox_project, ephemeral_name, args.reasoning_engine
+                    args.sandbox_ge_agent,
+                    spec,
+                    deployer_tok,
+                    args.sandbox_project,
+                    ephemeral_name,
+                    args.reasoning_engine,
+                    quota_project_number=args.sandbox_project_number,
                 )
             else:
                 st, body = register_ge_agent(
@@ -337,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not (args.sandbox_project and evaluator_tok and args.expected_evaluator_sa):
         return _write_verdict(args, diversity_profile, evals_dir, gates_executed, _remaining_gates(gates_executed, ["l2:missing-evaluator-inputs"]), "verifier-blocked", exit_code=1)
-    re_err = _validate_reasoning_engine_project(args.reasoning_engine, args.sandbox_project)
+    re_err = _validate_reasoning_engine_project(args.reasoning_engine, args.sandbox_project, args.sandbox_project_number)
     if re_err:
         print(f"REFUSED: {re_err}", file=sys.stderr)
         return _write_verdict(args, diversity_profile, evals_dir, gates_executed, _remaining_gates(gates_executed), "verifier-blocked", exit_code=1)

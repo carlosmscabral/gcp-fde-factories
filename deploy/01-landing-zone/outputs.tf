@@ -12,6 +12,10 @@ output "sandbox_project_id" {
   value = var.sandbox_project_id
 }
 
+output "sandbox_project_number" {
+  value = data.google_project.sandbox.number
+}
+
 output "region" {
   value = var.region
 }
@@ -22,6 +26,10 @@ output "zone" {
 
 output "name_prefix" {
   value = var.name_prefix
+}
+
+output "vpc_name" {
+  value = var.create_custom_vpc ? google_compute_network.scion_vpc[0].name : null
 }
 
 output "vpc_self_link" {
@@ -62,6 +70,14 @@ output "sandbox_janitor_sa_email" {
 
 output "release_builder_sa_email" {
   value = google_service_account.release_builder.email
+}
+
+output "gke_node_sa_email" {
+  value = var.enable_gke_api ? google_service_account.gke_node[0].email : null
+}
+
+output "adk_runtime_sa_email" {
+  value = var.enable_adk_sandbox_roles ? google_service_account.adk_runtime[0].email : null
 }
 
 output "budget_pubsub_topic" {

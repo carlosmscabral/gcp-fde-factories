@@ -69,12 +69,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p_patch.add_argument("--display-name", default="")
     p_patch.add_argument("--reasoning-engine", default="")
     p_patch.add_argument("--quota-project", required=True)
+    p_patch.add_argument("--quota-project-number", default=os.environ.get("SANDBOX_PROJECT_NUMBER", ""))
     p_patch.add_argument("--schema", type=pathlib.Path, default=schema_default)
 
     p_del = sub.add_parser("delete")
     p_del.add_argument("--agent-name", required=True)
     p_del.add_argument("--endpoint-location", default="", choices=["", "global", "us", "eu"])
     p_del.add_argument("--quota-project", required=True)
+    p_del.add_argument("--quota-project-number", default=os.environ.get("SANDBOX_PROJECT_NUMBER", ""))
     return parser.parse_args(argv)
 
 
@@ -87,7 +89,13 @@ def main(argv: list[str] | None = None) -> int:
             print("Missing explicit ADK_DEPLOYER_OAUTH_TOKEN for delete.", file=sys.stderr)
             return 1
         try:
-            status, body = delete_ge_agent(args.agent_name, args.endpoint_location, token, args.quota_project)
+            status, body = delete_ge_agent(
+                args.agent_name,
+                args.endpoint_location,
+                token,
+                args.quota_project,
+                quota_project_number=args.quota_project_number,
+            )
         except ValueError as exc:
             print(f"GE DELETE REFUSED: {exc}", file=sys.stderr)
             return 1
@@ -139,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.quota_project,
                 display_name_override=args.display_name,
                 reasoning_engine_override=args.reasoning_engine,
+                quota_project_number=args.quota_project_number,
             )
         except ValueError as exc:
             print(f"GE PATCH REFUSED: {exc}", file=sys.stderr)

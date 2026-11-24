@@ -96,6 +96,12 @@ variable "oidc_allowed_domains" {
   default     = []
 }
 
+variable "oidc_allowed_gcp_projects" {
+  description = "Optional list of GCP project IDs allowed to authenticate via Google Service Account OIDC identity tokens."
+  type        = list(string)
+  default     = []
+}
+
 variable "boot_image" {
   description = "OS image for the Hub VM boot disk. Override with a customer corporate golden image when compute.trustedImageProjects is enforced."
   type        = string

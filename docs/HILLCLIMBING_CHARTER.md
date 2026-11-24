@@ -105,10 +105,10 @@ Each gate uses a binary first-pass check (`first_pass: true` or `false`) and an 
 | **M5.2** | Zero-token Kaizen collection (`INV-11`) | `kaizen_collect.py` runs against live Hub and writes valid `.factory/kaizen-snapshot.json` with `0` LLM calls | `2/2 tracks collected` |
 | **M5.3** | Ephemeral Janitor and full project teardown (`INV-08`, `INV-16`) | Janitor removes `[CI]` apps, ephemeral projects enter `DELETE_REQUESTED`, and temp repos are cleaned up | `100% clean teardown ($0 residual)` |
 
-## Additive Gates: `additive_gates.v2_cross_project` (Planned for `HC-02`)
+## Additive Gates: `additive_gates.v2_cross_project` (Qualified in `HC-02`)
 
-`HC-02` qualifies the production-grade unified 3-project topology (`hub` + `inf` + `sbx`) across both Lite VM and GKE runtimes while keeping all 18 `core_v1` gates unchanged.
-`HC-02` adds five versioned extension gates under `additive_gates.v2_cross_project`:
+`HC-02` qualified the production-grade unified 3-project topology (`hub` + `inf` + `sbx`) across both Lite VM and GKE runtimes while keeping all 18 `core_v1` gates unchanged.
+`HC-02` executed five versioned extension gates under `additive_gates.v2_cross_project`:
 
 | Metric ID | Additive Gate | Verification Requirement (`HC-02` 3-Project Topology) | Target |
 | :--- | :--- | :--- | :--- |
@@ -118,9 +118,31 @@ Each gate uses a binary first-pass check (`first_pass: true` or `false`) and an 
 | **M4.5** | Live Agent Engine deploy and Gemini Enterprise App lifecycle | Deployer publishes the Dockerfile-first ADK agent to live Vertex AI Agent Engine and runs real register, readback, and delete in a Gemini Enterprise App via `packs/adk/scripts/ge_export.py` | `PASS (live AE + GE CRUD)` |
 | **M5.4** | Stateful GKE Hub pod restart resilience | Deleting the running `scion-hub` pod on GKE recovers with zero loss of projects, secrets, templates, schedules, or RoleBindings | `0 state loss after pod recycle` |
 
+## Additive Gates: `additive_gates.v3_real_factory_ops` (Planned for `HC-03`)
+
+`HC-03` exercises Day-2 multi-agent factory operations, keyless GitHub Actions WIF gates, brownfield customer overlays, and Cloud Run A2A dual export in a fresh 3-project topology:
+
+| Metric ID | Additive Gate | Verification Requirement (`HC-03` Real Factory Operations) | Target |
+| :--- | :--- | :--- | :--- |
+| **M3.4** | Multi-agent PR collaboration and review loop | `coordinator`, `developer`, and independent `reviewer` collaborate on one PR using shared scratchpad or `scion message`, apply a review fix on the branch, and reach approval before deploy | `PASS (review -> fix -> approve)` |
+| **M4.6** | Keyless GitHub Actions WIF Verdict Gate (`enable_github_wif=true`) | Live GitHub Actions workflow authenticates via WIF (`0` static JSON keys), blocks a tampered `evals/` PR, approves a clean verified PR, and runs Janitor via WIF | `PASS (block tampered + pass clean)` |
+| **M2.5** | Brownfield adopt-first onboarding and `overlay-sync` | `factory_onboard.py` and `bootstrap-hub-project.sh overlay-sync` attach custom client `.factory/skills/` and `exclude_skills` onto a dirty repo without overwriting customer code | `PASS (overlay enforced, 0 clobber)` |
+| **M4.7** | Live ADK Cloud Run A2A dual export (`export_mode: a2a`) | Same root `Dockerfile` deploys to authenticated Cloud Run with `adk_runtime` SA, serves `/.well-known/agent-card.json` (`v0.3.0`), handles live JSON-RPC `message/send`, and exports valid `a2a` bundle | `PASS (live A2A AgentCard + RPC)` |
+
+## Additive Gates: `additive_gates.v4_day2_resilience` (Planned for `HC-04`)
+
+`HC-04` qualifies upgrade/rollback durability, closed-loop Tier-B Kaizen observability, FinOps loop kill-switches, and `cross-vendor` diversity (requiring manual Vertex AI Model Garden Claude opt-in):
+
+| Metric ID | Additive Gate | Verification Requirement (`HC-04` Day-2 Resilience and Third Pack) | Target |
+| :--- | :--- | :--- | :--- |
+| **M2.6** | Hub catalog upgrade and clean `rollback` | `bootstrap-hub-project.sh backup -> apply vNext -> rollback` restores prior templates without losing projects, secrets, or schedules | `PASS (0 state loss on rollback)` |
+| **M5.5** | Closed-loop Kaizen Tier A + Tier B (`enable_kaizen_gcp_obs=true`) | `weekly-kaizen` spawns `kaizen-analyst` with read-only `kaizen-viewer` SA, reads live Cloud Logging/Monitoring plus Hub metrics, and writes an actionable report | `PASS (real Tier A+B report)` |
+| **M5.6** | FinOps loop kill-switch and `max_turns` enforcement | Agent spawned with strict `max_turns` / `max_model_calls` cap terminates deterministically before exceeding budget, and `budget_alerts` Pub/Sub delivery verifies cleanly | `PASS (hard cap enforced)` |
+| **M3.5** | Starter pack (`packs/_template-pack`) and `cross-vendor` Claude review | A new pack cloned from `packs/_template-pack` passes build checks, and one live PR runs `diversity_profile: cross-vendor` (Gemini author plus Claude Vertex reviewer after manual Model Garden opt-in) | `PASS (template-pack + cross-vendor)` |
+
 ## Wave 2 Preview (Deferred Until Wave 1 = 100%)
 
-Once `core_v1` and `additive_gates.v2_cross_project` reach `100%` with zero Showstoppers, Wave 2 introduces efficiency metrics:
+Once `core_v1` and active Wave 1 additive blocks reach `100%` with zero Showstoppers, Wave 2 introduces efficiency metrics:
 - Time-to-first-agent (`TTFA`): minutes from empty project to first healthy Scion agent pod.
 - Token budget per merged PR: Vertex AI prompt and output tokens per verified feature wave.
 - First-pass PR acceptance rate: percentage of autonomous PRs passing Contract 5 on attempt 1 without rework.
@@ -131,3 +153,4 @@ Once `core_v1` and `additive_gates.v2_cross_project` reach `100%` with zero Show
 | Run ID | Date (BRT) | Release Base | `core_v1` Cold-Start First-Pass | `core_v1` End-of-Round | Friction (Showstoppers / Minor) | Mock Escapes | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `HC-2026-11-24-01` | 2026-11-24 | `acém` (`v0.4.0`) | `33.3%` (`6/18`) | `17/18 PASS`, `1 PARTIAL` | `31` (`24` / `7`) | `26` | Completed baseline (30 fixed in repo + 1 upstream `WK-005`) |
+| `HC-2026-11-24-02` | 2026-11-24 | `acém` (`v0.4.0` + HC-01) | `66.7%` (`12/18`) | `17/18 PASS`, `1 PARTIAL` | `14` (`9` / `5`) | `14` | Completed 3-project cross-project (`v2_cross_project`: `4/5 PASS`, `1 PARTIAL` GE billing license) |
