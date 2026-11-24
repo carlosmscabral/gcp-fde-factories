@@ -138,3 +138,6 @@ uv pip install --python .venv/bin/python -e ".[dev]"
 | **Landing Zone & Org Policies** | [`docs/CUSTOMER_LANDING_ZONE_REQUIREMENTS.md`](docs/CUSTOMER_LANDING_ZONE_REQUIREMENTS.md) | Multi-project topologies, APIs, 7–8 SAs, Custom Roles (GECX + ADK), Org Policy matrix & FinOps guardrails |
 | **Hands-On Walkthrough** | [`docs/HANDS_ON_WALKTHROUGH.md`](docs/HANDS_ON_WALKTHROUGH.md) | Step-by-step zero-to-teardown walkthrough paired with `./scripts/hands-on-walkthrough.sh` |
 | **Formal Kaizen & Brownfield Spec** | [`docs/specs/SPEC_KAIZEN_AND_BROWNFIELD_ONBOARDING.md`](docs/specs/SPEC_KAIZEN_AND_BROWNFIELD_ONBOARDING.md) | Formal ASD-STE100 specification and acceptance criteria for `v0.3.0` + `v0.4.0` |
+| **Architecture Decision Records** | [`docs/adr/README.md`](docs/adr/README.md) | Formal traceable ADRs (`ADR-001`–`ADR-012`) governing boundaries, IAM, Vertex AI, and runtimes |
+| **Architectural Invariants** | [`docs/INVARIANTS.md`](docs/INVARIANTS.md) | 16 enforceable invariants (`INV-01`–`INV-16`) mapped 1:1 to ADRs, code paths, and automated tests |
+| **Hillclimbing Charter** | [`docs/HILLCLIMBING_CHARTER.md`](docs/HILLCLIMBING_CHARTER.md) | Functional-first live GCP qualification program (Levels 0–5, VM+GECX and GKE+ADK tracks, teardown proof) |
