@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Hourly out-of-band Sandbox Janitor for packs/adk (Agent Engine + ephemeral Gemini Enterprise agents).
+"""Hourly out-of-band Sandbox Janitor for packs/adk (Vertex AI ReasoningEngines + Gemini Enterprise agents).
 
 Runs exclusively under the dedicated Janitor SA (never registered on Scion Hub).
-Selects only resources whose displayName starts with `[CI]` and whose age exceeds max_age_hours (default 4h).
+Paginates all resources, selects only `[CI]`-prefixed resources older than max_age_hours (4h),
+deletes ReasoningEngines with force=true and ephemeral GE agents via Discovery Engine v1alpha,
+and exits non-zero if any deletion fails.
 """
 from __future__ import annotations
 
@@ -12,8 +14,11 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
-from typing import Any
+from typing import Any, Callable
+
+RestFn = Callable[[str, str, str, str], tuple[int, dict[str, Any]]]
 
 
 def select_expired_ci_resources(
@@ -39,7 +44,7 @@ def select_expired_ci_resources(
     return sorted(expired)
 
 
-def _rest_call(method: str, url: str, token: str, quota_project: str) -> tuple[int, dict[str, Any]]:
+def default_rest_call(method: str, url: str, token: str, quota_project: str) -> tuple[int, dict[str, Any]]:
     """Executes an authenticated Vertex AI or Discovery Engine REST request."""
     req = urllib.request.Request(
         url,
@@ -52,39 +57,127 @@ def _rest_call(method: str, url: str, token: str, quota_project: str) -> tuple[i
             return resp.status, json.loads(raw) if raw.strip() else {}
     except urllib.error.HTTPError as exc:
         return exc.code, {"error": exc.read().decode("utf-8", errors="replace")}
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        return 0, {"error": str(exc)}
+
+
+def _list_paginated(
+    base_url: str,
+    items_key: str,
+    token: str,
+    quota_project: str,
+    rest_fn: RestFn,
+) -> tuple[bool, list[dict[str, Any]], str]:
+    """Lists all pages of a Google Cloud REST collection using nextPageToken."""
+    all_items: list[dict[str, Any]] = []
+    page_token = ""
+    while True:
+        sep = "&" if "?" in base_url else "?"
+        url = f"{base_url}{sep}pageToken={urllib.parse.quote(page_token)}" if page_token else base_url
+        st, body = rest_fn("GET", url, token, quota_project)
+        if st != 200:
+            return False, all_items, f"GET {url} failed with HTTP {st}"
+        all_items.extend(body.get(items_key, []) or [])
+        page_token = str(body.get("nextPageToken") or "")
+        if not page_token:
+            return True, all_items, ""
+
+
+def run_janitor(
+    project: str,
+    regions: list[str],
+    token: str,
+    max_age_hours: float = 4.0,
+    apply: bool = False,
+    ge_app: str = "",
+    ge_location: str = "global",
+    ge_assistant: str = "default_assistant",
+    now_utc: dt.datetime | None = None,
+    rest_fn: RestFn = default_rest_call,
+) -> tuple[int, dict[str, Any]]:
+    """Sweeps expired [CI] ReasoningEngines and optional Gemini Enterprise agents."""
+    ref_now = now_utc or dt.datetime.now(dt.timezone.utc)
+    found: list[str] = []
+    deleted: list[str] = []
+    failures: list[str] = []
+
+    for region in regions:
+        base = f"https://{region}-aiplatform.googleapis.com/v1beta1"
+        ok, engines, err = _list_paginated(
+            f"{base}/projects/{project}/locations/{region}/reasoningEngines",
+            "reasoningEngines",
+            token,
+            project,
+            rest_fn,
+        )
+        if not ok:
+            failures.append(err)
+            continue
+        expired = select_expired_ci_resources(engines, ref_now, max_age_hours)
+        found.extend(expired)
+        if apply:
+            for name in expired:
+                st, _ = rest_fn("DELETE", f"{base}/{name}?force=true", token, project)
+                if 200 <= st < 300:
+                    deleted.append(name)
+                else:
+                    failures.append(f"DELETE {name} failed with HTTP {st}")
+
+    if ge_app:
+        prefix = "" if ge_location == "global" else f"{ge_location}-"
+        ge_base = f"https://{prefix}discoveryengine.googleapis.com/v1alpha"
+        ge_list_url = (
+            f"{ge_base}/projects/{project}/locations/{ge_location}/collections/default_collection/"
+            f"engines/{ge_app}/assistants/{ge_assistant}/agents"
+        )
+        ok, agents, err = _list_paginated(ge_list_url, "agents", token, project, rest_fn)
+        if not ok:
+            failures.append(err)
+        else:
+            expired_ge = select_expired_ci_resources(agents, ref_now, max_age_hours)
+            found.extend(expired_ge)
+            if apply:
+                for name in expired_ge:
+                    st, _ = rest_fn("DELETE", f"{ge_base}/{name}", token, project)
+                    if 200 <= st < 300:
+                        deleted.append(name)
+                    else:
+                        failures.append(f"DELETE {name} failed with HTTP {st}")
+
+    report = {"expired_found": sorted(found), "deleted": sorted(deleted), "failures": failures, "dry_run": not apply}
+    return (0 if not failures else 1), report
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Lists expired [CI] ReasoningEngines in Sandbox and deletes them when --apply is set."""
-    parser = argparse.ArgumentParser(description="Clean up expired [CI] ADK Sandbox ReasoningEngines.")
+    """CLI entrypoint for sweeping expired [CI] ReasoningEngines and GE agents."""
+    parser = argparse.ArgumentParser(description="Clean up expired [CI] ADK Sandbox ReasoningEngines and GE agents.")
     parser.add_argument("--project", required=True)
-    parser.add_argument("--region", default="us-central1")
+    parser.add_argument("--regions", default="us-central1", help="Comma-separated Vertex AI regions.")
+    parser.add_argument("--ge-app", default="", help="Optional Gemini Enterprise Sandbox app_id to sweep.")
+    parser.add_argument("--ge-location", default="global", choices=["global", "us", "eu"])
+    parser.add_argument("--assistant", default="default_assistant")
     parser.add_argument("--max-age-hours", type=float, default=4.0)
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
 
-    token = os.environ.get("ADK_JANITOR_OAUTH_TOKEN", "")
+    token = os.environ.get("ADK_JANITOR_OAUTH_TOKEN", "").strip()
     if not token:
         print("Missing ADK_JANITOR_OAUTH_TOKEN.", file=sys.stderr)
         return 1
 
-    base = f"https://{args.region}-aiplatform.googleapis.com/v1beta1"
-    st, body = _rest_call("GET", f"{base}/projects/{args.project}/locations/{args.region}/reasoningEngines", token, args.project)
-    if st != 200:
-        print(f"Failed to list reasoningEngines: HTTP {st}", file=sys.stderr)
-        return 1
-
-    targets = select_expired_ci_resources(
-        body.get("reasoningEngines", []), dt.datetime.now(dt.timezone.utc), args.max_age_hours
+    regions = [r.strip() for r in args.regions.split(",") if r.strip()]
+    rc, report = run_janitor(
+        project=args.project,
+        regions=regions,
+        token=token,
+        max_age_hours=args.max_age_hours,
+        apply=args.apply,
+        ge_app=args.ge_app,
+        ge_location=args.ge_location,
+        ge_assistant=args.assistant,
     )
-    deleted: list[str] = []
-    for res_name in targets:
-        if args.apply:
-            d_st, _ = _rest_call("DELETE", f"{base}/{res_name}", token, args.project)
-            if 200 <= d_st < 300:
-                deleted.append(res_name)
-    print(json.dumps({"expired_found": targets, "deleted": deleted, "dry_run": not args.apply}, indent=2))
-    return 0
+    print(json.dumps(report, indent=2))
+    return rc
 
 
 if __name__ == "__main__":

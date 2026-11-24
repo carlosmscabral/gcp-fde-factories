@@ -14,10 +14,11 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 VERDICT_SCHEMA = REPO_ROOT / "schemas/verdict.schema.json"
 
 
-def _make_verdict(tmp_path: pathlib.Path, evals_dir: pathlib.Path, overrides: dict) -> pathlib.Path:
+def _make_verdict(tmp_path: pathlib.Path, evals_dir: pathlib.Path, overrides: dict, name: str = "verdict.json") -> pathlib.Path:
     """Writes a baseline Verdict JSON for unit tests."""
     base = {
         "schema_version": "1",
+        "pack": "gecx",
         "pr_number": 42,
         "commit_sha": "a" * 40,
         "diversity_profile": "cross-vendor",
@@ -32,7 +33,7 @@ def _make_verdict(tmp_path: pathlib.Path, evals_dir: pathlib.Path, overrides: di
         "created_at_utc": "2026-11-22T20:00:00Z",
     }
     base.update(overrides)
-    out = tmp_path / "verdict.json"
+    out = tmp_path / name
     out.write_text(json.dumps(base), encoding="utf-8")
     return out
 
@@ -65,6 +66,105 @@ def test_forged_verdict_rejected_when_ces_run_missing_or_failed(tmp_path: pathli
     )
     errs = verify_verdict(verdict_path, VERDICT_SCHEMA, "a" * 40, evals, "sbx", "gecx-eval@sbx.iam.gserviceaccount.com", "tok", fake_fetch_forged)
     assert any("does not exist in CES Sandbox" in e for e in errs)
+
+
+def test_gecx_cross_pack_downgrade_and_adk_forgery_vectors_blocked(tmp_path: pathlib.Path) -> None:
+    """Negative tests (ADK-04/ADK-06/ADK-07): blocks GECX run-less downgrade, ADK missing eval/SA/PR binding, and unauthorized surfaces."""
+    evals = tmp_path / "evals"
+    evals.mkdir()
+    (evals / "g.yaml").write_text("name: g1\n", encoding="utf-8")
+
+    # 1. GECX verdict claiming live-gcp-verified with empty evaluation_run_ids MUST fail schema validation (ADK-06).
+    gecx_downgrade = _make_verdict(tmp_path, evals, {"pack": "gecx", "evaluation_run_ids": []}, "gecx-down.json")
+    errs = verify_verdict(gecx_downgrade, VERDICT_SCHEMA, "a" * 40, evals)
+    assert errs != []
+
+    # 2a. ADK live-gcp-verified without l2:adk-eval MUST fail schema validation (ADK-04).
+    adk_no_eval = _make_verdict(
+        tmp_path,
+        evals,
+        {
+            "pack": "adk",
+            "ephemeral_app_name": "projects/sbx/locations/us-central1/reasoningEngines/re-1",
+            "evaluation_run_ids": [],
+            "gates_executed": ["l1:ge-export-bundle"],
+        },
+        "adk-noeval.json",
+    )
+    errs_no_eval = verify_verdict(adk_no_eval, VERDICT_SCHEMA, "a" * 40, evals)
+    assert errs_no_eval != []
+
+    # 2b. ADK live-gcp-verified with wrong project or unbound displayName MUST fail live API check (ADK-04).
+    adk_wrong_proj = _make_verdict(
+        tmp_path,
+        evals,
+        {
+            "pack": "adk",
+            "ephemeral_app_name": "projects/other-proj/locations/us-central1/reasoningEngines/re-1",
+            "evaluation_run_ids": [],
+            "expected_evaluator_sa": "adk-eval@sbx.iam.gserviceaccount.com",
+            "gates_executed": ["l1:ge-export-bundle", "l2:adk-eval"],
+        },
+        "adk-wrong-proj.json",
+    )
+    errs_proj = verify_verdict(
+        adk_wrong_proj,
+        VERDICT_SCHEMA,
+        "a" * 40,
+        evals,
+        sandbox_project="sbx",
+        expected_evaluator_sa="adk-eval@sbx.iam.gserviceaccount.com",
+        access_token="tok",
+        fetch_fn=lambda url, t, p: (200, {"name": "projects/other-proj/locations/us-central1/reasoningEngines/re-1", "displayName": "unrelated"}),
+    )
+    assert any("sandbox_project" in e for e in errs_proj)
+
+    adk_unbound = _make_verdict(
+        tmp_path,
+        evals,
+        {
+            "pack": "adk",
+            "ephemeral_app_name": "projects/sbx/locations/us-central1/reasoningEngines/re-1",
+            "evaluation_run_ids": [],
+            "expected_evaluator_sa": "adk-eval@sbx.iam.gserviceaccount.com",
+            "gates_executed": ["l1:ge-export-bundle", "l2:adk-eval"],
+        },
+        "adk-unbound.json",
+    )
+    errs_unbound = verify_verdict(
+        adk_unbound,
+        VERDICT_SCHEMA,
+        "a" * 40,
+        evals,
+        sandbox_project="sbx",
+        expected_evaluator_sa="adk-eval@sbx.iam.gserviceaccount.com",
+        access_token="tok",
+        fetch_fn=lambda url, t, p: (200, {"name": "projects/sbx/locations/us-central1/reasoningEngines/re-1", "displayName": "unrelated"}),
+    )
+    assert any("not bound to PR-42" in e for e in errs_unbound)
+
+    # 3. Unauthorized not_verifiable_surfaces and require_live downgrade MUST fail (ADK-07).
+    unauth = _make_verdict(
+        tmp_path,
+        evals,
+        {
+            "verdict": "not-verifiable-in-sandbox",
+            "ephemeral_app_name": None,
+            "evaluation_run_ids": [],
+            "not_verifiable_surfaces": ["made-up-excuse"],
+        },
+        "unauth.json",
+    )
+    errs_surf = verify_verdict(
+        unauth, VERDICT_SCHEMA, "a" * 40, evals,
+        allowed_surfaces={"sip-trunk-routing"}, require_live=False,
+    )
+    assert any("Unauthorized not_verifiable_surfaces" in e for e in errs_surf)
+    errs_req_live = verify_verdict(
+        unauth, VERDICT_SCHEMA, "a" * 40, evals,
+        allowed_surfaces={"sip-trunk-routing"}, require_live=True,
+    )
+    assert any("live-gcp-verified" in e for e in errs_req_live)
 
 
 def test_evals_tree_tampering_detected(tmp_path: pathlib.Path) -> None:

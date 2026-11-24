@@ -1,10 +1,11 @@
-# Optional internal Cloud Build pipeline for strict SecOps or Binary Authorization customers.
-# Rebuilds core-gcp-fde-base and the target pack layer (gecx or adk) inside the customer Hub project.
+# Internal Cloud Build pipeline for customer-owned OCI image builds (default Stage 03 mode).
+# Rebuilds core-gcp-fde-base and the target pack runtime image (<pack>-runtime) inside the customer Hub project.
 options:
   logging: CLOUD_LOGGING_ONLY
 
 substitutions:
-  _AR_URL: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/gecx-factory-images"
+  _AR_URL: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/factory-images"
+  _BASE_IMAGE: "python:3.12-slim-bookworm"
   _PACK: "gecx"
   _PACK_VERSION: "0.4.0"
 
@@ -15,6 +16,8 @@ steps:
       - "build"
       - "-f"
       - "core-gcp-fde/images/base.Dockerfile"
+      - "--build-arg"
+      - "BASE_IMAGE=${_BASE_IMAGE}"
       - "-t"
       - "${_AR_URL}/core-gcp-fde-base:${_PACK_VERSION}"
       - "."
@@ -28,9 +31,9 @@ steps:
       - "--build-arg"
       - "CORE_BASE_IMAGE=${_AR_URL}/core-gcp-fde-base:${_PACK_VERSION}"
       - "-t"
-      - "${_AR_URL}/scion-${_PACK}-runtime:${_PACK_VERSION}"
+      - "${_AR_URL}/${_PACK}-runtime:${_PACK_VERSION}"
       - "."
 
 images:
   - "${_AR_URL}/core-gcp-fde-base:${_PACK_VERSION}"
-  - "${_AR_URL}/scion-${_PACK}-runtime:${_PACK_VERSION}"
+  - "${_AR_URL}/${_PACK}-runtime:${_PACK_VERSION}"

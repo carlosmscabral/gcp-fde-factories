@@ -1,51 +1,138 @@
+# Contract 3 & 5 anti-forgery PR verification workflow for customer ADK repositories.
+# Enforces AGENTS/CLAUDE/GEMINI parity, evals/tests tamper guard, PII/secret scan,
+# live Vertex AI / Gemini Enterprise provenance verification, and `if: always()` Janitor teardown.
 name: ADK Anti-Forgery Verdict & GE Export Gate
 
 on:
   pull_request:
-    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
   id-token: write
+  pull-requests: read
 
 jobs:
-  verify-adk-and-ge-export:
+  verify-adk-verdict-and-ge-export:
     runs-on: ubuntu-latest
+    env:
+      VERDICT_FILE: ".factory/verdicts/pr-${{ github.event.pull_request.number }}.json"
+      SANDBOX_PROJECT: "${{ vars.ADK_SANDBOX_PROJECT_ID }}"
+      EVALUATOR_SA: "${{ vars.ADK_EVALUATOR_SA_EMAIL }}"
+      JANITOR_SA: "${{ vars.ADK_JANITOR_SA_EMAIL }}"
+      WIF_PROVIDER: "${{ vars.GCP_WIF_PROVIDER }}"
+      ADK_RUNTIME_IMAGE: "${{ vars.ADK_RUNTIME_IMAGE_DIGEST }}"
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout PR head
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Block unapproved evals/ edits alongside agent/ code
-        env:
-          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+      - name: Enforce AGENTS.md, CLAUDE.md, and GEMINI.md parity
         run: |
-          CHANGED="$(git diff --name-only origin/${{ github.base_ref }}...HEAD)"
-          if grep -q '^agent/' <<< "$CHANGED" && grep -q '^evals/' <<< "$CHANGED"; then
-            if ! grep -q 'eval-change-approved' <<< "$PR_LABELS"; then
-              echo "FAIL: PR modifies agent/ and evals/ without human label 'eval-change-approved'." >&2
+          cmp -s AGENTS.md CLAUDE.md
+          cmp -s AGENTS.md GEMINI.md
+
+      - name: Block unapproved evals/ or tests/ edits without human label
+        env:
+          BASE_SHA: "${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
+          PR_LABELS: "${{ join(github.event.pull_request.labels.*.name, ',') }}"
+        run: |
+          CHANGED="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          if grep -Eq '^(evals|tests)/' <<< "$CHANGED"; then
+            if ! grep -qw 'eval-change-approved' <<< "$PR_LABELS"; then
+              echo "::error::PR edits evals/ or tests/ without human label 'eval-change-approved'."
               exit 1
             fi
           fi
 
-      - name: Scan evals/ and ge_manifest.json for PII
+      - name: Scan evals/ and ge_manifest.json for PII and secrets
         run: |
           python3 - <<'PY'
           import pathlib, re, sys
-          pats = [re.compile(r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b"), re.compile(r"\b(?:\d{4}[- ]?){3}\d{4}\b")]
+          pats = {
+              "cpf": re.compile(r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b"),
+              "credit_card": re.compile(r"\b(?:\d{4}[- ]?){3}\d{4}\b"),
+              "email": re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
+              "bearer_token": re.compile(r"Bearer\s+[A-Za-z0-9._-]{20,}"),
+          }
           for root in [pathlib.Path("evals"), pathlib.Path("ge_manifest.json")]:
               files = [root] if root.is_file() else (list(root.rglob("*")) if root.exists() else [])
               for f in files:
                   if f.is_file():
                       txt = f.read_text(encoding="utf-8", errors="ignore")
-                      for p in pats:
-                          if p.search(txt):
-                              print(f"PII detected in {f}", file=sys.stderr)
+                      for name, pat in pats.items():
+                          if pat.search(txt):
+                              print(f"Blocked pattern '{name}' detected in {f}", file=sys.stderr)
                               sys.exit(1)
-          print("PII scan clean.")
+          print("PII and secret scan clean.")
           PY
 
-      - name: Validate Gemini Enterprise export bundle offline
+      - name: Authenticate to Sandbox Evaluator SA via WIF (when Verdict exists)
+        if: hashFiles(env.VERDICT_FILE) != '' && env.WIF_PROVIDER != ''
+        id: auth-eval
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: "${{ env.WIF_PROVIDER }}"
+          service_account: "${{ env.EVALUATOR_SA }}"
+          token_format: access_token
+
+      - name: Validate GE export bundle and verify PR Verdict inside pinned runtime image
+        if: env.ADK_RUNTIME_IMAGE != ''
+        env:
+          EVAL_ACCESS_TOKEN: "${{ steps.auth-eval.outputs.access_token }}"
+          PR_HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
+          PR_NUM: "${{ github.event.pull_request.number }}"
         run: |
-          python3 packs/adk/scripts/ge_export.py validate --manifest ge_manifest.json
-          python3 packs/adk/scripts/ge_export.py export --manifest ge_manifest.json --out dist/ge-export
+          docker run --rm -v "$PWD:/workspace" -w /workspace \
+            -e EVAL_ACCESS_TOKEN -e PR_HEAD_SHA -e PR_NUM \
+            -e VERDICT_FILE -e SANDBOX_PROJECT -e EVALUATOR_SA \
+            "$ADK_RUNTIME_IMAGE" bash -euo pipefail -c '
+              python3 /opt/adk-factory/ge_export.py validate --manifest ge_manifest.json
+              python3 /opt/adk-factory/ge_export.py export --manifest ge_manifest.json --out dist/ge-export
+              if [[ -f "$VERDICT_FILE" ]]; then
+                python3 /opt/gcp-fde/verify-verdict.py \
+                  --verdict "$VERDICT_FILE" \
+                  --expected-pack adk \
+                  --expected-pr-number "$PR_NUM" \
+                  --expected-commit "$PR_HEAD_SHA" \
+                  --evals-dir evals \
+                  --sandbox-project "$SANDBOX_PROJECT" \
+                  --expected-evaluator-sa "$EVALUATOR_SA"
+              fi
+            '
+
+      - name: Authenticate to Sandbox Janitor SA for always() teardown
+        if: always() && hashFiles(env.VERDICT_FILE) != '' && env.WIF_PROVIDER != '' && env.JANITOR_SA != ''
+        id: auth-janitor
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: "${{ env.WIF_PROVIDER }}"
+          service_account: "${{ env.JANITOR_SA }}"
+          token_format: access_token
+
+      - name: Delete ephemeral [CI] ReasoningEngine and GE agent (if always)
+        if: always() && steps.auth-janitor.outputs.access_token != ''
+        env:
+          JANITOR_TOKEN: "${{ steps.auth-janitor.outputs.access_token }}"
+        run: |
+          RE_RES="$(jq -r '.ephemeral_app_name // empty' "$VERDICT_FILE")"
+          if [[ -n "$RE_RES" && "$RE_RES" == *"/reasoningEngines/"* ]]; then
+            LOC="$(echo "$RE_RES" | awk -F/ "{print \$4}")"
+            curl -fsS -X DELETE \
+              -H "Authorization: Bearer ${JANITOR_TOKEN}" \
+              -H "x-goog-user-project: ${SANDBOX_PROJECT}" \
+              "https://${LOC}-aiplatform.googleapis.com/v1beta1/${RE_RES}?force=true" >/dev/null || true
+          fi
+          GE_RES="$(jq -r '.ge_agent_resource // empty' "$VERDICT_FILE")"
+          if [[ -n "$GE_RES" && "$GE_RES" == *"/agents/"* ]]; then
+            GE_LOC="$(echo "$GE_RES" | awk -F/ "{print \$4}")"
+            PREFIX=""
+            [[ "$GE_LOC" != "global" ]] && PREFIX="${GE_LOC}-"
+            curl -fsS -X DELETE \
+              -H "Authorization: Bearer ${JANITOR_TOKEN}" \
+              -H "x-goog-user-project: ${SANDBOX_PROJECT}" \
+              "https://${PREFIX}discoveryengine.googleapis.com/v1alpha/${GE_RES}" >/dev/null || true
+          fi

@@ -1,28 +1,29 @@
 #!/usr/bin/env bash
-# Interactive didactic runner for gcp-fde-factories (packs/gecx).
+# Interactive didactic runner for gcp-fde-factories (packs/gecx and packs/adk).
 # Walks an engineer step-by-step through every stage of the factory, explaining WHY
-# each command runs before executing it. Uses an explicit --gcloud-config flag without mutating workstation defaults.
+# each command runs before executing it. Passes --configuration only when requested.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STEP="all"
-GCLOUD_CONFIG="argolis"
+PACK="gecx"
+GCLOUD_CONFIG=""
 HUB_PROJECT=""
 HUB_VM=""
 HUB_ZONE="us-central1-a"
-KIT_OUT="/tmp/gecx-kit-handson"
+KIT_OUT=""
 
 usage() {
   cat <<'EOF'
-Usage: scripts/hands-on-walkthrough.sh [--step 1|2|3|4|5|6|all] \
+Usage: scripts/hands-on-walkthrough.sh [--pack gecx|adk] [--step 1|2|3|4|5|6|all] \
   [--gcloud-config <name>] [--hub-project <project-id>] [--hub-vm <vm-name>] [--zone <zone>]
 
-Steps (safe, read/build-focused local & GCP verification steps):
-  1  Validate pack schemas, 26-entry SHA-40 skills.lock, Layer 0+1+2 context budget, and sanitizer
-  2  Run 19/19 unit tests (anti-forgery Verdict, IAM policy checks, Janitor, Delta Watcher)
-  3  Build a self-contained offline Release Kit and inspect generated templates/skills
+Steps (safe, read/build-focused local and GCP verification steps):
+  1  Validate pack schemas, SHA-40 skills.lock, Layer 0+1+2 context budget, and clean-room sanitizer
+  2  Run the full offline unit test suite (anti-forgery Verdict, Kaizen, Brownfield, ADK/GE, IAM)
+  3  Build a self-contained offline Release Kit and inspect generated templates and skills
   4  Validate all 3 Terraform deployment stages (01-landing-zone, lite-vm, ha-gke)
-  5  Verify CLI contract canary against the pinned cxas 1.11.0 snapshot
+  5  Verify CLI and API contract canaries against pinned snapshots
   6  Inspect live Hub VM health over IAP SSH (requires --hub-project and --hub-vm)
 EOF
   exit 2
@@ -30,6 +31,7 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --pack) PACK="$2"; shift 2 ;;
     --step) STEP="$2"; shift 2 ;;
     --gcloud-config) GCLOUD_CONFIG="$2"; shift 2 ;;
     --hub-project) HUB_PROJECT="$2"; shift 2 ;;
@@ -39,6 +41,8 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown flag: $1" >&2; usage ;;
   esac
 done
+
+KIT_OUT="${KIT_OUT:-/tmp/${PACK}-kit-handson}"
 
 pause_step() {
   local title="$1" why="$2"
@@ -53,28 +57,28 @@ pause_step() {
 }
 
 step_1() {
-  pause_step "STEP 1: Static Catalog Gate (./build.sh --check packs/gecx)" \
+  pause_step "STEP 1: Static Catalog Gate (./build.sh --check packs/${PACK})" \
     "Proves pack.yaml, compat.yaml, skills.lock (SHA-40), total context budget (0+1+2), 90d TTL, and public clean-room rules pass before any deploy."
   cd "$REPO_ROOT"
-  ./build.sh --check packs/gecx
+  ./build.sh --check "packs/${PACK}"
 }
 
 step_2() {
   pause_step "STEP 2: Deterministic Unit Test Suite (./build.sh --test)" \
-    "Proves negative security guards (forged Verdict, evals/ tampering, skill collisions, expired workarounds, zero-wildcard IAM) pass offline in < 1s."
+    "Proves negative security guards (forged Verdict, Kaizen verifier, Brownfield drift, ADK/GE export, IAM least privilege) pass offline."
   cd "$REPO_ROOT"
   ./build.sh --test
 }
 
 step_3() {
   pause_step "STEP 3: Build Offline Release Kit (./build.sh --release-kit)" \
-    "Composes 15 prefix-isolated templates (13 agent-team roles + 2 GECX Sandbox specialists, zero external URIs, zero hardcoded models) and 10 Hub Skill Bank directories into $KIT_OUT."
+    "Composes 16 prefix-isolated templates (zero external URIs, zero hardcoded models) and Hub Skill Bank directories into $KIT_OUT."
   cd "$REPO_ROOT"
-  ./build.sh --release-kit packs/gecx --out "$KIT_OUT"
-  echo "--- Generated templates (notice gecx- prefix, no model key) ---"
+  ./build.sh --release-kit "packs/${PACK}" --out "$KIT_OUT"
+  echo "--- Generated templates (notice ${PACK}- prefix, no model key) ---"
   ls -1 "$KIT_OUT/templates"
-  echo "--- Sample gecx-deployer/scion-agent.yaml ---"
-  cat "$KIT_OUT/templates/gecx-deployer/scion-agent.yaml"
+  echo "--- Sample ${PACK}-${PACK}-deployer/scion-agent.yaml ---"
+  cat "$KIT_OUT/templates/${PACK}-deployer/scion-agent.yaml"
   echo "--- Generated manifest.json summary ---"
   jq '{pack, pack_version, scion_tested, external_uris_remaining, templates: [.templates[].name], skills: [.skills[].name]}' "$KIT_OUT/manifest.json"
 }
@@ -90,9 +94,10 @@ step_4() {
 }
 
 step_5() {
-  pause_step "STEP 5: CLI Contract Canary (canaries/gecx/check_cli_contract.py)" \
-    "Verifies cxas 1.11.0 required flags exist in the canary snapshot so upstream CLI drift breaks the PR instead of breaking production."
+  pause_step "STEP 5: Contract Canaries (GECX CLI + ADK GE Export)" \
+    "Verifies pinned CLI and API contract snapshots so upstream drift breaks the PR instead of breaking production."
   "$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/canaries/gecx/check_cli_contract.py"
+  "$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/canaries/adk/check_ge_contract.py"
 }
 
 step_6() {
@@ -102,7 +107,11 @@ step_6() {
   fi
   pause_step "STEP 6: Live Read-Only Check on Hub VM (via IAP SSH)" \
     "Connects through IAP TCP forwarding (zero public IP) to inspect live Scion v0.4.0-preview.3 health and hardened settings.yaml."
-  gcloud --configuration="$GCLOUD_CONFIG" compute ssh "$HUB_VM" \
+  GCLOUD_ARGS=()
+  if [[ -n "$GCLOUD_CONFIG" ]]; then
+    GCLOUD_ARGS=(--configuration="$GCLOUD_CONFIG")
+  fi
+  gcloud "${GCLOUD_ARGS[@]}" compute ssh "$HUB_VM" \
     --project="$HUB_PROJECT" --zone="$HUB_ZONE" --tunnel-through-iap \
     --command="curl -fsS http://127.0.0.1:8080/healthz | jq . && echo '=== Settings YAML ===' && sudo cat /home/scion/.scion/settings.yaml"
 }

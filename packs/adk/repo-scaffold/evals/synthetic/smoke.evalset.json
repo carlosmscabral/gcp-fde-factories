@@ -1,0 +1,24 @@
+{
+  "eval_set_id": "starter_smoke",
+  "name": "Starter Synthetic Smoke Eval Set",
+  "eval_cases": [
+    {
+      "eval_id": "health_ping_check",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{ "text": "Check the health status of billing-api." }]
+          },
+          "final_response": {
+            "parts": [{ "text": "billing-api status is ok." }]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              { "name": "health_ping", "args": { "service_name": "billing-api" } }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

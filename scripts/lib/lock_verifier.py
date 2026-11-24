@@ -1,6 +1,6 @@
 """Dependency lockfile verifier enforcing 40-char Git SHAs and permissive OSS licenses.
 
-Rejects floating @main, @HEAD, or unpinned gh:// URIs across skills.lock and pack files.
+Rejects floating @main, @master, @HEAD, or unpinned gh:// URIs across skills.lock and pack files.
 """
 from __future__ import annotations
 
@@ -12,9 +12,7 @@ from scripts.lib.io_utils import load_yaml
 SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 ALLOWED_LICENSES = {"MIT", "Apache-2.0"}
-FLOATING_URI_RE = re.compile(
-    r"(?:gh://[^\s\"']+(?!@[0-9a-f]{40}\b)|https://github\.com/[^\s\"']+/tree/(?:main|master|HEAD)\b)"
-)
+FLOATING_GH_URL_RE = re.compile(r"https://github\.com/[^\s\"'`]+/(?:tree|blob)/(?:main|master|HEAD)\b")
 
 
 def verify_skills_lock(lock_path: pathlib.Path) -> list[str]:
@@ -68,6 +66,6 @@ def scan_for_floating_uris(root: pathlib.Path, exclude_files: set[str] | None = 
                 for token in re.findall(r"gh://[^\s\"'`]+", line):
                     if not re.search(r"@[0-9a-f]{40}$", token):
                         errors.append(f"{path}:{line_no} contains unpinned gh:// URI: {token}")
-            if re.search(r"https://github\.com/[^\s\"'`]+/tree/(?:main|master|HEAD)\b", line):
-                errors.append(f"{path}:{line_no} contains floating GitHub tree/main or HEAD URL.")
+            if FLOATING_GH_URL_RE.search(line):
+                errors.append(f"{path}:{line_no} contains floating GitHub tree/blob main, master, or HEAD URL.")
     return errors

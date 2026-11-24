@@ -11,7 +11,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.lib.budget_engine import check_context_budget, check_workarounds_ttl
-from scripts.lib.io_utils import load_json
+from scripts.lib.io_utils import load_json, load_yaml
 from scripts.lib.lock_verifier import scan_for_floating_uris, verify_skills_lock
 from scripts.lib.release_kit import build_release_kit
 from scripts.lib.sanitizer import scan_repository
@@ -27,12 +27,39 @@ def run_check(pack_rel: str) -> int:
     errors.extend(validate_yaml_file(pack_dir / "pack.yaml", schemas_dir / "pack.schema.json"))
     errors.extend(validate_yaml_file(REPO_ROOT / "compat.yaml", schemas_dir / "compat.schema.json"))
 
+    pack_compat = pack_dir / "compat.yaml"
+    compat_path = pack_compat if pack_compat.exists() else REPO_ROOT / "compat.yaml"
+    if pack_compat.exists():
+        errors.extend(validate_yaml_file(pack_compat, schemas_dir / "compat.schema.json"))
+
+    if (pack_dir / "pack.yaml").exists() and compat_path.exists():
+        pack_cfg = load_yaml(pack_dir / "pack.yaml")
+        compat_cfg = load_yaml(compat_path)
+        pack_name = str(pack_cfg["pack"]["name"])
+        pack_version = str(pack_cfg["pack"]["version"])
+        if compat_cfg.get("pack") != pack_name:
+            errors.append(
+                f"compat.yaml pack '{compat_cfg.get('pack')}' does not match pack.yaml '{pack_name}'."
+            )
+        if compat_cfg.get("pack_version") != pack_version:
+            errors.append(
+                f"compat.yaml pack_version '{compat_cfg.get('pack_version')}' does not match pack.yaml '{pack_version}'."
+            )
+        images = compat_cfg.get("images", {})
+        if f"{pack_name}-runtime" not in images and f"scion-{pack_name}-runtime" not in images:
+            errors.append(f"compat.yaml images lacks '{pack_name}-runtime' digest for pack '{pack_name}'.")
+
     overlay_cfg = pack_dir / "repo-scaffold" / ".factory" / "hub-project.yaml"
     if overlay_cfg.exists():
         errors.extend(validate_yaml_file(overlay_cfg, schemas_dir / "hub-project.schema.json"))
 
-    # Verify v0.3.0/v0.4.0/ADK schemas parse cleanly and pack manifests match their contracts.
-    for schema_name in ("kaizen-snapshot.schema.json", "factory-profile.schema.json", "ge-export.schema.json"):
+    for schema_name in (
+        "kaizen-snapshot.schema.json",
+        "kaizen-proposal.schema.json",
+        "factory-profile.schema.json",
+        "ge-export.schema.json",
+        "verdict.schema.json",
+    ):
         schema_path = schemas_dir / schema_name
         if not schema_path.exists():
             errors.append(f"Missing required schema: {schema_path}")
@@ -90,18 +117,15 @@ def run_release_kit(pack_rel: str, out_path: str) -> int:
     out_dir = pathlib.Path(out_path).resolve()
     manifest = build_release_kit(REPO_ROOT, pack_dir, out_dir)
 
-    # Verify zero floating or external URIs exist inside generated templates.
-    uri_errs = scan_for_floating_uris(out_dir / "templates")
-    if uri_errs:
-        print("RELEASE KIT FAILED: external URIs detected in generated templates:", file=sys.stderr)
-        for err in uri_errs:
-            print(f"  - {err}", file=sys.stderr)
+    if manifest["external_uris_remaining"] != 0:
+        print("RELEASE KIT FAILED: external URIs detected in generated templates.", file=sys.stderr)
         return 1
 
     print(f"RELEASE KIT READY: {out_dir}")
-    print(f"  Pack:      {manifest['pack']}@{manifest['pack_version']}")
-    print(f"  Templates: {len(manifest['templates'])}")
-    print(f"  Skills:    {len(manifest['skills'])}")
+    print(f"  Pack:            {manifest['pack']}@{manifest['pack_version']}")
+    print(f"  Templates:       {len(manifest['templates'])}")
+    print(f"  Skills:          {len(manifest['skills'])}")
+    print(f"  Harness Configs: {', '.join(manifest['harness_configs'])}")
     return 0
 
 

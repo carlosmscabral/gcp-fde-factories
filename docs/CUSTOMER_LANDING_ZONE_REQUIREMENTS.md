@@ -1,6 +1,6 @@
 # Requisitos de Landing Zone para Clientes — Fábrica GECX (`packs/gecx`)
 
-**Versão:** 1.0 (Validada na Fase 1b em Argolis — 22/11/2026)  
+**Versão:** 1.0 (Validada na Fase 1b em ambiente isolado de validação GCP — 22/11/2026)  
 **Audiência:** Times de Plataforma GCP, SecOps, IAM, FinOps e Engenharia de IA do Cliente  
 **Escopo:** Piloto e operação controlada da Fábrica Autônoma de CX Agent Studio (GECX / CES) rodando no Google Cloud do cliente
 
@@ -91,10 +91,10 @@ Por isso, o Stage 01 cria **3 Custom Roles explícitas sem curingas** no Projeto
 1. **Rede sem VPC `default`:** o Stage 01 cria VPC customizada + Private Google Access + Cloud NAT ou conecta diretamente a uma **Shared VPC** existente (`create_custom_vpc = false` + `existing_subnet_self_link`). A VM `lite-vm` é Shielded (Secure Boot + vTPM + Integrity Monitoring) e possui **zero IP público**.
 2. **Acesso de Controle (IAP):** acesso administrativo exclusivamente via IAP TCP forwarding (`35.235.240.0/20`, porta 22) no perfil `lite-vm`, ou proxy HTTPS protegido por **IAP restrito à organização do cliente**.
 3. **Entrega Híbrida do Release Kit (`stage-release-kit.sh`):**
-   - **Modo `mirror` (padrão):** copia imagens pré-construídas por `@sha256:` digest para o Artifact Registry do cliente.
-   - **Modo `rebuild` (SecOps rigoroso / Binary Authorization):** reconstrói a imagem dentro do projeto do cliente via `cloudbuild.yaml` usando `<prefix>-builder@`.
-4. **GitHub (Pré-Requisito da v1):** GitHub Cloud ou GitHub Enterprise Server com proteção de branch em `main` (aprovação humana obrigatória, zero auto-merge), label humana `eval-change-approved`, e Workload Identity Federation (WIF) para o workflow `gecx-verdict-gate.yml` (que lê `evaluationRuns` via `<prefix>-eval@` e deleta o app `[CI]` em `if: always()` via `<prefix>-janitor@`).
-5. **Modelos Ativos na Vertex AI:** confirme a disponibilidade dos modelos literais em `compat.yaml` (em projetos novos a partir de Nov/2026: `global/gemini-3.1-pro-preview` e `global/gemini-3-flash-preview`, além do perfil de diversidade `cross-vendor`, `cross-model` ou `single-family` caso Claude no Model Garden não esteja habilitado).
+   - **Modo `rebuild` (padrão — SecOps / Binary Authorization):** reconstrói a imagem dentro do projeto do cliente via `cloudbuild.yaml` usando `<prefix>-builder@`.
+   - **Modo `mirror`:** espelha imagens pré-construídas por `@sha256:` digest via `crane`/`gcrane` para o Artifact Registry do cliente (recusa placeholders).
+4. **GitHub (Pré-Requisito da v1):** GitHub Cloud ou GitHub Enterprise Server com proteção de branch em `main` (aprovação humana obrigatória, zero auto-merge), label humana `eval-change-approved`, e Workload Identity Federation (WIF) para o workflow de Verdict Gate (que valida o Veredito via `<prefix>-eval@` e limpa recursos efêmeros `[CI]` em `if: always()` via `<prefix>-janitor@`).
+5. **Modelos Ativos na Vertex AI (Padrão Vertex-First + Opt-In Manual de Claude):** a fábrica consome modelos via **Vertex AI** por padrão (sem chaves de API, usando a SA de inferência): Antigravity com **`gemini-4-neon-high`** (default `extra-large`) e **`gemini-4-carbon-high`** / **`gemini-4-hydrogen-medium`**, mais Claude Code com **`claude-opus-5-5`** (`CLOUD_ML_REGION=global` por padrão, ajustável para `us`, `eu` ou `us-east5`). **Atenção:** habilitar modelos Anthropic Claude no **Vertex AI Model Garden** exige aceite manual de termos no Console GCP do `inference_project_id`; se o cliente não habilitar Claude, selecione `diversity_profile: cross-model` e `harnesses.claude_model_garden_enabled: false` durante o `factory-onboard` (usando `gemini-4-neon-high` + `gemini-4-carbon-high` em dois sub-agentes Antigravity).
 
 ---
 
@@ -125,7 +125,7 @@ Apresente esta tabela ao time de SecOps para demonstrar que o desenho respeita a
 | Constraint / Controle | O que Quebra se Estiver Travada | Exceção Mínima Segura (Escopo Folder/Projeto) | Alternativa sem Relaxar a Policy |
 | :--- | :--- | :--- | :--- |
 | `constraints/gcp.restrictServiceUsage` | Bloqueia habilitação de `ces`, `aiplatform`, `texttospeech`, `oslogin`, `iap` ou `iamcredentials`. | Liberar exclusivamente as APIs da Seção 3 nos projetos da fábrica. | Não aplicável (APIs listadas são estritamente obrigatórias). |
-| `constraints/gcp.resourceLocations` | Bloqueia CES multi-region `us`, bucket `US` de staging, Vertex AI `global` (`gemini-3.1-pro-preview`) ou `us-east5` (Claude Model Garden). | Permitir `in:us-locations` (e `global` para endpoints Vertex) nos projetos de Inferência e Sandbox. | Ajustar `diversity_profile` para `cross-model` ou `single-family` e alinhar região da VM/AR com a residência aprovada. |
+| `constraints/gcp.resourceLocations` | Bloqueia CES multi-region `us`, bucket `US` de staging ou endpoints Vertex AI `global` (`gemini-4-neon-high` e `claude-opus-5-5`). | Permitir `in:us-locations` (e `global` para endpoints Vertex) nos projetos de Inferência e Sandbox. | Ajustar `harnesses.vertex_claude_region` (`us`/`eu`/`us-east5`) ou `diversity_profile: cross-model` alinhado à residência aprovada. |
 | `constraints/iam.disableCrossProjectServiceAccountUsage` | Impede `<prefix>-hub@` (Projeto Hub) de impersonar `<prefix>-worker@` (Inferência) e `<prefix>-deployer@`/`<prefix>-eval@` (Sandbox). | Isentar apenas o Folder dos projetos da fábrica (mantendo ativo no restante da Org). | Adotar a **topologia de 1 projeto** (`hub == inference == sandbox`), preservando o isolamento pelas 7 SAs e 3 Custom Roles. |
 | `constraints/iam.allowedPolicyMemberDomains` (`iam.managed.allowedPolicyMembers`) | Bloqueia adicionar contas externas (`@google.com`) diretamente no IAM ou Hub do cliente. | **Evite relaxar.** Conceda contas do domínio do cliente aos FDEs ou opere o Hub exclusivamente com principais do cliente. | Operação 100% por principal do cliente (já exigido para posse do `coordinator` no Dia 1). |
 | `constraints/iam.workloadIdentityPoolProviders` | Bloqueia criar o provedor WIF para `https://token.actions.githubusercontent.com` (ou GHES interno) usado pelo `gecx-verdict-gate.yml`. | Adicionar o issuer OIDC do GitHub do cliente à allowlist do projeto Sandbox/CI, travando `attribute_condition` na org GitHub do cliente. | Executar o CI em runner self-hosted dentro do próprio GCP do cliente com SA dedicada. |

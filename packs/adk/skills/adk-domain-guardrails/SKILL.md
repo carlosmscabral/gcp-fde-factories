@@ -1,25 +1,26 @@
 ---
 name: adk-domain-guardrails
-description: Production ADK modular architecture, CloudPickle packaging hygiene, MCP/Memory latency rules, OTel capture settings, and adk eval verification gates.
+description: Opinionated Dockerfile-first ADK 2.15+ deployment using upstream google/agents-cli skills, modular agent packages, MCP caching, and adk eval.
 ---
 
 # ADK Domain Guardrails (`packs/adk`)
 
-## 1. Modular ADK Package and CloudPickle Hygiene
-- Keep `agent/agent.py` strictly as a thin composition root (`<= 250` lines) that exports `root_agent` and keep `agent/__init__.py` exporting `from . import agent`.
-- Separate configuration (`config.py`), prompts (`prompts.py`), tools (`tools/`), guardrails (`guardrails/`), and observability (`telemetry.py`) into focused modules with acyclic imports and lazy SDK client creation.
-- When using `from __future__ import annotations` inside `tools/*.py`, keep all tool parameter type annotations imported at module top-level (never gated behind `TYPE_CHECKING`) so runtime schema introspection succeeds.
-- Before deploying `AdkApp` to Vertex AI Agent Engine, verify CloudPickle serialization in an isolated subprocess containing only the packaged `agent/` directory so unserializable clients fail fast offline.
-- source: https://google.github.io/adk-docs/deploy/agent-engine/
+## 1. Opinionated Dockerfile-First Deployment (`agents-cli`)
+- Default every ADK project to container-based deployment via a root `Dockerfile` and `agents-cli deploy` (`agent_runtime`, `cloud_run`, or `gke`).
+- Follow the mounted upstream `google-agents-cli-*` skills (`workflow`, `scaffold`, `adk-code`, `eval`, `deploy`, `publish`, `observability`) as the primary reference.
+- Keep `agent/agent.py` as a thin composition root (`<= 250` lines) exporting `root_agent`, with prompts, config, and tools in separate submodules.
+- Run `python3 /opt/adk-factory/cloudpickle_check.py --repo-dir .` only as a fallback when a brownfield repo uses legacy source-pickle deployment.
+- source: https://github.com/google/agents-cli
 
-## 2. MCP Toolset and Memory Latency Hygiene
-- Configure `McpToolset` with an explicit `tool_list_cache_ttl_seconds` (for example `3600`) and return only static or cached auth headers from `header_provider` (never per-span `traceparent` headers that bust the tool-list cache on every turn).
-- Gate memory retrieval by `tool_context.invocation_id` when wrapping memory preload tools so memory search runs at most once per user turn instead of repeating before every inner tool-calling loop.
-- Decouple regional Agent Engine compute from model inference location (`location="global"` for supported Gemini models) to avoid regional quota contention.
+## 2. MCP Toolsets, Memory Gating, and Model Location
+- On `google-adk 2.15.0`, set `tool_list_cache_ttl_seconds` on `McpToolset` and pass static headers with `header_provider`.
+- Gate `PreloadMemoryTool` or `VertexAiMemoryBankService` queries by `invocation_id` to prevent per-step memory storms.
+- Decouple Vertex AI inference location (`GOOGLE_CLOUD_LOCATION=global`) from Agent Runtime hosting region (`us-central1`).
+- Enable `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT="SPAN_AND_EVENT"` for container telemetry.
 - source: https://google.github.io/adk-docs/tools/mcp-tools/
 
-## 3. OpenTelemetry Capture and Evaluation Pyramid
-- When enabling GenAI experimental OpenTelemetry semantic conventions (`OTEL_SEMCONV_STABILITY_OPT_IN="gen_ai_latest_experimental"`), set `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT="SPAN_AND_EVENT"` (never `"true"`, which falls back to `NO_CONTENT`).
-- Run Level 1 checks offline with zero Google Cloud credentials: `pytest` with fake tool backends, CloudPickle round-trip check, PII scan over `evals/`, and GE manifest validation.
-- Run Level 2 live evaluations under the dedicated `adk-eval-tester` Service Account using `adk eval --config_file_path` (measuring `tool_trajectory_avg_score` and `final_response_match_v2`) against the ephemeral `[CI]` Agent Engine resource.
+## 3. Two-Tier ADK Verification and Split-SA Discipline
+- Level 1 runs offline with scrubbed credentials (`pytest`, `Dockerfile` check, `ge_export.py validate`).
+- Level 2 separates Deployer (`adk-deployer` SA) and Evaluator (`adk-evaluator` SA).
+- Run `adk eval agent evals/synthetic/<name>.evalset.json --config_file_path evals/eval_config.json --print_detailed_results` and fail closed when `Tests passed == 0` or `Tests failed > 0`.
 - source: https://google.github.io/adk-docs/evaluate/

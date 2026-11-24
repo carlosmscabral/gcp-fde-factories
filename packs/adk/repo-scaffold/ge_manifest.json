@@ -2,17 +2,15 @@
   "schema_version": "1",
   "export_mode": "agent_engine",
   "display_name": "Starter ADK Enterprise Assistant",
-  "description": "Modular ADK assistant deployed on Vertex AI Agent Engine and exported to Gemini Enterprise.",
-  "tool_description": "Answers enterprise questions and runs approved workflow tools.",
+  "description": "Modular ADK starter agent deployed to Vertex AI Agent Engine and registered in Gemini Enterprise.",
   "gemini_enterprise": {
-    "project_id": "replace-with-sandbox-project",
+    "project_id": "replace-sandbox-project",
     "location": "global",
-    "endpoint_location": "global",
-    "app_id": "replace-with-ge-app-id",
+    "app_id": "replace-ge-app-id",
     "assistant_id": "default_assistant"
   },
   "agent_engine": {
-    "reasoning_engine_resource": "projects/replace-with-sandbox-project/locations/us-central1/reasoningEngines/0000000000000000000"
+    "reasoning_engine_resource": "projects/replace-sandbox-project/locations/us-central1/reasoningEngines/0000000000000000000"
   },
   "tool_authorizations": []
 }

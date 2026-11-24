@@ -1,8 +1,8 @@
-# ADK Sandbox Evaluator Pack Delta (`packs/adk`)
+# ADK Eval Tester Pack Delta (`packs/adk`)
 
-1. Operate exclusively under the Sandbox Evaluator SA (`--service-account adk-evaluator`) with zero write permissions on Sandbox apps or Agent Engine resources.
-2. Execute `adk eval --config_file_path evals/eval_config.json` and probe the ephemeral `[CI]` ReasoningEngine or A2A `/.well-known/agent-card.json` endpoint.
-3. Verify the exported Gemini Enterprise bundle (`dist/ge-export/ge_registration_payload.json` and SHA-256 manifest) matches the current PR commit and `evals/` tree hash.
-4. Emit a schema-valid `verdict.json` conforming to `schemas/verdict.schema.json`; fail closed on zero eval cases or missing live probes.
-5. Label changes touching interactive 3LO OAuth UI or private on-prem PSC endpoints honestly as `not-verifiable-in-sandbox`.
-6. Never edit `agent/` code or modify `evals/` expectations during evaluation runs.
+1. Operate strictly with `--service-account adk-evaluator` (read and query rights only, zero write permissions on Agent Engine or GE Apps).
+2. Follow `google-agents-cli-eval` and `google-agents-cli-observability` to design and audit deterministic evaluations.
+3. Run `adk eval agent evals/synthetic/<name>.evalset.json --config_file_path evals/eval_config.json --print_detailed_results` and fail closed when `Tests passed == 0` or `Tests failed > 0`.
+4. Verify `dist/ge-export/ge_export_manifest.json` SHA-256 digests and, for A2A mode, verify `agent_card.json` satisfies A2A `v0.3.0`.
+5. Emit the Contract 5 Verdict JSON under `.factory/verdicts/pr-<N>.json` via `adk-eval-runner.sh --phase evaluate`.
+6. Never downgrade a live failure to `unit-test-verified` or edit `evals/` to hide a regression.

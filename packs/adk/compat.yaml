@@ -1,0 +1,48 @@
+# Closed compatibility matrix for packs/adk (v0.1.0).
+# bootstrap-hub-project.sh rejects any Hub whose scion version is not in scion.tested.
+schema_version: "1"
+pack: adk
+pack_version: "0.1.0"
+
+scion:
+  tested:
+    - "v0.4.0-preview.3"
+  binary_url: "https://github.com/GoogleCloudPlatform/scion/releases/download/v0.4.0-preview.3/scion-linux-amd64.tar.gz"
+  binary_sha256: "d210505c58393f68ae719bc6185e71a3f0455caa1dce6e7798d6bc355663e17f"
+  downgrade_floor: "nightly-20261121"
+  experiments_required: []
+
+agent_team:
+  repository: "scion-frontiers/agent-team"
+  commit: "08faf48269da7d8dd0a20c4e5ca5093afb37495d"
+  license: "Apache-2.0"
+  skills_lock: "skills.lock"
+
+toolchain:
+  google_adk:
+    pip_version: "2.15.0"
+    repository: "google/adk-python"
+    skill_commit: "2fa159a803aceec3b4df808901e53a08a6f1fb2a"
+    license: "Apache-2.0"
+  google_agents_cli:
+    pip_version: "1.15.0"
+    repository: "google/agents-cli"
+    skill_commit: "2fa159a803aceec3b4df808901e53a08a6f1fb2a"
+    license: "Apache-2.0"
+
+images:
+  # Placeholder digests require Stage 03 --mode rebuild (stage-release-kit.sh rejects --mode mirror on REPLACE_HUB_PROJECT).
+  core-gcp-fde-base: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/factory-images/core-gcp-fde-base@sha256:a1cbe2bd7401cff34b6da924428f57646c66004c1024d26e6f38e8c0ecdf9333"
+  adk-runtime: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/factory-images/adk-runtime@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+models:
+  antigravity_default: "gemini-4-neon-high"
+  antigravity_reviewer_alt: "gemini-4-carbon-high"
+  antigravity_fast: "gemini-4-hydrogen-medium"
+  claude_default: "claude-opus-5-5"
+  claude_fast: "claude-sonnet-5-5"
+
+canary:
+  run_id: "adk-v010-ge-contract-2026-11-24"
+  date_brt: "2026-11-24"
+  notes: "google-adk[eval,a2a]==2.15.0 and google-agents-cli==1.15.0 dependency graph resolved; GE export contract canary and offline gates verified; live Sandbox E2E awaits Stage 03 rebuild."

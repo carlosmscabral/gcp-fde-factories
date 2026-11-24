@@ -11,11 +11,11 @@ description: Lightweight continuous improvement rules for flow metrics, hygiene 
 - source: https://github.com/scion-frontiers/agent-team
 
 ## 2. Track Hygiene Work and Lead Events Explicitly
-- Open a `priority:hygiene` issue whenever a pack skill approaches 300 lines or a `WORKAROUNDS.yaml` item approaches 90 days.
-- Measure total role context across Layers 0, 1, and 2 using `./build.sh --check <pack-dir>`.
-- When a coordinator or engineering manager triggers an Andon Cord escalation or resolves an agent stall, append one JSON line to `/scion-volumes/scratchpad/kaizen-events.jsonl` for the Kaizen Analyst.
+- Open a `priority:hygiene` issue whenever an authored skill approaches 300 lines or a `WORKAROUNDS.yaml` entry approaches 90 days.
+- Run the pack verification gate (or `./build.sh --check <pack-dir>` in the factory catalog repo) before proposing skill or prompt edits.
+- When a coordinator or engineering manager triggers an Andon Cord escalation or resolves a stall, append one JSON line (`{"ts_utc","agent","event","summary"}`) to `/scion-volumes/scratchpad/kaizen-events.jsonl`.
 - source: https://github.com/scion-frontiers/agent-team
 
 ## 3. Clean-Room Reverse Kaizen Rule
-- Before proposing a customer lesson for the central catalog, remove all customer identifiers and reproduce the issue in synthetic Argolis first.
+- Before proposing a customer lesson for the central catalog, remove all customer identifiers and reproduce the issue in a synthetic project first.
 - source: https://cloud.google.com/architecture/framework/operational-excellence

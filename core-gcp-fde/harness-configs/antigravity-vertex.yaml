@@ -1,10 +1,13 @@
-# Harness configuration for Gemini models served via Vertex AI using Antigravity harness.
-# Replace image digest and inference project during Stage 03 release staging.
+# Harness configuration for Antigravity via Vertex AI (aligned to Scion v0.4.0-preview.3).
+# Uses Scion's generic model tier (`extra-large`) without hardcoding model_aliases so every
+# upstream Scion release automatically upgrades the concrete flagship Gemini model.
+# Override per agent at spawn via `scion start --harness-config ... --model <tier-or-id> --thinking-level <0-100>`.
 schema_version: "1"
 name: antigravity-vertex
 harness: antigravity
-image: "us-central1-docker.pkg.dev/cabral-gecx-spk-hub/gecx-spk-images/scion-gecx-runtime@sha256:730282ce9892339455780aaefb68c7d53cc9daa7bb2e9ea0d146e1626510ec1b"
-model: "gemini-3.1-pro-preview"
+auth_selected_type: vertex-ai
+image: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/factory-images/REPLACE_PACK_RUNTIME@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+model: "extra-large"
 env:
   GOOGLE_GENAI_USE_VERTEXAI: "true"
   GOOGLE_CLOUD_LOCATION: "global"

@@ -1,6 +1,6 @@
 # Pilot 1 Factory Pack manifest for Google Cloud CX Agent Studio (GECX / CES).
-# Incorporates Preston's full 13-role agent-team hierarchy (Small Depth-1 and Chunky/Large Depth-3)
-# plus the 2 split-SA GECX Sandbox specialists (15 offline prefix-scoped templates, 10 Hub Skill Bank skills).
+# Incorporates Preston's full 13-role agent-team hierarchy (Small Depth-1 and Chunky/Large Depth-3),
+# the 2 split-SA GECX Sandbox specialists, and the closed-loop Kaizen Analyst (16 templates, 11 Hub Skill Bank skills).
 schema_version: "1"
 
 pack:
@@ -172,12 +172,12 @@ project_skills:
   # Attached project-wide to every agent (guardrails + GECX foundry contract)
   - name: "gcp-fde-guardrails"
     local_dir: "core-gcp-fde/skills/gcp-fde-guardrails"
-    version: "0.2.0"
+    version: "0.4.0"
     scope: "global"
     attach_to_project: true
   - name: "gcp-sandbox-contract"
     local_dir: "core-gcp-fde/skills/gcp-sandbox-contract"
-    version: "0.2.0"
+    version: "0.4.0"
     scope: "global"
     attach_to_project: true
   - name: "gcp-kaizen-light"
@@ -192,39 +192,39 @@ project_skills:
     attach_to_project: false
   - name: "gecx-foundry-adapter"
     local_dir: "packs/gecx/skills/gecx-foundry-adapter"
-    version: "0.2.0"
+    version: "0.4.0"
     scope: "global"
     attach_to_project: true
   - name: "gecx-domain-guardrails"
     local_dir: "packs/gecx/skills/gecx-domain-guardrails"
-    version: "0.2.0"
+    version: "0.4.0"
     scope: "global"
     attach_to_project: true
 
   # Published to Hub Skill Bank (offline) and mounted selectively via role_skills
   - name: "software-engineering-process"
     local_dir: "vendor/agent-team/skills/software-engineering-process"
-    version: "0.2.0"
+    version: "1.0.0"
     scope: "global"
     attach_to_project: false
   - name: "agent-state-continuity"
     local_dir: "vendor/agent-team/skills/agent-state-continuity"
-    version: "0.2.0"
+    version: "1.0.0"
     scope: "global"
     attach_to_project: false
   - name: "artifact-durability"
     local_dir: "vendor/agent-team/skills/artifact-durability"
-    version: "0.2.0"
+    version: "1.0.0"
     scope: "global"
     attach_to_project: false
   - name: "code-review"
     local_dir: "vendor/agent-team/skills/code-review"
-    version: "0.2.0"
+    version: "1.0.0"
     scope: "global"
     attach_to_project: false
   - name: "release-notes-daily"
     local_dir: "vendor/agent-team/skills/release-notes-daily"
-    version: "0.2.0"
+    version: "1.0.0"
     scope: "global"
     attach_to_project: false
 

@@ -76,6 +76,12 @@ resource "google_storage_bucket_iam_member" "deployer_staging_rw" {
   member = "serviceAccount:${google_service_account.sandbox_deployer.email}"
 }
 
+resource "google_storage_bucket_iam_member" "deployer_staging_bucket_view" {
+  bucket = google_storage_bucket.sandbox_staging.name
+  role   = "roles/storage.bucketViewer"
+  member = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+}
+
 resource "google_storage_bucket_iam_member" "evaluator_staging_ro" {
   bucket = google_storage_bucket.sandbox_staging.name
   role   = "roles/storage.objectViewer"
@@ -83,6 +89,8 @@ resource "google_storage_bucket_iam_member" "evaluator_staging_ro" {
 }
 
 resource "google_storage_bucket_iam_member" "ces_service_agent_staging" {
+  count = var.enable_gecx_sandbox_roles ? 1 : 0
+
   bucket = google_storage_bucket.sandbox_staging.name
   role   = "roles/storage.objectUser"
   member = "serviceAccount:service-${data.google_project.sandbox.number}@gcp-sa-ces.iam.gserviceaccount.com"

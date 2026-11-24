@@ -13,6 +13,8 @@ locals {
     "cloudbuild.googleapis.com",
     "pubsub.googleapis.com",
     "billingbudgets.googleapis.com",
+    "iam.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
     "iamcredentials.googleapis.com",
     "logging.googleapis.com",
     "monitoring.googleapis.com",
@@ -28,14 +30,13 @@ locals {
 
   sandbox_apis = concat(
     [
-      "ces.googleapis.com",
       "aiplatform.googleapis.com",
-      "texttospeech.googleapis.com",
       "storage.googleapis.com",
       "serviceusage.googleapis.com",
       "iamcredentials.googleapis.com",
       "logging.googleapis.com",
     ],
+    var.enable_gecx_sandbox_roles ? ["ces.googleapis.com", "texttospeech.googleapis.com"] : [],
     var.enable_adk_sandbox_roles ? ["discoveryengine.googleapis.com"] : [],
   )
 

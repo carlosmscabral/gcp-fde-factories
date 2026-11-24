@@ -1,4 +1,5 @@
-# Closed compatibility matrix governing tested upstream versions per pack.
+# Closed compatibility matrix governing tested upstream versions (default pack: gecx).
+# Pack-specific matrices live under packs/<pack>/compat.yaml and take precedence during builds.
 # bootstrap-hub-project.sh rejects any Hub whose scion version is not in scion.tested.
 schema_version: "1"
 pack: gecx
@@ -26,16 +27,18 @@ toolchain:
     license: "Apache-2.0"
 
 images:
-  # Immutable @sha256 digests built and verified offline (--network=none) in Phase 1b Cloud Build 3c48001b.
-  core-gcp-fde-base: "us-central1-docker.pkg.dev/cabral-gecx-spk-hub/gecx-spk-images/core-gcp-fde-base@sha256:a1cbe2bd7401cff34b6da924428f57646c66004c1024d26e6f38e8c0ecdf9333"
-  scion-gecx-runtime: "us-central1-docker.pkg.dev/cabral-gecx-spk-hub/gecx-spk-images/scion-gecx-runtime@sha256:730282ce9892339455780aaefb68c7d53cc9daa7bb2e9ea0d146e1626510ec1b"
+  # Stage 03 --mode rebuild builds and publishes real customer AR digests via deploy/03-hub-bootstrap/cloudbuild.yaml.
+  core-gcp-fde-base: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/factory-images/core-gcp-fde-base@sha256:a1cbe2bd7401cff34b6da924428f57646c66004c1024d26e6f38e8c0ecdf9333"
+  gecx-runtime: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/factory-images/gecx-runtime@sha256:730282ce9892339455780aaefb68c7d53cc9daa7bb2e9ea0d146e1626510ec1b"
 
 models:
-  claude_reviewer: "claude-sonnet-4-6"
-  gemini_developer: "gemini-3.1-pro-preview"
-  gemini_fast: "gemini-3-flash-preview"
+  antigravity_default: "gemini-4-neon-high"
+  antigravity_reviewer_alt: "gemini-4-carbon-high"
+  antigravity_fast: "gemini-4-hydrogen-medium"
+  claude_default: "claude-opus-5-5"
+  claude_fast: "claude-sonnet-5-5"
 
 canary:
-  run_id: "phase1b-argolis-validation-2026-11-22"
+  run_id: "phase1b-gcp-validation-2026-11-22"
   date_brt: "2026-11-22"
-  notes: "Passed live-gcp-verified E2E (70.34s), all 7 negative tests, Cloud Build rebuild (1m55s), and 68.6s IAM kill-switch on cabral-gecx-spk-hub + cabral-gecx-spk-sbx."
+  notes: "Passed live-gcp-verified E2E (70.34s), negative security gates, internal Cloud Build rebuild (1m55s), and 68.6s IAM kill-switch in isolated GCP validation projects."

@@ -1,0 +1,4 @@
+repository: "google/agents-cli"
+tag: "v1.15.0"
+commit: "2fa159a803aceec3b4df808901e53a08a6f1fb2a"
+license: "Apache-2.0"

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Stage 03 Hub Bootstrap reconciler (Contract 2: preflight / plan / backup / apply / rollback / overlay-sync).
-# Enforces compat.yaml closed version checks and Spike-validated Scion v0.4.0-preview.3 fail-closed settings.
-# Customer principal runs this script so coordinator ownership belongs to the customer from Day 1.
+# Enforces compat.yaml closed version checks, Scion v0.4.0-preview.3 fail-closed settings,
+# default weekly Kaizen scheduling on every project, and strict YAML parsing with zero silent fall-open.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACTION="${1:-}"
 KIT_DIR=""
 LANDING_ZONE_JSON=""
@@ -39,12 +40,24 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || { echo "Missing required CLI: $1" >&2; exit 1; }
 }
 
+parse_repo_cfg() {
+  local pack_name="$1"
+  if [[ -n "$TARGET_REPO" && -f "$TARGET_REPO/.factory/hub-project.yaml" ]]; then
+    require_cmd python3
+    python3 "$SCRIPT_DIR/parse_hub_project.py" --repo "$TARGET_REPO" --expected-pack "$pack_name"
+  else
+    cat <<'JSON'
+{"pack":"","mode":"sandbox-direct","diversity_profile":"cross-model","limits":{"default_max_duration":"2h","default_max_turns":60,"auto_suspend_idle":true},"exclude_skills":[],"overlay_skills":[],"kaizen":{"enabled":true,"schedule_cron":"0 17 * * 5","time_zone":"America/Sao_Paulo","coordinator_agent":"coordinator"},"harnesses":{"default":"antigravity-vertex","claude_model_garden_enabled":false,"vertex_gemini_location":"global","vertex_claude_region":"global"},"model_routing":{}}
+JSON
+  fi
+}
+
 do_preflight() {
   require_cmd scion
   require_cmd jq
   local version_out tested_list
-  version_out="$(scion version 2>&1 | grep -Eo 'v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?' | head -n 1 || true)"
-  tested_list="$(jq -r '.scion_tested[]' "$KIT_DIR/manifest.json")"
+  version_out="$(scion version 2>&1 | grep -Eo 'v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?' | head -n 1 | sed 's/\.$//' || true)"
+  tested_list="$(jq -re '.scion_tested[]' "$KIT_DIR/manifest.json")"
   if ! grep -Fxq "$version_out" <<< "$tested_list"; then
     echo "PREFLIGHT FAILED: Scion version '${version_out:-unknown}' is not in compat.yaml closed tested list." >&2
     exit 1
@@ -59,78 +72,97 @@ do_plan() {
   ls -1 "$KIT_DIR/templates"
   echo "=== PLAN: Hub Skill Bank Skills ==="
   ls -1 "$KIT_DIR/skills"
+  if [[ -d "$KIT_DIR/harness-configs" ]]; then
+    echo "=== PLAN: Harness Configs ==="
+    ls -1 "$KIT_DIR/harness-configs"
+  fi
   echo "=== PLAN: Current Hub Template Status ==="
   scion templates status --hub "$HUB_URL" || true
 }
 
 do_backup() {
-  local ts dir
+  local ts dir pulled=0
   ts="$(date -u +%Y%m%dT%H%M%SZ)"
-  dir="${BACKUP_DIR:-.backups/$ts}"
+  dir="${BACKUP_DIR:-$(pwd)/.backups/$ts}"
   mkdir -p "$dir/templates"
-  echo "=== BACKUP: Exporting Hub settings and templates to $dir ==="
-  scion hub settings get --section gcp_iam --hub "$HUB_URL" > "$dir/gcp_iam.txt" || true
-  scion hub settings get --section agent_defaults --hub "$HUB_URL" > "$dir/agent_defaults.txt" || true
-  scion templates list --hub "$HUB_URL" > "$dir/templates_list.txt" || true
+  echo "=== BACKUP: Exporting Hub settings and existing templates to $dir ==="
+  scion hub settings get --section gcp_iam --hub "$HUB_URL" > "$dir/gcp_iam.txt"
+  scion hub settings get --section agent_defaults --hub "$HUB_URL" > "$dir/agent_defaults.txt"
+  scion templates list --hub "$HUB_URL" > "$dir/templates_list.txt"
   for tpl_dir in "$KIT_DIR"/templates/*; do
+    [[ -d "$tpl_dir" ]] || continue
     local name
     name="$(basename "$tpl_dir")"
-    scion templates pull "$name" --to "$dir/templates/$name" 2>/dev/null || true
+    if scion templates pull "$name" --to "$dir/templates/$name" 2>/dev/null; then
+      pulled=$((pulled + 1))
+    fi
   done
-  echo "BACKUP COMPLETE: $dir"
+  jq -n --arg ts "$ts" --argjson templates_backed_up "$pulled" \
+    '{timestamp_utc: $ts, templates_backed_up: $templates_backed_up, settings_saved: true}' \
+    > "$dir/backup-manifest.json"
+  echo "BACKUP COMPLETE: $dir (templates_backed_up=$pulled)"
 }
 
 register_and_verify_sa() {
   local sa_email="$1" project_id="$2" label="$3"
-  local sa_id
-  sa_id="$(scion service-accounts add "$sa_email" --gcp-project "$project_id" --name "$label" --hub "$HUB_URL" --format json | jq -r '.id')"
+  local existing_id sa_id
+  existing_id="$(scion --format json service-accounts list --hub "$HUB_URL" 2>/dev/null \
+    | jq -r --arg email "$sa_email" '((if type == "array" then . else (.serviceAccounts // .items // []) end)[] | select(.email == $email) | .id) // empty' \
+    | head -n 1 || true)"
+  if [[ -n "$existing_id" ]]; then
+    sa_id="$existing_id"
+    echo "EXISTING SA: $label ($sa_email -> $sa_id)"
+  else
+    sa_id="$(scion service-accounts add "$sa_email" --gcp-project "$project_id" --name "$label" --hub "$HUB_URL" --format json | jq -re '.id')"
+  fi
   scion service-accounts verify "$sa_id" --hub "$HUB_URL" --format json | jq -e '.verified == true' >/dev/null
   echo "VERIFIED SA: $label ($sa_email)"
 }
 
+ensure_kaizen_schedule() {
+  local pack_prefix="$1" kz_enabled="$2" kz_cron="$3" kz_tz="$4" kz_coord="$5"
+  if [[ "$kz_enabled" != "true" ]]; then
+    echo "KAIZEN SCHEDULE: explicitly disabled via .factory/hub-project.yaml (kaizen.enabled=false)."
+    return 0
+  fi
+  local existing_sched
+  existing_sched="$(scion --format json schedule list --type recurring --hub "$HUB_URL" 2>/dev/null \
+    | jq -r '((if type == "array" then . else (.schedules // .items // []) end)[] | select(.name == "weekly-kaizen") | .id) // empty' \
+    | head -n 1 || true)"
+  if [[ -n "$existing_sched" ]]; then
+    echo "SKIP schedule: weekly-kaizen ($existing_sched) already registered."
+    return 0
+  fi
+  scion schedule create-recurring \
+    --name "weekly-kaizen" \
+    --cron "$kz_cron" \
+    --time-zone "$kz_tz" \
+    --type message \
+    --agent "$kz_coord" \
+    --wake \
+    --message "Run weekly closed-loop Kaizen cycle: spawn ${pack_prefix}-kaizen-analyst (--role baseline, worker SA), collect 0-token telemetry, publish report and Artifact, then retire it." \
+    --hub "$HUB_URL"
+  echo "SCHEDULED KAIZEN: weekly-kaizen (${kz_cron} ${kz_tz} -> ${kz_coord} --wake)"
+}
+
 do_apply() {
   do_preflight
+  local pack_name pack_prefix repo_cfg mode max_dur max_turns auto_susp exclude_json
+  pack_name="$(jq -re '.pack' "$KIT_DIR/manifest.json")"
+  pack_prefix="$(jq -re '.pack_prefix // .pack' "$KIT_DIR/manifest.json")"
+  repo_cfg="$(parse_repo_cfg "$pack_name")"
+
+  mode="$(jq -re '.mode' <<< "$repo_cfg")"
+  max_dur="$(jq -re '.limits.default_max_duration' <<< "$repo_cfg")"
+  max_turns="$(jq -re '.limits.default_max_turns' <<< "$repo_cfg")"
+  auto_susp="$(jq -re '.limits.auto_suspend_idle' <<< "$repo_cfg")"
+  exclude_json="$(jq -c '.exclude_skills' <<< "$repo_cfg")"
+
   do_backup
 
-  # Enforce Spike-validated Scion v0.4.0-preview.3 security and FinOps defaults.
-  scion hub settings set server.hub.gcp_iam_check_mode enforce --hub "$HUB_URL"
-  scion hub settings set server.hub.gcp_iam_deny_unknown_policy fail-closed --hub "$HUB_URL"
-  scion hub settings set default_gcp_identity_mode block --hub "$HUB_URL"
-  scion hub settings set default_max_duration 2h --hub "$HUB_URL"
-  scion hub settings set default_max_turns 60 --hub "$HUB_URL"
-  scion hub settings set server.hub.auto_suspend_idle true --hub "$HUB_URL"
-
-  # Register and verify factory SAs (never register sandbox_janitor on the Hub).
-  if [[ -n "$LANDING_ZONE_JSON" ]]; then
-    local hub_p inf_p sbx_p worker_sa dep_sa eval_sa mode
-    hub_p="$(jq -r '.hub_project_id.value' "$LANDING_ZONE_JSON")"
-    inf_p="$(jq -r '.inference_project_id.value' "$LANDING_ZONE_JSON")"
-    sbx_p="$(jq -r '.sandbox_project_id.value' "$LANDING_ZONE_JSON")"
-    worker_sa="$(jq -r '.worker_sa_email.value' "$LANDING_ZONE_JSON")"
-    dep_sa="$(jq -r '.sandbox_deployer_sa_email.value' "$LANDING_ZONE_JSON")"
-    eval_sa="$(jq -r '.sandbox_evaluator_sa_email.value' "$LANDING_ZONE_JSON")"
-
-    register_and_verify_sa "$worker_sa" "$inf_p" "factory-worker"
-    scion project identity default set "$worker_sa" --hub "$HUB_URL"
-
-    mode="sandbox-direct"
-    if [[ -n "$TARGET_REPO" && -f "$TARGET_REPO/.factory/hub-project.yaml" ]]; then
-      mode="$(grep -E '^mode:' "$TARGET_REPO/.factory/hub-project.yaml" | awk '{print $2}' | tr -d '\"' || echo sandbox-direct)"
-    fi
-    local pack_prefix
-    pack_prefix="$(jq -r '.pack_prefix // .pack // "gecx"' "$KIT_DIR/manifest.json")"
-    if [[ "$mode" == "sandbox-direct" ]]; then
-      register_and_verify_sa "$dep_sa" "$sbx_p" "${pack_prefix}-deployer"
-      register_and_verify_sa "$eval_sa" "$sbx_p" "${pack_prefix}-evaluator"
-    else
-      echo "MODE ci-only: skipping Sandbox Deployer and Evaluator SA registration on Hub."
-    fi
-  fi
-
-  # Publish all pack and SEP skills to Hub Skill Bank (idempotent across already-published versions).
-  # Attach only attach_to_project=true skills project-wide; role-specific SEP skills mount via template skills[].
-  local existing_skills
-  existing_skills="$(scion project skills list --hub "$HUB_URL" 2>/dev/null || true)"
+  # 1. Publish pack skills first and attach non-excluded project skills pinned to exact versions.
+  local existing_skills_json
+  existing_skills_json="$(scion --format json project skills list --hub "$HUB_URL" 2>/dev/null || echo '[]')"
   while IFS=$'\t' read -r sname sver sattach; do
     [[ -n "$sname" ]] || continue
     local skill_dir="$KIT_DIR/skills/$sname"
@@ -140,20 +172,96 @@ do_apply() {
     else
       scion skills publish "$skill_dir" --scope global --version "$sver" --hub "$HUB_URL"
     fi
-    if [[ "$sattach" == "true" ]]; then
-      if ! grep -Fq "$sname" <<< "$existing_skills"; then
-        scion project skills add "skill://scion/global/${sname}" --hub "$HUB_URL"
+    local is_excluded
+    is_excluded="$(jq -r --arg n "$sname" 'index($n) != null' <<< "$exclude_json")"
+    if [[ "$sattach" == "true" && "$is_excluded" != "true" ]]; then
+      if ! jq -e --arg n "$sname" '(if type == "array" then . else (.skills // .items // []) end) | any(. == $n or (.name? == $n) or ((.uri? // "") | contains("/" + $n)))' <<< "$existing_skills_json" >/dev/null 2>&1; then
+        scion project skills add "skill://scion/global/${sname}@${sver}" --hub "$HUB_URL"
       fi
     fi
   done < <(jq -r '.skills[] | [.name, .version, ((if has("attach_to_project") then .attach_to_project else true end) | tostring)] | @tsv' "$KIT_DIR/manifest.json")
 
-  # Sync local templates only (stores zero upstream source URL, blocking accidental Refresh clobber).
+  # 2. Materialize Vertex AI project/region into prefix-scoped harness-config bundles and sync.
+  local default_harness claude_mg_enabled gemini_loc claude_reg inf_proj=""
+  default_harness="$(jq -re '.harnesses.default // "antigravity-vertex"' <<< "$repo_cfg")"
+  claude_mg_enabled="$(jq -re '(.harnesses.claude_model_garden_enabled // false) | tostring' <<< "$repo_cfg")"
+  gemini_loc="$(jq -re '.harnesses.vertex_gemini_location // "global"' <<< "$repo_cfg")"
+  claude_reg="$(jq -re '.harnesses.vertex_claude_region // "global"' <<< "$repo_cfg")"
+  if [[ -n "$LANDING_ZONE_JSON" && -f "$LANDING_ZONE_JSON" ]]; then
+    inf_proj="$(jq -r '.inference_project_id.value // empty' "$LANDING_ZONE_JSON")"
+  fi
+
+  if [[ -d "$KIT_DIR/harness-configs" ]]; then
+    local staged_hc_root
+    staged_hc_root="$(mktemp -d)"
+    trap 'rm -rf "$staged_hc_root"' RETURN
+    for hc_dir in "$KIT_DIR"/harness-configs/*; do
+      [[ -d "$hc_dir" && -f "$hc_dir/config.yaml" ]] || continue
+      local hc_name
+      hc_name="$(basename "$hc_dir")"
+      if [[ "$hc_name" == *"-claude-vertex" && "$claude_mg_enabled" != "true" ]]; then
+        echo "SKIP harness-config: $hc_name (harnesses.claude_model_garden_enabled=false; using Vertex AI Gemini 1P)."
+        continue
+      fi
+      if [[ "$hc_name" == *"-claude-vertex" ]]; then
+        echo "VERTEX MODEL GARDEN CHECKPOINT: confirm claude-opus-5-5 is manually enabled at https://console.cloud.google.com/vertex-ai/publishers/anthropic/model-garden/claude-opus-5-5?project=${inf_proj:-YOUR_INFERENCE_PROJECT} (region=${claude_reg})."
+      fi
+      cp -r "$hc_dir" "$staged_hc_root/$hc_name"
+      python3 "$SCRIPT_DIR/parse_hub_project.py" \
+        --render-harness-src "$hc_dir/config.yaml" \
+        --render-harness-dst "$staged_hc_root/$hc_name/config.yaml" \
+        --inference-project "$inf_proj" \
+        --gemini-location "$gemini_loc" \
+        --claude-region "$claude_reg"
+      scion harness-config sync "$staged_hc_root/$hc_name" --name "$hc_name" --hub "$HUB_URL"
+    done
+    scion hub settings set default_harness_config "${pack_prefix}-${default_harness}" --hub "$HUB_URL"
+  fi
+
+  # 3. Sync local templates (stores zero upstream source URL, blocking Refresh clobber).
   for tpl_dir in "$KIT_DIR"/templates/*; do
     [[ -d "$tpl_dir" ]] || continue
     local tname
     tname="$(basename "$tpl_dir")"
     scion templates sync "$tpl_dir" --name "$tname" --hub "$HUB_URL"
   done
+
+  # 4. Register and verify factory SAs idempotently (never register sandbox_janitor on the Hub).
+  if [[ -n "$LANDING_ZONE_JSON" ]]; then
+    local inf_p sbx_p worker_sa dep_sa eval_sa
+    inf_p="$(jq -re '.inference_project_id.value' "$LANDING_ZONE_JSON")"
+    sbx_p="$(jq -re '.sandbox_project_id.value' "$LANDING_ZONE_JSON")"
+    worker_sa="$(jq -re '.worker_sa_email.value' "$LANDING_ZONE_JSON")"
+    dep_sa="$(jq -re '.sandbox_deployer_sa_email.value' "$LANDING_ZONE_JSON")"
+    eval_sa="$(jq -re '.sandbox_evaluator_sa_email.value' "$LANDING_ZONE_JSON")"
+
+    register_and_verify_sa "$worker_sa" "$inf_p" "factory-worker"
+    scion project identity default set "$worker_sa" --hub "$HUB_URL"
+
+    if [[ "$mode" == "sandbox-direct" ]]; then
+      register_and_verify_sa "$dep_sa" "$sbx_p" "${pack_prefix}-deployer"
+      register_and_verify_sa "$eval_sa" "$sbx_p" "${pack_prefix}-evaluator"
+    else
+      echo "MODE ci-only: skipping Sandbox Deployer and Evaluator SA registration on Hub."
+    fi
+  fi
+
+  # 5. Apply security, least-privilege role, and FinOps settings last.
+  scion hub settings set server.hub.gcp_iam_check_mode enforce --hub "$HUB_URL"
+  scion hub settings set server.hub.gcp_iam_deny_unknown_policy fail-closed --hub "$HUB_URL"
+  scion hub settings set default_gcp_identity_mode block --hub "$HUB_URL"
+  scion hub settings set default_agent_role baseline --hub "$HUB_URL"
+  scion hub settings set default_max_duration "$max_dur" --hub "$HUB_URL"
+  scion hub settings set default_max_turns "$max_turns" --hub "$HUB_URL"
+  scion hub settings set server.hub.auto_suspend_idle "$auto_susp" --hub "$HUB_URL"
+
+  # 6. Schedule weekly closed-loop Kaizen by default on every project.
+  ensure_kaizen_schedule \
+    "$pack_prefix" \
+    "$(jq -re '.kaizen.enabled | tostring' <<< "$repo_cfg")" \
+    "$(jq -re '.kaizen.schedule_cron' <<< "$repo_cfg")" \
+    "$(jq -re '.kaizen.time_zone' <<< "$repo_cfg")" \
+    "$(jq -re '.kaizen.coordinator_agent' <<< "$repo_cfg")"
 
   if [[ -n "$TARGET_REPO" ]]; then
     do_overlay_sync
@@ -163,54 +271,43 @@ do_apply() {
 
 do_overlay_sync() {
   [[ -n "$TARGET_REPO" ]] || { echo "--repo is required for overlay-sync" >&2; exit 2; }
-  local published=0
-  if [[ -f "$TARGET_REPO/.factory/hub-project.yaml" ]] && command -v python3 >/dev/null 2>&1; then
-    while IFS=$'\t' read -r rel_dir sver; do
-      [[ -n "$rel_dir" ]] || continue
-      local sdir="$TARGET_REPO/$rel_dir"
-      [[ -d "$sdir" ]] || continue
-      local sname
-      sname="$(basename "$sdir")"
-      scion skills publish "$sdir" --scope project --version "${sver:-1.0.0}" --hub "$HUB_URL"
-      scion project skills add "skill://${sname}" --hub "$HUB_URL" || true
-      published=1
-    done < <(python3 -c '
-import pathlib, sys, yaml
-cfg = yaml.safe_load(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")) or {}
-for item in cfg.get("overlay_skills", []):
-    print(f"{item.get(\"dir\", \"\")}\t{item.get(\"version\", \"1.0.0\")}")
-' "$TARGET_REPO/.factory/hub-project.yaml" 2>/dev/null || true)
-  fi
-  if [[ "$published" -eq 0 && -d "$TARGET_REPO/skills" ]]; then
-    for sdir in "$TARGET_REPO"/skills/*; do
-      [[ -d "$sdir" ]] || continue
-      local sname
-      sname="$(basename "$sdir")"
-      scion skills publish "$sdir" --scope project --version "1.0.0" --hub "$HUB_URL"
-      scion project skills add "skill://${sname}" --hub "$HUB_URL" || true
-      published=1
-    done
-  fi
-  if [[ "$published" -eq 0 ]]; then
-    echo "No customer overlay skills/ directory found in $TARGET_REPO."
-  fi
-  if [[ -f "$TARGET_REPO/.factory/hub-project.yaml" ]] && grep -Eq '^[[:space:]]*enabled:[[:space:]]*true' "$TARGET_REPO/.factory/hub-project.yaml"; then
-    local pack_prefix
-    pack_prefix="$(jq -r '.pack_prefix // .pack // "gecx"' "$KIT_DIR/manifest.json")"
-    echo "KAIZEN HINT: schedule weekly telemetry via scion schedule create-recurring --template ${pack_prefix}-kaizen-analyst --hub $HUB_URL"
-  fi
-  echo "OVERLAY SYNC COMPLETE."
+  local pack_name repo_cfg count=0
+  pack_name="$(jq -re '.pack' "$KIT_DIR/manifest.json")"
+  repo_cfg="$(parse_repo_cfg "$pack_name")"
+
+  while IFS=$'\t' read -r rel_dir sver; do
+    [[ -n "$rel_dir" ]] || continue
+    local sdir="$TARGET_REPO/$rel_dir"
+    [[ -d "$sdir" ]] || { echo "Missing declared overlay skill directory: $sdir" >&2; exit 1; }
+    local sname
+    sname="$(basename "$sdir")"
+    if scion skills resolve "skill://scion/project/${sname}@${sver}" --hub "$HUB_URL" >/dev/null 2>&1; then
+      echo "SKIP overlay publish: ${sname}@${sver} already published."
+    else
+      scion skills publish "$sdir" --scope project --version "$sver" --hub "$HUB_URL"
+    fi
+    scion project skills add "skill://scion/project/${sname}@${sver}" --hub "$HUB_URL"
+    count=$((count + 1))
+  done < <(jq -r '.overlay_skills[] | [.dir, .version] | @tsv' <<< "$repo_cfg")
+
+  echo "OVERLAY SYNC COMPLETE (skills_synced=$count)."
 }
 
 do_rollback() {
   [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR/templates" ]] || { echo "--backup-dir is required for rollback" >&2; exit 2; }
+  local restored=0
   for tpl_dir in "$BACKUP_DIR"/templates/*; do
     [[ -d "$tpl_dir" ]] || continue
     local tname
     tname="$(basename "$tpl_dir")"
     scion templates sync "$tpl_dir" --name "$tname" --hub "$HUB_URL"
+    restored=$((restored + 1))
   done
-  echo "ROLLBACK COMPLETE from $BACKUP_DIR."
+  if [[ "$restored" -eq 0 ]]; then
+    echo "ROLLBACK FAILED: backup at $BACKUP_DIR contains 0 backed-up templates (first-install backup cannot roll back automatically)." >&2
+    exit 1
+  fi
+  echo "ROLLBACK COMPLETE from $BACKUP_DIR (templates_restored=$restored)."
 }
 
 case "$ACTION" in

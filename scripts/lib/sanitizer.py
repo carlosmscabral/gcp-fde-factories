@@ -1,8 +1,8 @@
 """Public repository sanitization gate (Stage 2 of the two-stage clean-room pipeline).
 
-Checks generic internal-link regexes, corp emails, PII patterns, salted n-gram hashes,
-and mandatory `source:` citations on normative skills under packs/*/skills/.
-Never stores Tier-C internal codenames or customer lists (those stay on Cloudtop pre-push only).
+Checks internal-link regexes, corp domains and emails, private environment tokens, PII patterns,
+salted n-gram hashes, and mandatory `source:` citations on normative pack and core skills.
+Never stores Tier-C internal codenames or customer lists (those stay in local workstation pre-push gates).
 """
 from __future__ import annotations
 
@@ -11,11 +11,14 @@ import pathlib
 import re
 
 INTERNAL_PATTERNS: dict[str, re.Pattern[str]] = {
-    "go_shortlink": re.compile(r"\bgo/[a-z0-9][a-z0-9_-]{1,}\b"),
-    "buganizer_link": re.compile(r"\bb/\d{6,}\b"),
+    "go_shortlink": re.compile(r"(?<![A-Za-z0-9_/-])go/(?!no-go\b)[A-Za-z0-9][A-Za-z0-9_-]{1,}\b", re.I),
+    "buganizer_link": re.compile(r"(?<![A-Za-z0-9_/-])b/\d{5,}\b", re.I),
+    "cl_link": re.compile(r"(?<![A-Za-z0-9_/-])cl/\d{6,}\b", re.I),
     "corp_domain": re.compile(r"\b[a-z0-9-]+\.corp\.google\.com\b", re.I),
-    "google_email": re.compile(r"\b[A-Za-z0-9._%+-]+@google\.com\b", re.I),
+    "googlers_host": re.compile(r"\b[a-z0-9-]+\.c\.googlers\.com\b", re.I),
+    "google_email": re.compile(r"\b[A-Za-z0-9._%+-]+@(?:corp\.)?google\.com\b", re.I),
     "google3_path": re.compile(r"(?:/google/src/files/|//depot/google3/)"),
+    "internal_env": re.compile(r"\b(?:argolis|cabral-gecx-spk)\b", re.I),
 }
 
 PII_PATTERNS: dict[str, re.Pattern[str]] = {
@@ -24,8 +27,22 @@ PII_PATTERNS: dict[str, re.Pattern[str]] = {
 }
 
 SOURCE_LINE_RE = re.compile(r"^\s*-\s*source:\s*(https://\S+|canaries/\S+)\s*$")
-TEXT_SUFFIXES = {".md", ".yaml", ".yml", ".json", ".tf", ".tftpl", ".sh", ".py", ".txt"}
+TEXT_SUFFIXES = {
+    ".md", ".yaml", ".yml", ".json", ".tf", ".tftpl", ".tfvars",
+    ".sh", ".py", ".txt", ".toml", ".lock", ".Dockerfile",
+}
+TEXT_FILENAMES = {"Dockerfile", "NOTICE", "Makefile", ".gitignore"}
 SKIP_DIRS = {".git", ".venv", "__pycache__", ".terraform", "dist", ".pytest_cache"}
+
+
+def _is_scannable_file(path: pathlib.Path) -> bool:
+    """Returns True when path matches a scannable text suffix or exact filename."""
+    return (
+        path.suffix in TEXT_SUFFIXES
+        or path.name in TEXT_FILENAMES
+        or path.name.endswith(".Dockerfile")
+        or path.name.endswith(".tfvars.example")
+    )
 
 
 def scan_text_for_leaks(
@@ -56,7 +73,7 @@ def scan_text_for_leaks(
 
 
 def check_skill_sources(skill_md: pathlib.Path, rel_path: str) -> list[str]:
-    """Verifies that every H2 section in a pack skill declares at least one `source:` line."""
+    """Verifies that every H2 section in a pack or core skill declares at least one `source:` line."""
     findings: list[str] = []
     lines = skill_md.read_text(encoding="utf-8").splitlines()
     current_heading: str | None = None
@@ -65,14 +82,18 @@ def check_skill_sources(skill_md: pathlib.Path, rel_path: str) -> list[str]:
     for line in lines:
         if line.startswith("## "):
             if current_heading and not has_source:
-                findings.append(f"{rel_path}: section '{current_heading}' lacks a '- source: <url|canaries/...>' citation.")
+                findings.append(
+                    f"{rel_path}: section '{current_heading}' lacks a '- source: <url|canaries/...>' citation."
+                )
             current_heading = line[3:].strip()
             has_source = False
         elif SOURCE_LINE_RE.match(line):
             has_source = True
 
     if current_heading and not has_source:
-        findings.append(f"{rel_path}: section '{current_heading}' lacks a '- source: <url|canaries/...>' citation.")
+        findings.append(
+            f"{rel_path}: section '{current_heading}' lacks a '- source: <url|canaries/...>' citation."
+        )
     return findings
 
 
@@ -89,7 +110,7 @@ def scan_repository(repo_root: pathlib.Path, scan_tests: bool = False) -> list[s
             continue
         if path.name == "sanitizer.py":
             continue
-        if path.suffix not in TEXT_SUFFIXES:
+        if not _is_scannable_file(path):
             continue
 
         rel = path.relative_to(repo_root).as_posix()

@@ -5,29 +5,22 @@ serializes cleanly by module reference for Vertex AI Agent Engine deployments.
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from .config import load_settings
 from .prompts import SYSTEM_INSTRUCTION
-
-
-def health_ping(service_name: str) -> dict[str, str]:
-    """Returns a deterministic health payload for smoke checks and offline tool tests."""
-    return {"service": service_name, "status": "ok"}
+from .tools import health_ping
 
 
 def build_root_agent() -> Any:
-    """Builds the ADK LlmAgent lazily if google-adk is installed, else returns a config dict."""
+    """Applies runtime configuration and constructs the ADK LlmAgent."""
     cfg = load_settings()
-    try:
-        from google.adk.agents import LlmAgent  # type: ignore[import-not-found]
-    except ImportError:
-        return {
-            "name": cfg.app_name,
-            "model": cfg.model_name,
-            "instruction": SYSTEM_INSTRUCTION,
-            "tools": [health_ping],
-        }
+    os.environ.setdefault("GOOGLE_CLOUD_LOCATION", cfg.model_location)
+    os.environ.setdefault("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", cfg.otel_capture_content)
+
+    from google.adk.agents import LlmAgent  # type: ignore[import-not-found]
+
     return LlmAgent(
         name=cfg.app_name,
         model=cfg.model_name,

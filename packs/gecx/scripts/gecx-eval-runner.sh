@@ -6,8 +6,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PR_NUMBER=""
-LOCK_DIR="${SCION_SCRATCHPAD_DIR:-/tmp/gecx-scratchpad}/locks"
-LEDGER_FILE="${SCION_SCRATCHPAD_DIR:-/tmp/gecx-scratchpad}/sandbox-ledger.jsonl"
+DEFAULT_SCRATCH="/tmp/gecx-scratchpad"
+if [[ -d "/scion-volumes/scratchpad" && -w "/scion-volumes/scratchpad" ]]; then
+  DEFAULT_SCRATCH="/scion-volumes/scratchpad"
+fi
+SCRATCH_ROOT="${SCION_SCRATCHPAD_DIR:-$DEFAULT_SCRATCH}"
+LOCK_DIR="${SCRATCH_ROOT}/locks"
+LEDGER_FILE="${SCRATCH_ROOT}/sandbox-ledger.jsonl"
 
 for ((i=1; i<=$#; i++)); do
   if [[ "${!i}" == "--pr-number" ]]; then

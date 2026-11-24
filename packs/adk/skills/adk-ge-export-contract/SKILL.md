@@ -1,25 +1,25 @@
 ---
 name: adk-ge-export-contract
-description: Deterministic export and registration contract for exposing ADK agents to Gemini Enterprise (GE App) via adkAgentDefinition (Vertex AI Agent Engine) or a2aAgentDefinition (A2A AgentCard).
+description: Deterministic Gemini Enterprise (GE App) export and registration contract supporting Vertex AI Agent Engine and A2A v0.3.0 modes.
 ---
 
-# ADK to Gemini Enterprise (`GE App`) Export Contract
+# Gemini Enterprise (`GE App`) Export Contract
 
-## 1. Choose Between `agent_engine` and `a2a` Export Modes
-- Maintain one declarative `ge_manifest.json` at the target repository root validated against `schemas/ge-export.schema.json`.
-- Use `export_mode: "agent_engine"` when the ADK agent deploys to Vertex AI Agent Engine (`reasoningEngines/{id}`). This generates an `adkAgentDefinition.provisionedReasoningEngine` payload.
-- Use `export_mode: "a2a"` when exposing the agent via Agent2Agent (`to_a2a(root_agent)` or `adk api_server --a2a` on Cloud Run, GKE, or Agent Engine). This generates a canonical `AgentCard` and encodes it into `a2aAgentDefinition.jsonAgentCard`.
-- source: https://cloud.google.com/gemini/enterprise/docs/register-and-manage-an-adk-agent
+## 1. Dual Registration Modes (`Discovery Engine v1alpha`)
+- Support two explicit `export_mode` targets in `ge_manifest.json`, validated against `schemas/ge-export.schema.json`:
+  - **`agent_engine`:** emits `adkAgentDefinition.provisionedReasoningEngine.reasoningEngine` targeting a Vertex AI Agent Engine resource. Never emit undefined `toolSettings`.
+  - **`a2a`:** emits a valid A2A `v0.3.0` `AgentCard` (including mandatory `tags` per skill) and wraps it in `a2aAgentDefinition.jsonAgentCard`.
+- Use `https://{endpoint_prefix}discoveryengine.googleapis.com/v1alpha/projects/{project_id}/locations/{location}/collections/default_collection/engines/{app_id}/assistants/{assistant_id}/agents` where `endpoint_prefix` matches `location` (`""` for `global`, `"us-"` for `us`, `"eu-"` for `eu`).
+- source: https://cloud.google.com/agentspace/docs/register-agents
 
-## 2. Gemini Enterprise Discovery Engine API Contract
-- Target the official Discovery Engine agents collection endpoint:
-  `https://{endpoint_prefix}discoveryengine.googleapis.com/v1alpha/projects/{project_id}/locations/{location}/collections/default_collection/engines/{app_id}/assistants/{assistant_id}/agents`
-  where `endpoint_prefix` is empty for `global` and `{endpoint_location}-` for `us` or `eu`.
-- Always validate and materialize the deterministic export bundle (`ge_registration_payload.json`, optional `agent_card.json`, and `ge_export_manifest.json` with SHA-256 digests) using `python3 /opt/adk-factory/ge_export.py export --manifest ge_manifest.json --out dist/ge-export`.
-- Include explicit `authorizationConfig.toolAuthorizations` only when the agent requires configured OAuth authorization resources in Gemini Enterprise.
-- source: https://cloud.google.com/gemini/enterprise/docs/register-and-manage-an-a2a-agent
+## 2. Deterministic Bundle Export and OAuth Contracts
+- Run `python3 /opt/adk-factory/ge_export.py export --manifest ge_manifest.json --out dist/ge-export` on every PR.
+- Use `authorizationConfig.toolAuthorizations` for `agent_engine` tool OAuth and `authorizationConfig.agentAuthorization` for `a2a` invocation OAuth.
+- Never embed client secrets, OAuth tokens, or real user PII in `ge_manifest.json` or exported bundles.
+- source: https://google.github.io/adk-docs/a2a/
 
-## 3. Environment Boundary and Ephemeral Cleanup
-- Factory agents (`adk-deployer`) may register ephemeral `[CI]` agents ONLY inside the designated Sandbox Gemini Enterprise App, and MUST delete them on failure or after CI verification via `ge_export.py delete`.
-- Production, Staging, and DEV Gemini Enterprise App registrations occur exclusively inside customer CI/CD (Workload Identity Federation) after explicit human pull request approval.
-- source: canaries/adk/ge_export_contract.json
+## 3. Sandbox Registration Quota and Production Promotion Boundary
+- Prefer `ge_export.py patch --agent-name <sandbox-agent>` over per-PR `POST` creation to avoid Gemini Enterprise daily agent-creation `HTTP 429` quotas.
+- Allow `adk-deployer` to register or patch `[CI]` agents strictly inside the disposable Sandbox project (`project_id == --sandbox-project`).
+- Promote DEV, HML, and PRD Gemini Enterprise registrations exclusively via customer CI/CD with WIF after human PR approval.
+- source: https://cloud.google.com/agentspace/docs/register-agents

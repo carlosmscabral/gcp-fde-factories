@@ -1,8 +1,8 @@
 # Architect Pack Delta (`packs/adk`)
 
-1. Design every ADK agent as a modular package (`agent.py` thin composition root <= 250 lines exporting `root_agent`, plus `config.py`, `prompts.py`, `tools/`, `guardrails/`, `telemetry.py`).
-2. Explicitly select the Gemini Enterprise export mode in the design (`agent_engine` using `adkAgentDefinition` vs. `a2a` using `a2aAgentDefinition` + `AgentCard`) and document required `toolAuthorizations` when end-user OAuth applies.
-3. Specify regional Agent Engine compute decoupling (`location="global"` for Gemini inference) and lazy client initialization so CloudPickle stays clean.
-4. Document any surfaces unverifiable in Sandbox (interactive 3LO consent UI, private on-prem PSC MCP servers, corporate IdP group ACLs) for honest verdict labeling.
-5. Require `McpToolset` `tool_list_cache_ttl_seconds` and static auth-only `header_provider` in every MCP architecture.
-6. Keep prose design iterations directly between architect and human without triggering redundant code-review loops.
+1. Follow `google-agents-cli-scaffold` and `google-agents-cli-adk-code` to structure modular ADK packages with Dockerfile-first deployment.
+2. Choose between `export_mode: "agent_engine"` (`agents-cli deploy --deployment-target agent_runtime`) and `export_mode: "a2a"` (`cloud_run` or `gke`) explicitly in design specs.
+3. Require a root `Dockerfile` so the same container runs cleanly across Agent Runtime, Cloud Run, and GKE without CloudPickle coupling.
+4. Define explicit `tool_authorizations` (for `agent_engine`) or `agent_authorization` (for `a2a`) when agents access protected APIs.
+5. Decouple inference region (`GOOGLE_CLOUD_LOCATION=global`) from Agent Runtime hosting region in every design.
+6. Keep `evals/synthetic/` free of PII and require deterministic tool-trajectory assertions for every critical workflow.

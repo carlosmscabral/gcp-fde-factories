@@ -25,25 +25,40 @@
   "properties": {
     "schema_version": { "type": "string", "const": "1" },
     "slug": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,32}$" },
-    "pack": { "type": "string", "enum": ["gecx", "adk", "agent-platform"] },
+    "pack": { "type": "string", "enum": ["gecx", "adk"] },
     "pack_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
     "track": { "type": "string", "enum": ["express", "complete"] },
     "existing_hub": { "type": "boolean" },
     "mode": { "type": "string", "enum": ["sandbox-direct", "ci-only"] },
     "diversity_profile": { "type": "string", "enum": ["cross-vendor", "cross-model", "single-family"] },
     "autonomy": { "type": "string", "enum": ["supervised", "standard"] },
-    "mission": { "type": "string" },
-    "non_goals": { "type": "array", "items": { "type": "string" } },
+    "confirmed_by": { "type": "string", "minLength": 2, "maxLength": 80 },
+    "mission": { "type": "string", "minLength": 10, "maxLength": 400 },
+    "non_goals": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 5, "maxLength": 240 }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default_max_duration": { "type": "string", "pattern": "^[0-9]+(m|h)$" },
+        "default_max_turns": { "type": "integer", "minimum": 10, "maximum": 200 },
+        "default_max_model_calls": { "type": "integer", "minimum": 10, "maximum": 400 },
+        "auto_suspend_idle": { "type": "boolean" }
+      }
+    },
     "git_flow": {
       "type": "object",
       "required": ["base_branch", "branch_pattern", "commit_convention", "ci_platform"],
       "additionalProperties": false,
       "properties": {
-        "base_branch": { "type": "string", "minLength": 1 },
-        "branch_pattern": { "type": "string", "minLength": 1 },
-        "commit_convention": { "type": "string", "minLength": 1 },
+        "base_branch": { "type": "string", "pattern": "^[A-Za-z0-9._/-]{1,80}$" },
+        "branch_pattern": { "type": "string", "pattern": "^[^\\r\\n`]{1,80}$" },
+        "commit_convention": { "type": "string", "pattern": "^[^\\r\\n`]{1,80}$" },
         "ci_platform": { "type": "string", "enum": ["github-actions", "azure-devops", "gitlab-ci", "none"] },
-        "pr_template": { "type": ["string", "null"] }
+        "pr_template": { "type": ["string", "null"], "pattern": "^[^\\r\\n`]{1,160}$" },
+        "workflows": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n`]{1,160}$" }, "default": [] }
       }
     },
     "commands": {
@@ -51,46 +66,103 @@
       "required": ["lint", "test"],
       "additionalProperties": false,
       "properties": {
-        "build": { "type": "string" },
-        "lint": { "type": "string", "minLength": 1 },
-        "test": { "type": "string", "minLength": 1 },
-        "e2e": { "type": "string" }
+        "build": { "type": "string", "pattern": "^[^\\r\\n`]{0,200}$" },
+        "lint": { "type": "string", "pattern": "^[^\\r\\n`]{1,200}$" },
+        "test": { "type": "string", "pattern": "^[^\\r\\n`]{1,200}$" },
+        "e2e": { "type": "string", "pattern": "^[^\\r\\n`]{0,200}$" }
       }
     },
-    "detected_binaries": { "type": "array", "items": { "type": "string" } },
-    "missing_binaries": { "type": "array", "items": { "type": "string" } },
-    "heavy_test_binaries": { "type": "array", "items": { "type": "string" }, "default": [] },
-    "ai_files_detected": { "type": "array", "items": { "type": "string" }, "default": [] },
-    "knowledge_sources": { "type": "array", "items": { "type": "string" } },
+    "detected_binaries": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9+._-]{0,31}$" }
+    },
+    "missing_binaries": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["poetry", "ruff", "mypy", "node", "npm", "pnpm", "eslint", "go", "jdk", "mvn"]
+      }
+    },
+    "heavy_test_binaries": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["playwright", "playwright-node", "jdk", "mvn"]
+      },
+      "default": []
+    },
+    "ai_files_detected": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n`]{1,160}$" }, "default": [] },
+    "absorbed_conventions": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n`]{5,240}$" }, "default": [] },
+    "knowledge_sources": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n`]{1,200}$" } },
     "requirements": {
       "type": "array",
       "items": {
         "type": "object",
         "required": ["id", "summary", "acceptance_criteria"],
+        "additionalProperties": false,
         "properties": {
           "id": { "type": "string", "pattern": "^REQ-[0-9]{3,}$" },
-          "summary": { "type": "string", "minLength": 5 },
-          "acceptance_criteria": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 5 } }
+          "summary": { "type": "string", "minLength": 10, "maxLength": 240 },
+          "acceptance_criteria": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 10, "maxLength": 240 }
+          }
         }
       },
       "default": []
     },
-    "invariants": { "type": "array", "items": { "type": "string", "minLength": 5 }, "default": [] },
-    "evaluation_pyramid": { "type": "object", "default": {} },
+    "invariants": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 10, "maxLength": 240 },
+      "default": []
+    },
+    "evaluation_pyramid": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "minLength": 3, "maxLength": 200 },
+      "default": {}
+    },
     "modernization_gaps": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "title", "severity", "benefit"],
+        "required": ["id", "title", "severity", "effort", "benefit"],
+        "additionalProperties": false,
         "properties": {
-          "id": { "type": "string" },
-          "title": { "type": "string" },
+          "id": { "type": "string", "pattern": "^GAP-[A-Z0-9-]+$" },
+          "title": { "type": "string", "minLength": 5, "maxLength": 160 },
           "severity": { "type": "string", "enum": ["high", "medium", "low"] },
-          "benefit": { "type": "string" }
+          "effort": { "type": "string", "enum": ["S", "M", "L"] },
+          "status": { "type": "string", "enum": ["open", "done"], "default": "open" },
+          "benefit": { "type": "string", "minLength": 5, "maxLength": 240 }
         }
       }
     },
+    "kaizen_enabled": { "type": "boolean", "default": true },
     "kaizen_schedule_cron": { "type": "string", "default": "0 17 * * 5" },
-    "kaizen_time_zone": { "type": "string", "default": "America/Sao_Paulo" }
+    "kaizen_time_zone": { "type": "string", "default": "America/Sao_Paulo" },
+    "harnesses": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default": { "type": "string", "enum": ["antigravity-vertex", "claude-vertex"], "default": "antigravity-vertex" },
+        "claude_model_garden_enabled": { "type": "boolean", "default": false },
+        "vertex_gemini_location": { "type": "string", "pattern": "^[a-z0-9-]+$", "default": "global" },
+        "vertex_claude_region": { "type": "string", "pattern": "^[a-z0-9-]+$", "default": "global" }
+      }
+    },
+    "model_routing": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["harness", "model"],
+        "additionalProperties": false,
+        "properties": {
+          "harness": { "type": "string", "enum": ["antigravity-vertex", "claude-vertex"] },
+          "model": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+          "thinking_level": { "type": "integer", "minimum": 0, "maximum": 100 }
+        }
+      }
+    }
   }
 }

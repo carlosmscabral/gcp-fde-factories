@@ -1,8 +1,9 @@
-"""Tests for repo-scaffold parity, Delta Watcher idempotency, CLI canary snapshot, and IAM policy guards."""
+"""Tests for repo-scaffold parity, Delta Watcher idempotency, CLI canary snapshot, and IAM least-privilege guards."""
 from __future__ import annotations
 
 import importlib.util
 import pathlib
+import re
 import sys
 
 from canaries.gecx.check_cli_contract import check_contract_snapshot
@@ -35,14 +36,30 @@ def test_cli_contract_snapshot_covers_all_required_cxas_1_11_flags() -> None:
     assert check_contract_snapshot(REPO_ROOT / "canaries/gecx/cxas_1.11.0_cli_contract.json") == []
 
 
-def test_stage01_iam_contains_zero_predefined_ces_roles_or_wildcards() -> None:
-    """Confirms deploy/01-landing-zone/iam.tf never grants predefined roles/ces.* or wildcard permissions."""
+def test_stage01_iam_enforces_least_privilege_for_gecx_adk_and_kaizen() -> None:
+    """Confirms deploy/01-landing-zone/iam.tf has zero wildcards, zero CES predefined roles, and strict ADK split-SA IAM."""
     iam_tf = (REPO_ROOT / "deploy/01-landing-zone/iam.tf").read_text(encoding="utf-8")
     code_only = "\n".join(line for line in iam_tf.splitlines() if not line.lstrip().startswith("#"))
     assert 'role    = "roles/ces.' not in code_only
     assert "ces.conversations." not in code_only
     assert "contactcenterinsights." not in code_only
     assert '".*"' not in code_only
+
+    # ADK-03: sandbox_evaluator must use custom sandboxEvaluatorPredict role, NEVER roles/aiplatform.user.
+    all_iam_blocks = re.findall(r'resource "google_project_iam_member" "[^"]+" \{[^}]+\}', code_only)
+    eval_blocks = [blk for blk in all_iam_blocks if "sandbox_evaluator.email" in blk]
+    assert eval_blocks
+    assert all("roles/aiplatform.user" not in blk for blk in eval_blocks)
+    assert "sandboxEvaluatorPredict" in code_only
+
+    # ADK-17: adkSandboxDeployer custom role must NOT grant project-wide storage.objects.*.
+    role_blocks = re.findall(r'resource "google_project_iam_custom_role" "[^"]+" \{[\s\S]+?\n\}', code_only)
+    adk_dep_blocks = [blk for blk in role_blocks if 'role_id     = "adkSandboxDeployer"' in blk or '"adkSandboxDeployer"' in blk]
+    assert len(adk_dep_blocks) == 1
+    assert "storage.objects." not in adk_dep_blocks[0]
+
+    # KZ-10: kaizen_viewer must be included in assignable_sa_map so Hub can impersonate it when enabled.
+    assert "kaizen_viewer" in code_only
 
 
 def test_delta_watcher_wakes_only_on_changes() -> None:

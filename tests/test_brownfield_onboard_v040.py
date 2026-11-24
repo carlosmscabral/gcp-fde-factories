@@ -1,4 +1,4 @@
-"""Tests for v0.4.0 dynamic brownfield onboarding (scanner, Readiness Gate, emitter, and drift)."""
+"""Tests for v0.4.0 dynamic brownfield onboarding (scanner, Readiness Gate, emitter, security, and drift)."""
 from __future__ import annotations
 
 import json
@@ -6,9 +6,11 @@ import pathlib
 import subprocess
 import sys
 
+import pytest
 import yaml
 
 from scripts.lib.budget_engine import check_context_budget
+from scripts.lib.dockerfile_recipes import render_conditional_dockerfile
 from scripts.lib.onboard_emitter import END_MARKER, START_MARKER, check_readiness, emit_layer3_overlay
 from scripts.lib.onboard_scanner import detect_repo_drift, scan_repository_facts
 from scripts.lib.schema_validator import validate_yaml_file
@@ -20,17 +22,17 @@ GECX_TOOLCHAIN = REPO_ROOT / "packs/gecx/toolchain-manifest.json"
 
 
 def _make_brownfield_repo(root: pathlib.Path) -> pathlib.Path:
-    """Creates a realistic brownfield repository with Poetry, Ruff, Playwright, and existing AI docs."""
+    """Creates a realistic brownfield repository with Poetry, Ruff, Node/ESLint/Playwright, and AI docs."""
     root.mkdir(parents=True, exist_ok=True)
     (root / "pyproject.toml").write_text(
         "[tool.poetry]\nname = 'billing-bot'\n[tool.ruff]\nline-length = 100\n",
         encoding="utf-8",
     )
     (root / "package.json").write_text(
-        json.dumps({"devDependencies": {"playwright": "^1.50.0"}, "scripts": {"test": "playwright test"}}),
+        json.dumps({"devDependencies": {"playwright": "^1.50.0", "eslint": "^9.0.0"}, "scripts": {"test": "playwright test"}}),
         encoding="utf-8",
     )
-    (root / "AGENTS.md").write_text("# Existing Team Rules\nNever force-push to develop.\n", encoding="utf-8")
+    (root / "AGENTS.md").write_text("# Existing Team Rules\r\nNever force-push to develop.\r\n", encoding="utf-8")
     (root / "CLAUDE.md").write_text("# Existing Claude Guide\nKeep PRs small.\n", encoding="utf-8")
     (root / ".cursorrules").write_text("Use strict typing.\n", encoding="utf-8")
     (root / ".git").mkdir()
@@ -50,7 +52,7 @@ def _base_profile(scan: dict, track: str = "express") -> dict:
         "track": track,
         "existing_hub": True,
         "mode": "sandbox-direct",
-        "diversity_profile": "cross-vendor",
+        "diversity_profile": "cross-model",
         "autonomy": "supervised",
         "git_flow": {
             "base_branch": scan["git_flow"]["base_branch"],
@@ -58,6 +60,7 @@ def _base_profile(scan: dict, track: str = "express") -> dict:
             "commit_convention": "conventional-commits",
             "ci_platform": scan["git_flow"]["ci_platform"],
             "pr_template": scan["git_flow"]["pr_template"],
+            "workflows": scan["git_flow"]["workflows"],
         },
         "commands": scan["commands"],
         "detected_binaries": scan["detected_binaries"],
@@ -90,88 +93,112 @@ def test_brownfield_scanner_detects_six_dimensions_and_toolchain_delta(tmp_path:
     scan = scan_repository_facts(repo, GECX_TOOLCHAIN)
 
     assert "python" in scan["stacks"] and "node" in scan["stacks"]
-    assert "poetry" in scan["missing_binaries"]
-    assert "ruff" in scan["missing_binaries"]
-    assert "playwright" in scan["heavy_test_binaries"]
-    assert "playwright" not in scan["missing_binaries"]
+    assert {"poetry", "ruff", "node", "eslint"}.issubset(set(scan["missing_binaries"]))
+    assert "playwright-node" in scan["heavy_test_binaries"]
+    assert "playwright-node" not in scan["missing_binaries"]
     assert scan["git_flow"]["base_branch"] == "develop"
     assert {"AGENTS.md", "CLAUDE.md", ".cursorrules"}.issubset(set(scan["ai_files_detected"]))
     assert "docs/adr/001-arch.md" in scan["knowledge_sources"]
 
 
-def test_readiness_gate_blocks_incomplete_profiles_and_passes_complete(tmp_path: pathlib.Path) -> None:
-    """Confirms Readiness Gate rejects placeholder lint or missing Complete-track fields."""
-    repo = _make_brownfield_repo(tmp_path / "bf")
-    scan = scan_repository_facts(repo, GECX_TOOLCHAIN)
+def test_dockerfile_recipes_topological_order_and_injection_refusal() -> None:
+    """Negative + ordering test (OB-02/OB-03): node precedes eslint, non-digest image and unknown binary fail."""
+    img = "us-central1-docker.pkg.dev/demo/repo/gecx-runtime@sha256:" + ("a" * 64)
+    df = render_conditional_dockerfile(img, ["eslint", "node", "ruff"])
+    assert df is not None
+    assert f"\nFROM {img}\n" in df
+    assert df.index("nodejs") < df.index("eslint")
+    assert "USER root" in df and "USER scion" in df
+    assert "RUN echo" not in df
 
-    express = _base_profile(scan, track="express")
-    assert check_readiness(express, PROFILE_SCHEMA)["ready"] is True
+    with pytest.raises(ValueError, match="digest-pinned"):
+        render_conditional_dockerfile("gecx-runtime:latest\nRUN id", ["ruff"])
 
-    weak_complete = _base_profile(scan, track="express")
-    weak_complete["track"] = "complete"
-    rep = check_readiness(weak_complete, PROFILE_SCHEMA)
-    assert rep["ready"] is False
-    assert any("mission" in msg for msg in rep["missing_or_weak"])
-
-    full_complete = _base_profile(scan, track="complete")
-    assert check_readiness(full_complete, PROFILE_SCHEMA)["ready"] is True
+    with pytest.raises(ValueError, match="Unsupported binary"):
+        render_conditional_dockerfile(img, ["ruff; curl evil.sh"])
 
 
-def test_emitter_is_non_destructive_idempotent_and_conditional_dockerfile(tmp_path: pathlib.Path) -> None:
-    """Confirms Layer 3 emitter preserves existing AI files, generates conditional Dockerfiles, and passes budget."""
+def test_emitter_preserves_crlf_parity_merges_non_destructively_and_tracks_day2_drift(tmp_path: pathlib.Path) -> None:
+    """Confirms emitter handles CRLF, non-destructive hub-project/backlog merge, Vertex routing, and Day-2 drift."""
     repo = _make_brownfield_repo(tmp_path / "bf")
     scan = scan_repository_facts(repo, GECX_TOOLCHAIN)
     profile = _base_profile(scan, track="complete")
-    image_ref = "us-central1-docker.pkg.dev/demo/repo/scion-gecx-runtime@sha256:" + ("a" * 64)
+    image_ref = "us-central1-docker.pkg.dev/demo/repo/gecx-runtime@sha256:" + ("a" * 64)
 
     res1 = emit_layer3_overlay(repo, profile, image_ref, PROFILE_SCHEMA)
     assert res1["custom_dockerfile"] == ".factory/Dockerfile.customer"
     assert res1["tester_dockerfile"] == ".factory/Dockerfile.customer-tester"
+    tester_df = (repo / ".factory" / "Dockerfile.customer-tester").read_text(encoding="utf-8")
+    assert "PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers" in tester_df
 
-    df_text = (repo / ".factory" / "Dockerfile.customer").read_text(encoding="utf-8")
-    assert f"ARG PACK_IMAGE={image_ref}" in df_text
-    assert "USER root" in df_text and "USER scion" in df_text
-    assert "poetry" in df_text and "ruff" in df_text
-
-    # Existing customer prose in AGENTS.md, CLAUDE.md, and .cursorrules must remain intact.
-    agents_first = (repo / "AGENTS.md").read_text(encoding="utf-8")
-    assert "# Existing Team Rules" in agents_first
-    assert START_MARKER in agents_first and END_MARKER in agents_first
+    # Existing CRLF prose in AGENTS.md stays CRLF and CLAUDE.md/.cursorrules remain untouched.
+    agents_bytes = (repo / "AGENTS.md").read_bytes()
+    assert b"\r\n" in agents_bytes
+    assert START_MARKER.encode() in agents_bytes and END_MARKER.encode() in agents_bytes
     assert (repo / "CLAUDE.md").read_text(encoding="utf-8") == "# Existing Claude Guide\nKeep PRs small.\n"
-    assert (repo / ".cursorrules").read_text(encoding="utf-8") == "Use strict typing.\n"
 
-    # Re-running emit must be idempotent (exactly one delimited block).
-    emit_layer3_overlay(repo, profile, image_ref, PROFILE_SCHEMA)
-    agents_second = (repo / "AGENTS.md").read_text(encoding="utf-8")
-    assert agents_second == agents_first
-    assert agents_second.count(START_MARKER) == 1
-
-    # Generated .factory/hub-project.yaml must validate cleanly and avoid skill collisions.
+    # Cross-model preset uses Scion generic tier aliases on Antigravity Vertex AI without hardcoded model versions.
     hub_proj = repo / ".factory" / "hub-project.yaml"
     assert validate_yaml_file(hub_proj, HUB_PROJECT_SCHEMA) == []
+    hp = yaml.safe_load(hub_proj.read_text(encoding="utf-8"))
+    assert hp["harnesses"]["claude_model_garden_enabled"] is False
+    assert hp["model_routing"]["developer"]["model"] == "extra-large"
+    assert hp["model_routing"]["code-reviewer"]["model"] == "large"
+
+    # Re-emit preserves user's exclude_skills and marked-done modernization backlog items.
+    hp["exclude_skills"] = ["gecx-domain-guardrails"]
+    hub_proj.write_text(yaml.safe_dump(hp, sort_keys=False), encoding="utf-8")
+    bl_path = repo / ".factory" / "modernization-backlog.yaml"
+    bl = yaml.safe_load(bl_path.read_text(encoding="utf-8"))
+    bl["gaps"][0]["status"] = "done"
+    bl_path.write_text(yaml.safe_dump(bl, sort_keys=False), encoding="utf-8")
+
+    emit_layer3_overlay(repo, profile, image_ref, PROFILE_SCHEMA)
+    assert yaml.safe_load(hub_proj.read_text(encoding="utf-8"))["exclude_skills"] == ["gecx-domain-guardrails"]
+    assert yaml.safe_load(bl_path.read_text(encoding="utf-8"))["gaps"][0]["status"] == "done"
+
     budget_errs, _ = check_context_budget(REPO_ROOT, REPO_ROOT / "packs/gecx", hub_proj)
     assert budget_errs == []
 
-    # When zero missing binaries exist (greenfield), no Dockerfile.customer is emitted.
-    gf = tmp_path / "gf"
-    gf.mkdir()
-    gf_prof = _base_profile(scan_repository_facts(gf, GECX_TOOLCHAIN), track="express")
-    gf_prof["commands"]["lint"] = "ruff check ."
-    gf_res = emit_layer3_overlay(gf, gf_prof, image_ref, PROFILE_SCHEMA)
-    assert gf_res["custom_dockerfile"] is None
-    assert not (gf / ".factory" / "Dockerfile.customer").exists()
+    # Immediately after onboarding, Day-2 drift MUST be False (missing_binaries already covered by Dockerfile.customer).
+    assert detect_repo_drift(repo, GECX_TOOLCHAIN)["drift_detected"] is False
 
-    # Day-2 drift detector flags newly introduced binaries after onboarding.
+    # Adding a new Go stack or CI workflow triggers Day-2 drift.
     (repo / "go.mod").write_text("module example.com/billing\n", encoding="utf-8")
     drift = detect_repo_drift(repo, GECX_TOOLCHAIN)
     assert drift["drift_detected"] is True
-    assert any("go" in n for n in drift["notes"])
+    assert "go" in drift["missing_binaries"]
 
 
-def test_factory_onboard_cli_scan_and_check(tmp_path: pathlib.Path) -> None:
-    """Confirms core-gcp-fde/scripts/factory_onboard.py scan and check subcommands work via CLI."""
+def test_emitter_refuses_orphan_markers_and_preserves_scaffold_sibling_parity(tmp_path: pathlib.Path) -> None:
+    """Negative + parity test (OB-06/OB-07): orphan marker aborts atomically; byte-identical siblings stay in sync."""
+    image_ref = "us-central1-docker.pkg.dev/demo/repo/gecx-runtime@sha256:" + ("b" * 64)
+
+    # 1. Orphan start marker must fail atomically without writing .factory/hub-project.yaml.
+    broken = tmp_path / "orphan"
+    broken.mkdir()
+    (broken / "AGENTS.md").write_text(f"# Rules\n{START_MARKER}\nno end marker\n", encoding="utf-8")
+    prof = _base_profile(scan_repository_facts(broken, GECX_TOOLCHAIN))
+    prof["commands"]["lint"] = "ruff check ."
+    with pytest.raises(ValueError, match="malformed factory markers"):
+        emit_layer3_overlay(broken, prof, image_ref, PROFILE_SCHEMA)
+    assert not (broken / ".factory" / "hub-project.yaml").exists()
+
+    # 2. Byte-identical AGENTS/CLAUDE/GEMINI scaffold stays byte-identical after emit.
+    parity_repo = tmp_path / "parity"
+    parity_repo.mkdir()
+    for fname in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
+        (parity_repo / fname).write_text("# Shared Contract\n", encoding="utf-8")
+    p2 = _base_profile(scan_repository_facts(parity_repo, GECX_TOOLCHAIN))
+    p2["commands"]["lint"] = "ruff check ."
+    emit_layer3_overlay(parity_repo, p2, image_ref, PROFILE_SCHEMA)
+    assert (parity_repo / "AGENTS.md").read_bytes() == (parity_repo / "CLAUDE.md").read_bytes()
+    assert (parity_repo / "AGENTS.md").read_bytes() == (parity_repo / "GEMINI.md").read_bytes()
+
+
+def test_factory_onboard_cli_supports_json_flag_on_all_subcommands(tmp_path: pathlib.Path) -> None:
+    """Confirms factory_onboard.py scan --json and check --json work via CLI."""
     repo = _make_brownfield_repo(tmp_path / "cli-repo")
-    scan_out = tmp_path / "scan.json"
     res = subprocess.run(
         [
             sys.executable,
@@ -181,15 +208,14 @@ def test_factory_onboard_cli_scan_and_check(tmp_path: pathlib.Path) -> None:
             str(repo),
             "--toolchain-manifest",
             str(GECX_TOOLCHAIN),
-            "--out",
-            str(scan_out),
+            "--json",
         ],
         capture_output=True,
         text=True,
         check=False,
     )
     assert res.returncode == 0, res.stderr
-    scan = json.loads(scan_out.read_text(encoding="utf-8"))
+    scan = json.loads(res.stdout)
     prof_path = tmp_path / "profile.yaml"
     prof_path.write_text(yaml.safe_dump(_base_profile(scan, track="express")), encoding="utf-8")
 
@@ -200,6 +226,7 @@ def test_factory_onboard_cli_scan_and_check(tmp_path: pathlib.Path) -> None:
             "check",
             "--profile",
             str(prof_path),
+            "--json",
         ],
         capture_output=True,
         text=True,

@@ -28,13 +28,13 @@
     },
     "ge_agent_resource": {
       "type": ["string", "null"],
-      "pattern": "^projects/[a-z0-9-]+/locations/[a-z0-9-]+/collections/default_collection/engines/[A-Za-z0-9_-]+/assistants/[A-Za-z0-9_-]+/agents/[A-Za-z0-9_-]+$"
+      "pattern": "^projects/[a-z0-9-]+/locations/(global|us|eu)/collections/default_collection/engines/[A-Za-z0-9_-]+/assistants/[A-Za-z0-9_-]+/agents/[A-Za-z0-9_-]+$"
     },
     "evaluation_run_ids": {
       "type": "array",
       "items": {
         "type": "string",
-        "pattern": "^projects/[a-z0-9-]+/locations/[a-z0-9-]+/apps/[A-Za-z0-9-]+/evaluationRuns/[A-Za-z0-9-]+$"
+        "pattern": "^projects/[a-z0-9-]+/locations/[a-z0-9-]+/(apps/[A-Za-z0-9-]+/)?evaluationRuns/[A-Za-z0-9-]+$"
       },
       "default": []
     },
@@ -64,43 +64,66 @@
         "verifier-failed"
       ]
     },
-    "created_at_utc": { "type": "string", "format": "date-time" }
+    "created_at_utc": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+    }
   },
   "allOf": [
     {
       "if": { "properties": { "verdict": { "const": "live-gcp-verified" } } },
       "then": {
         "required": ["expected_evaluator_sa"],
-        "anyOf": [
+        "properties": {
+          "expected_evaluator_sa": { "type": "string", "minLength": 5 }
+        },
+        "oneOf": [
           {
             "required": ["ephemeral_app_name", "evaluation_run_ids"],
             "properties": {
+              "pack": { "const": "gecx" },
               "ephemeral_app_name": { "type": "string", "pattern": "/apps/" },
               "evaluation_run_ids": { "type": "array", "minItems": 1 }
             }
           },
           {
-            "required": ["ephemeral_app_name"],
+            "required": ["pack", "gates_executed"],
             "properties": {
-              "ephemeral_app_name": { "type": "string", "pattern": "/reasoningEngines/" }
-            }
-          },
-          {
-            "required": ["ge_agent_resource"],
-            "properties": {
-              "ge_agent_resource": { "type": "string" }
-            }
+              "pack": { "const": "adk" },
+              "gates_executed": { "type": "array", "contains": { "const": "l2:adk-eval" } }
+            },
+            "anyOf": [
+              {
+                "required": ["ephemeral_app_name"],
+                "properties": { "ephemeral_app_name": { "type": "string", "pattern": "/reasoningEngines/" } }
+              },
+              {
+                "required": ["ge_agent_resource"],
+                "properties": { "ge_agent_resource": { "type": "string" } }
+              }
+            ]
           }
         ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "verdict": { "const": "live-gcp-verified" },
+          "ephemeral_app_name": { "type": "string", "pattern": "/apps/" }
+        },
+        "required": ["ephemeral_app_name"]
+      },
+      "then": {
+        "required": ["evaluation_run_ids"],
+        "properties": { "evaluation_run_ids": { "type": "array", "minItems": 1 } }
       }
     },
     {
       "if": { "properties": { "verdict": { "const": "not-verifiable-in-sandbox" } } },
       "then": {
         "required": ["not_verifiable_surfaces"],
-        "properties": {
-          "not_verifiable_surfaces": { "type": "array", "minItems": 1 }
-        }
+        "properties": { "not_verifiable_surfaces": { "type": "array", "minItems": 1 } }
       }
     }
   ]

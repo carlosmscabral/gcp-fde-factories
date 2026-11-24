@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gcp-fde-factories.local/schemas/kaizen-proposal.schema.json",
+  "title": "Kaizen Governed Proposal & Candidate Skill Sheet (v0.3.0)",
+  "description": "Enforces proposal lifecycle tracking, machine-evaluable Rollback Criteria, anti-reward-hacking, and Option A Candidate Skill Sheet fields.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "proposal_id",
+    "created_date_brt",
+    "status",
+    "ladder_step",
+    "target_metric",
+    "baseline_value",
+    "rollback_criterion",
+    "anti_reward_hacking_attestation"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "const": "1" },
+    "proposal_id": { "type": "string", "pattern": "^KZ-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{2,}$" },
+    "created_date_brt": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "status": {
+      "type": "string",
+      "enum": [
+        "proposed",
+        "implemented",
+        "measuring",
+        "verified_pass",
+        "rollback_triggered",
+        "invalidated_regression",
+        "rejected"
+      ]
+    },
+    "implemented_pr_number": { "type": ["integer", "null"], "minimum": 1 },
+    "merge_commit_sha": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
+    "merged_at_utc": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+    },
+    "ladder_step": { "type": "integer", "enum": [1, 2, 3, 4] },
+    "upstream_candidate": { "type": "boolean", "default": false },
+    "target_metric": {
+      "type": "string",
+      "enum": ["avg_review_rounds", "avg_lead_time_hours", "live_gcp_verified_rate", "tool_error_rate"]
+    },
+    "baseline_value": { "type": "number" },
+    "baseline_live_gcp_rate": { "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0 },
+    "rollback_criterion": {
+      "type": "object",
+      "required": ["window_merged_prs", "operator", "target_value", "expected_delta_description", "revert_target"],
+      "additionalProperties": false,
+      "properties": {
+        "window_merged_prs": { "type": "integer", "minimum": 1, "maximum": 50 },
+        "operator": { "type": "string", "enum": ["<=", ">=", "<", ">"] },
+        "target_value": { "type": "number" },
+        "expected_delta_description": { "type": "string", "minLength": 10, "maxLength": 200 },
+        "revert_target": { "type": "string", "minLength": 3, "maxLength": 120 }
+      }
+    },
+    "anti_reward_hacking_attestation": {
+      "type": "object",
+      "required": ["preserves_code_reviewer", "preserves_evals_coverage", "preserves_iam_boundaries"],
+      "additionalProperties": false,
+      "properties": {
+        "preserves_code_reviewer": { "type": "boolean", "const": true },
+        "preserves_evals_coverage": { "type": "boolean", "const": true },
+        "preserves_iam_boundaries": { "type": "boolean", "const": true }
+      }
+    },
+    "candidate_skill_sheet": {
+      "type": ["object", "null"],
+      "required": [
+        "candidate_name",
+        "source_url",
+        "commit_sha40",
+        "license",
+        "security_audit",
+        "budget_impact_lines",
+        "target_metric"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "candidate_name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,48}$" },
+        "source_url": { "type": "string", "pattern": "^https://" },
+        "commit_sha40": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "license": { "type": "string", "enum": ["Apache-2.0", "MIT", "BSD-3-Clause"] },
+        "security_audit": { "type": "string", "minLength": 10, "maxLength": 300 },
+        "budget_impact_lines": { "type": "integer", "minimum": 1, "maximum": 300 },
+        "target_metric": { "type": "string", "minLength": 3, "maxLength": 120 }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "ladder_step": { "const": 4 } } },
+      "then": {
+        "required": ["candidate_skill_sheet"],
+        "properties": { "candidate_skill_sheet": { "type": "object" } }
+      }
+    }
+  ]
+}

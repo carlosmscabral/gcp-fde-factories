@@ -1,13 +1,15 @@
 {
   "schema_version": "1",
-  "api_service": "discoveryengine.googleapis.com",
-  "api_version": "v1alpha",
-  "collection_path_template": "projects/{project_id}/locations/{location}/collections/default_collection/engines/{app_id}/assistants/{assistant_id}/agents",
-  "supported_export_modes": ["agent_engine", "a2a"],
+  "discovery_engine_api_version": "v1alpha",
+  "discovery_doc_revision": "20261111",
+  "a2a_protocol_version": "0.3.0",
+  "allowed_adk_agent_def_keys": ["provisionedReasoningEngine"],
+  "forbidden_adk_agent_def_keys": ["toolSettings"],
   "required_payload_fields": {
     "common": ["displayName", "description"],
     "agent_engine": ["adkAgentDefinition.provisionedReasoningEngine.reasoningEngine"],
-    "a2a": ["a2aAgentDefinition.jsonAgentCard"]
+    "a2a": ["a2aAgentDefinition.jsonAgentCard"],
+    "a2a_oauth": ["authorizationConfig.agentAuthorization"]
   },
   "required_agent_card_fields": [
     "protocolVersion",
@@ -15,8 +17,10 @@
     "description",
     "url",
     "version",
+    "capabilities",
     "defaultInputModes",
     "defaultOutputModes",
     "skills"
-  ]
+  ],
+  "required_agent_skill_fields": ["id", "name", "description", "tags"]
 }

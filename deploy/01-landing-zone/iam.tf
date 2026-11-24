@@ -93,11 +93,14 @@ locals {
   ]
 
   # Assignable agent SAs eligible for human operator actAs grants under gcp_iam_check_mode=enforce.
-  assignable_sa_map = {
-    worker    = google_service_account.worker.name
-    deployer  = google_service_account.sandbox_deployer.name
-    evaluator = google_service_account.sandbox_evaluator.name
-  }
+  assignable_sa_map = merge(
+    {
+      worker    = google_service_account.worker.name
+      deployer  = google_service_account.sandbox_deployer.name
+      evaluator = google_service_account.sandbox_evaluator.name
+    },
+    var.enable_kaizen_gcp_obs ? { kaizen_viewer = google_service_account.kaizen_viewer[0].name } : {},
+  )
 
   operator_sa_pairs = merge([
     for member in var.factory_operator_members : {
@@ -110,6 +113,8 @@ locals {
 # --- Custom IAM Roles on Sandbox Project ---
 
 resource "google_project_iam_custom_role" "gecx_sandbox_deployer" {
+  count = var.enable_gecx_sandbox_roles ? 1 : 0
+
   project     = var.sandbox_project_id
   role_id     = "gecxSandboxDeployer"
   title       = "GECX Sandbox Ephemeral Deployer"
@@ -120,6 +125,8 @@ resource "google_project_iam_custom_role" "gecx_sandbox_deployer" {
 }
 
 resource "google_project_iam_custom_role" "gecx_sandbox_evaluator" {
+  count = var.enable_gecx_sandbox_roles ? 1 : 0
+
   project     = var.sandbox_project_id
   role_id     = "gecxSandboxEvaluator"
   title       = "GECX Sandbox Evaluator"
@@ -130,6 +137,8 @@ resource "google_project_iam_custom_role" "gecx_sandbox_evaluator" {
 }
 
 resource "google_project_iam_custom_role" "gecx_sandbox_janitor" {
+  count = var.enable_gecx_sandbox_roles ? 1 : 0
+
   project     = var.sandbox_project_id
   role_id     = "gecxSandboxJanitor"
   title       = "GECX Sandbox Ephemeral Janitor"
@@ -142,6 +151,19 @@ resource "google_project_iam_custom_role" "gecx_sandbox_janitor" {
     "ces.locations.list",
     "ces.operations.get",
     "ces.operations.list",
+  ]
+
+  depends_on = [google_project_service.enabled]
+}
+
+# Explicit predict-only Vertex AI role for Sandbox Evaluator (replaces roles/aiplatform.user which allows reasoningEngine writes).
+resource "google_project_iam_custom_role" "sandbox_evaluator_predict" {
+  project     = var.sandbox_project_id
+  role_id     = "sandboxEvaluatorPredict"
+  title       = "Sandbox Evaluator Predict-Only"
+  description = "Allows model prediction calls during Sandbox evaluation without creating, updating, or deleting ReasoningEngines."
+  permissions = [
+    "aiplatform.endpoints.predict",
   ]
 
   depends_on = [google_project_service.enabled]
@@ -288,8 +310,10 @@ resource "google_project_iam_member" "worker_monitoring" {
 # --- Sandbox Project Split IAM ---
 
 resource "google_project_iam_member" "deployer_custom_role" {
+  count = var.enable_gecx_sandbox_roles ? 1 : 0
+
   project = var.sandbox_project_id
-  role    = google_project_iam_custom_role.gecx_sandbox_deployer.id
+  role    = google_project_iam_custom_role.gecx_sandbox_deployer[0].id
   member  = "serviceAccount:${google_service_account.sandbox_deployer.email}"
 }
 
@@ -300,14 +324,16 @@ resource "google_project_iam_member" "deployer_service_usage" {
 }
 
 resource "google_project_iam_member" "evaluator_custom_role" {
+  count = var.enable_gecx_sandbox_roles ? 1 : 0
+
   project = var.sandbox_project_id
-  role    = google_project_iam_custom_role.gecx_sandbox_evaluator.id
+  role    = google_project_iam_custom_role.gecx_sandbox_evaluator[0].id
   member  = "serviceAccount:${google_service_account.sandbox_evaluator.email}"
 }
 
-resource "google_project_iam_member" "evaluator_vertex_sim" {
+resource "google_project_iam_member" "evaluator_vertex_predict" {
   project = var.sandbox_project_id
-  role    = "roles/aiplatform.user"
+  role    = google_project_iam_custom_role.sandbox_evaluator_predict.id
   member  = "serviceAccount:${google_service_account.sandbox_evaluator.email}"
 }
 
@@ -318,8 +344,10 @@ resource "google_project_iam_member" "evaluator_service_usage" {
 }
 
 resource "google_project_iam_member" "janitor_custom_role" {
+  count = var.enable_gecx_sandbox_roles ? 1 : 0
+
   project = var.sandbox_project_id
-  role    = google_project_iam_custom_role.gecx_sandbox_janitor.id
+  role    = google_project_iam_custom_role.gecx_sandbox_janitor[0].id
   member  = "serviceAccount:${google_service_account.sandbox_janitor.email}"
 }
 
@@ -350,10 +378,6 @@ resource "google_project_iam_custom_role" "adk_sandbox_deployer" {
     "discoveryengine.agents.get",
     "discoveryengine.agents.list",
     "discoveryengine.agents.update",
-    "storage.objects.create",
-    "storage.objects.delete",
-    "storage.objects.get",
-    "storage.objects.list",
   ]
 
   depends_on = [google_project_service.enabled]

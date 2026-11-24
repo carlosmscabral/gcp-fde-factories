@@ -1,147 +1,153 @@
-"""Telemetry source adapters for the 0-token Kaizen collector (v0.3.0).
+"""Scion Hub HTTP and CLI telemetry adapters for the 0-token Kaizen collector (v0.3.0).
 
-Reads Tier A sources without extra IAM grants (Scion Hub Session Metrics API,
-Scion CLI control plane, GitHub CLI PR/CI state, and shared scratchpad files).
-Reads optional Tier B GCP observability only when explicitly enabled.
-Every adapter degrades gracefully when an external endpoint or tool is absent.
+Uses verified Scion v0.4.0-preview.3 flags (--format json for list and artifact list,
+--all --json for decisions list), blocks insecure non-loopback HTTP and cross-host redirects,
+and re-exports repository/GitHub adapters from kaizen_repo_sources.
 """
 from __future__ import annotations
 
-import datetime as dt
 import json
+import os
 import pathlib
 import subprocess
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Callable
 
-from scripts.lib.io_utils import load_yaml
+from scripts.lib.kaizen_repo_sources import (
+    ALLOWED_VERDICTS,
+    RunCmdFn,
+    clean_token_str,
+    collect_github_ci as _collect_github_ci,
+    collect_scratchpad,
+)
 
 HttpGetFn = Callable[[str, dict[str, str]], tuple[int, dict[str, Any]]]
-RunCmdFn = Callable[[list[str], pathlib.Path | None], tuple[int, str, str]]
+
+
+def _is_safe_hub_url(hub_url: str) -> bool:
+    """Allows HTTPS URLs and loopback HTTP endpoints only."""
+    parsed = urllib.parse.urlparse(hub_url)
+    if parsed.scheme == "https" and parsed.netloc:
+        return True
+    if parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost", "::1"):
+        return True
+    return False
+
+
+class _NoCrossHostRedirect(urllib.request.HTTPRedirectHandler):
+    """Blocks HTTP redirects to a different host so auth headers never leak."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        old_host = urllib.parse.urlparse(req.full_url).netloc
+        new_host = urllib.parse.urlparse(newurl).netloc
+        if old_host != new_host:
+            raise urllib.error.HTTPError(newurl, code, "Blocked cross-host redirect", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def resolve_hub_auth_header() -> dict[str, str]:
+    """Selects canonical agent token file, bootstrap agent token, or user Bearer token."""
+    token_file = os.environ.get("SCION_TOKEN_FILE") or str(pathlib.Path.home() / ".scion" / "scion-token")
+    tpath = pathlib.Path(token_file)
+    if tpath.is_file():
+        tok = tpath.read_text(encoding="utf-8", errors="ignore").strip()
+        if tok:
+            return {"X-Scion-Agent-Token": tok}
+    agent_tok = os.environ.get("SCION_AUTH_TOKEN", "").strip()
+    if agent_tok:
+        return {"X-Scion-Agent-Token": agent_tok}
+    user_tok = os.environ.get("SCION_HUB_TOKEN", "").strip()
+    if user_tok:
+        return {"Authorization": f"Bearer {user_tok}"}
+    return {}
 
 
 def default_http_get(url: str, headers: dict[str, str]) -> tuple[int, dict[str, Any]]:
-    """Sends an authenticated HTTP GET request and decodes the JSON body."""
+    """Sends an authenticated HTTP GET without cross-host redirect forwarding."""
+    if not _is_safe_hub_url(url):
+        return 0, {"error": f"Blocked insecure non-loopback HTTP URL: {url}"}
     req = urllib.request.Request(url, headers=headers)
+    opener = urllib.request.build_opener(_NoCrossHostRedirect)
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            return resp.status, json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        with opener.open(req, timeout=20) as resp:
+            decoded = json.loads(resp.read().decode("utf-8"))
+            return resp.status, decoded if isinstance(decoded, dict) else {"data": decoded}
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
         code = exc.code if isinstance(exc, urllib.error.HTTPError) else 0
-        return code, {"error": str(exc)}
+        return code, {"error": clean_token_str(exc, 180)}
 
 
 def default_run_cmd(cmd: list[str], cwd: pathlib.Path | None = None) -> tuple[int, str, str]:
     """Runs an external CLI command and returns exit code, stdout, and stderr."""
     try:
-        res = subprocess.run(
-            cmd,
-            cwd=str(cwd) if cwd else None,
-            text=True,
-            capture_output=True,
-            timeout=30,
-        )
+        res = subprocess.run(cmd, cwd=str(cwd) if cwd else None, text=True, capture_output=True, timeout=30)
         return res.returncode, res.stdout, res.stderr
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        return 127, "", str(exc)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        return 127, "", clean_token_str(exc, 180)
+
+
+def collect_github_ci(
+    repo_dir: pathlib.Path | None,
+    run_cmd: RunCmdFn = default_run_cmd,
+) -> tuple[str, dict[str, Any], list[dict[str, Any]], list[str]]:
+    """Collects merged PR review rounds, lead times, CI failures, and hygiene issues."""
+    return _collect_github_ci(repo_dir, run_cmd)
 
 
 def collect_hub_metrics(
     hub_url: str,
     project_id: str,
-    agent_token: str,
+    auth_headers: dict[str, str],
     agent_ids: list[str],
     http_get: HttpGetFn = default_http_get,
-) -> tuple[str, dict[str, Any]]:
+) -> tuple[str, dict[str, Any], list[str]]:
     """Queries Scion Hub Session Metrics API for project and per-agent summaries."""
-    empty = {"project_summary": None, "agents": [], "tool_error_rates": []}
-    if not (hub_url and project_id and agent_token):
-        return "skipped", empty
+    empty = {
+        "project_summary": None,
+        "agents": [],
+        "tool_error_rates": [],
+        "window_note": "Scion Hub aggregates all-time totals and top-10 tools across the newest 100 sessions.",
+    }
+    if not (hub_url and project_id and auth_headers):
+        return "skipped", empty, []
+    if not _is_safe_hub_url(hub_url):
+        return "error", empty, [f"hub_metrics: blocked insecure URL {hub_url}"]
 
     base = hub_url.rstrip("/")
-    headers = {"X-Scion-Agent-Token": agent_token, "Accept": "application/json"}
+    headers = {**auth_headers, "Accept": "application/json"}
     status, proj = http_get(f"{base}/api/v1/projects/{project_id}/metrics/summary", headers)
-    if status != 200:
-        return "error", empty
+    if status != 200 or not isinstance(proj, dict):
+        return "error", empty, [f"hub_metrics: project summary returned HTTP {status}"]
 
     agents_out: list[dict[str, Any]] = []
     for aid in agent_ids:
         a_status, a_body = http_get(f"{base}/api/v1/agents/{aid}/metrics/summary", headers)
-        if a_status == 200:
+        if a_status == 200 and isinstance(a_body, dict):
             agents_out.append(a_body)
 
     tool_rates: list[dict[str, Any]] = []
-    for tool in proj.get("mostUsedTools", []) or []:
-        calls = int(tool.get("calls", 0) or 0)
-        errors = int(tool.get("error", 0) or 0)
-        if calls > 0:
-            tool_rates.append({
-                "tool": str(tool.get("name", "unknown")),
-                "calls": calls,
-                "errors": errors,
-                "error_rate": round(errors / calls, 4),
-            })
+    raw_tools = proj.get("mostUsedTools")
+    if isinstance(raw_tools, list):
+        for tool in raw_tools:
+            if not isinstance(tool, dict):
+                continue
+            calls = max(0, int(tool.get("calls", 0) or 0))
+            errors = max(0, int(tool.get("error", 0) or 0))
+            if calls > 0:
+                tool_rates.append({
+                    "tool": clean_token_str(tool.get("name", "unknown"), 80),
+                    "calls": calls,
+                    "errors": errors,
+                    "error_rate": min(1.0, round(errors / calls, 4)),
+                })
     tool_rates.sort(key=lambda item: (-item["error_rate"], -item["calls"]))
-    return "ok", {"project_summary": proj, "agents": agents_out, "tool_error_rates": tool_rates}
-
-
-def collect_control_plane(
-    hub_url: str,
-    run_cmd: RunCmdFn = default_run_cmd,
-) -> tuple[str, dict[str, Any], list[str]]:
-    """Inspects live Scion agents, stalls, limits_exceeded flags, artifacts, and decisions."""
-    empty = {
-        "agent_count": 0,
-        "stalled_agents": [],
-        "limits_exceeded_agents": [],
-        "artifacts_count": None,
-        "decisions_count": None,
-    }
-    if not hub_url:
-        return "skipped", empty, []
-
-    rc, out, _ = run_cmd(["scion", "list", "--json", "--hub", hub_url], None)
-    if rc != 0:
-        return "error", empty, []
-
-    try:
-        raw = json.loads(out)
-    except json.JSONDecodeError:
-        return "error", empty, []
-
-    agents = raw if isinstance(raw, list) else raw.get("agents", [])
-    stalled: list[str] = []
-    limits_hit: list[str] = []
-    agent_ids: list[str] = []
-
-    for ag in agents:
-        name = str(ag.get("name") or ag.get("slug") or ag.get("id") or "")
-        aid = str(ag.get("id") or name)
-        if aid:
-            agent_ids.append(aid)
-        phase = str(ag.get("phase") or ag.get("status") or "").lower()
-        activity = str(ag.get("activity") or "").lower()
-        detail = str(ag.get("detail") or "").lower()
-        if "stall" in phase or "stall" in activity or "offline" in activity:
-            stalled.append(name)
-        if "limits_exceeded" in activity or "limits_exceeded" in detail:
-            limits_hit.append(name)
-
-    art_count = _count_json_items(["scion", "artifact", "list", "--json", "--hub", hub_url], run_cmd)
-    dec_count = _count_json_items(["scion", "decisions", "list", "--json", "--hub", hub_url], run_cmd)
-
-    return "ok", {
-        "agent_count": len(agents),
-        "stalled_agents": sorted(stalled),
-        "limits_exceeded_agents": sorted(limits_hit),
-        "artifacts_count": art_count,
-        "decisions_count": dec_count,
-    }, agent_ids
+    return "ok", {**empty, "project_summary": proj, "agents": agents_out, "tool_error_rates": tool_rates}, []
 
 
 def _count_json_items(cmd: list[str], run_cmd: RunCmdFn) -> int | None:
-    """Returns list length from a Scion JSON CLI command, or None if unavailable."""
+    """Returns list length from a Scion JSON CLI command, or None when unavailable."""
     rc, out, _ = run_cmd(cmd, None)
     if rc != 0:
         return None
@@ -158,130 +164,75 @@ def _count_json_items(cmd: list[str], run_cmd: RunCmdFn) -> int | None:
     return None
 
 
-def collect_github_ci(
-    repo_dir: pathlib.Path | None,
+def collect_control_plane(
+    hub_url: str,
     run_cmd: RunCmdFn = default_run_cmd,
-) -> tuple[str, dict[str, Any]]:
-    """Collects merged PR review rounds, lead times, CI failures, and open hygiene issues."""
+) -> tuple[str, dict[str, Any], list[str], list[str]]:
+    """Inspects live Scion agents, stalls, limits_exceeded flags, artifacts, and decisions."""
     empty = {
-        "merged_prs": 0,
-        "avg_review_rounds": None,
-        "avg_lead_time_hours": None,
-        "failed_ci_runs": 0,
-        "hygiene_issues_open": 0,
+        "agent_count": 0,
+        "stalled_agents": [],
+        "limits_exceeded_agents": [],
+        "artifacts_count": None,
+        "decisions_count": None,
     }
-    if not repo_dir or not repo_dir.exists():
-        return "skipped", empty
+    if not hub_url:
+        return "skipped", empty, [], []
 
-    rc, pr_out, _ = run_cmd(
-        ["gh", "pr", "list", "--state", "merged", "--limit", "25", "--json", "number,createdAt,mergedAt,reviews"],
-        repo_dir,
-    )
+    rc, out, err = run_cmd(["scion", "--format", "json", "list", "--hub", hub_url], None)
+    if rc == 127:
+        return "skipped", empty, [], []
     if rc != 0:
-        return "skipped", empty
+        return "error", empty, [], [f"scion_control_plane: list failed (rc={rc}): {clean_token_str(err, 120)}"]
 
     try:
-        prs = json.loads(pr_out)
+        raw = json.loads(out)
     except json.JSONDecodeError:
-        return "error", empty
+        return "error", empty, [], ["scion_control_plane: invalid JSON from scion list"]
 
-    lead_hours: list[float] = []
-    review_rounds: list[int] = []
-    for pr in prs:
-        created = _parse_iso(pr.get("createdAt"))
-        merged = _parse_iso(pr.get("mergedAt"))
-        if created and merged and merged >= created:
-            lead_hours.append((merged - created).total_seconds() / 3600.0)
-        reviews = pr.get("reviews") or []
-        changes_requested = sum(1 for r in reviews if str(r.get("state", "")).upper() == "CHANGES_REQUESTED")
-        review_rounds.append(changes_requested + (1 if reviews else 0))
+    agents = raw if isinstance(raw, list) else (raw.get("agents", []) if isinstance(raw, dict) else [])
+    if not isinstance(agents, list):
+        return "error", empty, [], ["scion_control_plane: unexpected root type from scion list"]
 
-    failed_runs = 0
-    rc_run, run_out, _ = run_cmd(["gh", "run", "list", "--limit", "30", "--json", "conclusion"], repo_dir)
-    if rc_run == 0:
-        try:
-            runs = json.loads(run_out)
-            failed_runs = sum(1 for r in runs if str(r.get("conclusion", "")).lower() == "failure")
-        except json.JSONDecodeError:
-            pass
+    stalled: list[str] = []
+    limits_hit: list[str] = []
+    agent_ids: list[str] = []
+    for ag in agents:
+        if not isinstance(ag, dict):
+            continue
+        name = clean_token_str(ag.get("name") or ag.get("slug") or ag.get("id"), 80)
+        aid = clean_token_str(ag.get("id") or name, 80)
+        if aid:
+            agent_ids.append(aid)
+        fields = " ".join(
+            str(ag.get(k) or "").lower()
+            for k in ("phase", "status", "activity", "detail", "exitReason", "suspendReason")
+        )
+        if "stall" in fields and name:
+            stalled.append(name)
+        if "limits_exceeded" in fields and name:
+            limits_hit.append(name)
 
-    hygiene_open = 0
-    rc_iss, iss_out, _ = run_cmd(
-        ["gh", "issue", "list", "--state", "open", "--label", "priority:hygiene", "--json", "number"],
-        repo_dir,
-    )
-    if rc_iss == 0:
-        try:
-            hygiene_open = len(json.loads(iss_out))
-        except json.JSONDecodeError:
-            pass
-
+    art_count = _count_json_items(["scion", "--format", "json", "artifact", "list", "--all", "--hub", hub_url], run_cmd)
+    dec_count = _count_json_items(["scion", "decisions", "list", "--all", "--json", "--hub", hub_url], run_cmd)
     return "ok", {
-        "merged_prs": len(prs),
-        "avg_review_rounds": round(sum(review_rounds) / len(review_rounds), 2) if review_rounds else None,
-        "avg_lead_time_hours": round(sum(lead_hours) / len(lead_hours), 2) if lead_hours else None,
-        "failed_ci_runs": failed_runs,
-        "hygiene_issues_open": hygiene_open,
-    }
+        "agent_count": len(agents),
+        "stalled_agents": sorted(set(stalled)),
+        "limits_exceeded_agents": sorted(set(limits_hit)),
+        "artifacts_count": art_count,
+        "decisions_count": dec_count,
+    }, agent_ids, []
 
 
-def collect_scratchpad(
-    scratchpad_dir: pathlib.Path | None,
-    workarounds_path: pathlib.Path | None,
-    today: dt.date | None = None,
-    expiring_window_days: int = 15,
-) -> tuple[str, dict[str, Any]]:
-    """Aggregates Verdict history, Sandbox ledger count, Kaizen events, and expiring workarounds."""
-    ref_day = today or dt.date.today()
-    verdict_counts: dict[str, int] = {}
-    ledger_count = 0
-    events_count = 0
-
-    if scratchpad_dir and scratchpad_dir.exists():
-        for vf in sorted(scratchpad_dir.rglob("*verdict*.json")):
-            try:
-                data = json.loads(vf.read_text(encoding="utf-8"))
-                lvl = str(data.get("verdict", "unknown"))
-                verdict_counts[lvl] = verdict_counts.get(lvl, 0) + 1
-            except (OSError, json.JSONDecodeError):
-                continue
-        ledger = scratchpad_dir / "sandbox-ledger.jsonl"
-        if ledger.exists():
-            ledger_count = sum(1 for ln in ledger.read_text(encoding="utf-8").splitlines() if ln.strip())
-        events = scratchpad_dir / "kaizen-events.jsonl"
-        if events.exists():
-            events_count = sum(1 for ln in events.read_text(encoding="utf-8").splitlines() if ln.strip())
-
-    expiring: list[dict[str, Any]] = []
-    if workarounds_path and workarounds_path.exists():
-        cfg = load_yaml(workarounds_path)
-        for item in cfg.get("workarounds", []) or []:
-            expires = dt.date.fromisoformat(str(item["expires_date"]))
-            remaining = (expires - ref_day).days
-            if remaining <= expiring_window_days:
-                expiring.append({
-                    "id": str(item["id"]),
-                    "component": str(item["component"]),
-                    "days_remaining": remaining,
-                })
-
-    has_any = bool(
-        (scratchpad_dir and scratchpad_dir.exists())
-        or (workarounds_path and workarounds_path.exists())
-    )
-    return ("ok" if has_any else "skipped"), {
-        "verdict_counts": verdict_counts,
-        "sandbox_ledger_entries": ledger_count,
-        "kaizen_events_count": events_count,
-        "workarounds_expiring_soon": expiring,
-    }
-
-
-def _parse_iso(raw: Any) -> dt.datetime | None:
-    """Parses an ISO-8601 UTC timestamp string into an aware datetime."""
-    if not raw or not isinstance(raw, str):
-        return None
-    try:
-        return dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+__all__ = [
+    "ALLOWED_VERDICTS",
+    "HttpGetFn",
+    "RunCmdFn",
+    "collect_control_plane",
+    "collect_github_ci",
+    "collect_hub_metrics",
+    "collect_scratchpad",
+    "default_http_get",
+    "default_run_cmd",
+    "resolve_hub_auth_header",
+]

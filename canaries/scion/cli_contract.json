@@ -1,0 +1,26 @@
+{
+  "schema_version": "1",
+  "scion_version": "v0.4.0-preview.3",
+  "commands": {
+    "list_agents_json": ["scion", "--format", "json", "list", "--hub"],
+    "list_artifacts_json": ["scion", "--format", "json", "artifact", "list", "--all", "--hub"],
+    "list_decisions_json": ["scion", "decisions", "list", "--all", "--json", "--hub"],
+    "list_recurring_schedules_json": ["scion", "--format", "json", "schedule", "list", "--type", "recurring", "--hub"],
+    "create_recurring_schedule": [
+      "scion",
+      "schedule",
+      "create-recurring",
+      "--name",
+      "--cron",
+      "--time-zone",
+      "--type",
+      "message",
+      "--agent",
+      "--wake",
+      "--message",
+      "--hub"
+    ],
+    "forbidden_flags_on_list_or_artifact": ["--json"],
+    "forbidden_flags_on_schedule_create_recurring": ["--template"]
+  }
+}

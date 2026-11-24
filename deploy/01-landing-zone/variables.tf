@@ -74,6 +74,12 @@ variable "factory_operator_members" {
   default     = []
 }
 
+variable "enable_gecx_sandbox_roles" {
+  description = "If true, enables CES and TTS APIs and provisions explicit non-wildcard GECX Sandbox custom roles."
+  type        = bool
+  default     = true
+}
+
 variable "enable_adk_sandbox_roles" {
   description = "If true, enables Discovery Engine API and adds explicit non-wildcard ADK Agent Engine and Gemini Enterprise Sandbox custom roles."
   type        = bool

@@ -17,6 +17,25 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.lib.kaizen_collector import build_kaizen_snapshot, write_validated_snapshot
+from scripts.lib.kaizen_sources import resolve_hub_auth_header
+
+
+def _default_workarounds(repo: pathlib.Path) -> pathlib.Path | None:
+    """Resolves WORKAROUNDS.yaml from target repo or packaged /opt/gcp-fde."""
+    for cand in (repo / "WORKAROUNDS.yaml", pathlib.Path("/opt/gcp-fde/WORKAROUNDS.yaml")):
+        if cand.is_file():
+            return cand
+    return None
+
+
+def _default_toolchain_manifest() -> pathlib.Path | None:
+    """Resolves a packaged pack toolchain manifest inside /opt/gcp-fde when omitted."""
+    opt_dir = pathlib.Path("/opt/gcp-fde")
+    if opt_dir.is_dir():
+        matches = sorted(opt_dir.glob("*-toolchain-manifest.json"))
+        if matches:
+            return matches[0]
+    return None
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -26,39 +45,38 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--project-id", default=os.environ.get("SCION_PROJECT_ID", ""))
     parser.add_argument("--repo", type=pathlib.Path, default=pathlib.Path("."))
     parser.add_argument("--scratchpad", type=pathlib.Path, default=pathlib.Path("/scion-volumes/scratchpad"))
+    parser.add_argument("--verdicts-dir", type=pathlib.Path, default=None)
     parser.add_argument("--workarounds", type=pathlib.Path, default=None)
+    parser.add_argument("--proposals", type=pathlib.Path, default=None)
+    parser.add_argument("--history-dir", type=pathlib.Path, default=None)
     parser.add_argument("--toolchain-manifest", type=pathlib.Path, default=None)
+    parser.add_argument("--time-zone", default="America/Sao_Paulo")
     parser.add_argument("--skip-drift", action="store_true")
     parser.add_argument("--enable-gcp-obs", action="store_true")
     parser.add_argument("--out", type=pathlib.Path, required=True)
-    parser.add_argument(
-        "--schema",
-        type=pathlib.Path,
-        default=REPO_ROOT / "schemas" / "kaizen-snapshot.schema.json",
-    )
+    parser.add_argument("--schema", type=pathlib.Path, default=REPO_ROOT / "schemas" / "kaizen-snapshot.schema.json")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     """Collects telemetry, validates against schema, and writes the snapshot JSON."""
     args = parse_args(argv)
-    agent_token = os.environ.get("SCION_AUTH_TOKEN") or os.environ.get("SCION_HUB_TOKEN") or ""
-    workarounds = args.workarounds
-    if workarounds is None and (args.repo / "WORKAROUNDS.yaml").exists():
-        workarounds = args.repo / "WORKAROUNDS.yaml"
-
     snapshot = build_kaizen_snapshot(
         hub_url=args.hub_url,
         project_id=args.project_id,
-        agent_token=agent_token,
+        auth_headers=resolve_hub_auth_header(),
         repo_dir=args.repo,
         scratchpad_dir=args.scratchpad,
-        workarounds_path=workarounds,
-        toolchain_manifest=args.toolchain_manifest,
+        verdicts_dir=args.verdicts_dir,
+        workarounds_path=args.workarounds or _default_workarounds(args.repo),
+        proposals_path=args.proposals,
+        history_dir=args.history_dir,
+        toolchain_manifest=args.toolchain_manifest or _default_toolchain_manifest(),
         include_drift=not args.skip_drift,
         enable_gcp_obs=args.enable_gcp_obs,
+        time_zone=args.time_zone,
     )
-    errors = write_validated_snapshot(snapshot, args.out, args.schema)
+    errors = write_validated_snapshot(snapshot, args.out, args.schema, history_dir=args.history_dir)
     if errors:
         for err in errors:
             print(f"SNAPSHOT SCHEMA ERROR: {err}", file=sys.stderr)

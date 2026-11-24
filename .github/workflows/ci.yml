@@ -1,6 +1,6 @@
 # Continuous integration workflow for gcp-fde-factories.
-# Runs static pack checks, Release Kit generation, pytest unit suite, bash syntax checks,
-# and Terraform validation across all three deployment stages on every push and PR.
+# Runs static pack checks, Release Kit generation, pytest unit suite, contract canaries,
+# bash and Python syntax checks, and Terraform validation across BOTH packs/gecx and packs/adk.
 name: Factory Catalog CI
 
 on:
@@ -24,23 +24,31 @@ jobs:
       - name: Install catalog tooling
         run: python3 -m pip install -e ".[dev]"
 
-      - name: Run static pack, lock, budget, TTL, and clean-room checks
-        run: ./build.sh --check packs/gecx
+      - name: Run static pack, lock, budget, TTL, and clean-room checks across all active packs
+        run: |
+          ./build.sh --check packs/gecx
+          ./build.sh --check packs/adk
+          ./build.sh --check packs/_template-pack
 
-      - name: Build offline Release Kit
-        run: ./build.sh --release-kit packs/gecx --out /tmp/gecx-kit-ci
+      - name: Build offline Release Kits for all active packs
+        run: |
+          ./build.sh --release-kit packs/gecx --out /tmp/gecx-kit-ci
+          ./build.sh --release-kit packs/adk --out /tmp/adk-kit-ci
 
       - name: Run unit tests
         run: ./build.sh --test
 
-      - name: Verify cxas CLI contract snapshot
-        run: python3 canaries/gecx/check_cli_contract.py
-
-      - name: Validate shell script syntax
+      - name: Verify contract canaries (GECX CLI + ADK GE Export)
         run: |
-          for f in build.sh deploy/03-hub-bootstrap/*.sh packs/gecx/scripts/*.sh; do
+          python3 canaries/gecx/check_cli_contract.py
+          python3 canaries/adk/check_ge_contract.py
+
+      - name: Validate shell and Python syntax across all packs and bootstrap scripts
+        run: |
+          for f in build.sh scripts/hands-on-walkthrough.sh deploy/03-hub-bootstrap/*.sh packs/gecx/scripts/*.sh packs/adk/scripts/*.sh; do
             bash -n "$f"
           done
+          python3 -m py_compile $(find core-gcp-fde scripts packs/gecx/scripts packs/adk/scripts deploy/03-hub-bootstrap canaries -name '*.py')
 
       - uses: hashicorp/setup-terraform@v3
         with:

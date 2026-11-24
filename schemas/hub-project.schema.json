@@ -55,7 +55,31 @@
         "enabled": { "type": "boolean", "default": true },
         "schedule_cron": { "type": "string" },
         "time_zone": { "type": "string", "default": "America/Sao_Paulo" },
+        "coordinator_agent": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$", "default": "coordinator" },
         "enable_gcp_obs": { "type": "boolean", "default": false }
+      }
+    },
+    "harnesses": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default": { "type": "string", "enum": ["antigravity-vertex", "claude-vertex"], "default": "antigravity-vertex" },
+        "claude_model_garden_enabled": { "type": "boolean", "default": false },
+        "vertex_gemini_location": { "type": "string", "pattern": "^[a-z0-9-]+$", "default": "global" },
+        "vertex_claude_region": { "type": "string", "pattern": "^[a-z0-9-]+$", "default": "global" }
+      }
+    },
+    "model_routing": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["harness", "model"],
+        "additionalProperties": false,
+        "properties": {
+          "harness": { "type": "string", "enum": ["antigravity-vertex", "claude-vertex"] },
+          "model": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+          "thinking_level": { "type": "integer", "minimum": 0, "maximum": 100 }
+        }
       }
     },
     "brownfield": {

@@ -1,8 +1,10 @@
-# ADK Sandbox Deployer Pack Delta (`packs/adk`)
+# ADK Deployer Pack Delta (`packs/adk`)
 
-1. Operate exclusively under the Sandbox Deployer SA (`--service-account adk-deployer`) targeting the disposable Sandbox GCP project.
-2. Acquire the per-PR lock and deploy ephemeral Agent Engine resources prefixed with `[CI] PR-<n>-<sha7>-<agent>` after passing Level 1 checks.
-3. Generate the deterministic Gemini Enterprise export bundle (`dist/ge-export/`) with `ge_export.py export` and register ephemeral `[CI]` agents ONLY in the Sandbox Gemini Enterprise App.
-4. Record every created ephemeral ReasoningEngine and Sandbox GE agent resource in `/scion-volumes/scratchpad/sandbox-ledger.jsonl`.
-5. Never deploy to DEV, HML, or PRD projects or production Gemini Enterprise Apps.
-6. Clean up failed or intermediate ephemeral resources in `finally`; keep passing PR resources alive only until CI verification and Janitor teardown complete.
+1. Operate strictly with `--service-account adk-deployer` inside the disposable Sandbox project only.
+2. Follow `google-agents-cli-deploy` and `google-agents-cli-publish` using Dockerfile-first container deployment (`agents-cli deploy --deployment-target agent_runtime` or `cloud_run`).
+3. Verify the root `Dockerfile` and pinned `requirements.txt` before every Sandbox deployment.
+4. Prefix every ephemeral Sandbox deployment and Gemini Enterprise registration with `[CI] PR-<number>-<sha7>`.
+5. Validate `ge_manifest.json` and export `dist/ge-export/` via `python3 /opt/adk-factory/ge_export.py export`.
+6. Prefer `ge_export.py patch --agent-name <sandbox-agent>` over per-PR `POST` creation to avoid daily Gemini Enterprise 429 quotas.
+7. Never register or mutate DEV, HML, or PRD Gemini Enterprise apps from an agent container.
+8. Record every created ephemeral resource in `/scion-volumes/scratchpad/sandbox-ledger.jsonl`.

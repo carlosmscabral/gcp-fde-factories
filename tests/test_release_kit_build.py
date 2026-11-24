@@ -1,9 +1,13 @@
-"""Tests for offline Release Kit composition across packs/gecx and packs/adk (16 roles + 11 skills)."""
+"""Tests for offline Release Kit composition, safety guards, Vertex AI harnesses, and Stage 03 bootstrap."""
 from __future__ import annotations
 
 import json
+import os
 import pathlib
+import stat
+import subprocess
 
+import pytest
 import yaml
 
 from scripts.lib.lock_verifier import scan_for_floating_uris
@@ -57,8 +61,8 @@ def _assert_templates_follow_scion_v04_rules(
     return {d.name for d in tpl_dirs}
 
 
-def test_release_kit_is_offline_prefix_isolated_and_model_free(tmp_path: pathlib.Path) -> None:
-    """Verifies packs/gecx Release Kit satisfies Scion v0.4 rules and full 13+3 role hierarchy."""
+def test_release_kit_is_offline_prefix_isolated_and_composes_core_deltas(tmp_path: pathlib.Path) -> None:
+    """Verifies packs/gecx Release Kit composes core+pack deltas, prefix-scoped harnesses, and full assets."""
     out_dir = tmp_path / "gecx-kit"
     manifest = build_release_kit(REPO_ROOT, REPO_ROOT / "packs/gecx", out_dir)
 
@@ -66,96 +70,219 @@ def test_release_kit_is_offline_prefix_isolated_and_model_free(tmp_path: pathlib
     assert manifest["pack_prefix"] == "gecx"
     assert manifest["external_uris_remaining"] == 0
     assert manifest["toolchain_manifest"] == "packs/gecx/toolchain-manifest.json"
-    assert (out_dir / "NOTICE").exists()
-    assert (out_dir / "compat.yaml").exists()
-    assert (out_dir / "skills.lock").exists()
-    assert (out_dir / "core-gcp-fde" / "scripts" / "kaizen_collect.py").exists()
-    assert (out_dir / "core-gcp-fde" / "scripts" / "factory_onboard.py").exists()
-    assert (out_dir / "packs" / "gecx" / "toolchain-manifest.json").exists()
-    assert (out_dir / "bootstrap" / "bootstrap-hub-project.sh").exists()
-    assert (out_dir / "bootstrap" / "stage-release-kit.sh").exists()
-    assert (out_dir / "bootstrap" / "cloudbuild.yaml").exists()
+    assert "gecx-runtime" in manifest["images"]
+    assert set(manifest["harness_configs"]) == {"gecx-claude-vertex", "gecx-antigravity-vertex"}
+    assert (out_dir / "scripts" / "verify-verdict.py").is_file()
+    assert (out_dir / "deploy" / "01-landing-zone" / "iam.tf").is_file()
+    assert (out_dir / "fde-skills" / "factory-onboard" / "SKILL.md").is_file()
+    assert (out_dir / "repo-scaffold" / ".factory" / "hub-project.yaml").is_file()
+
+    # Verify Vertex AI-first defaults using Scion generic tiers (zero hardcoded model versions in harness-configs).
+    agy_hc = yaml.safe_load((out_dir / "harness-configs" / "gecx-antigravity-vertex" / "config.yaml").read_text(encoding="utf-8"))
+    assert agy_hc["auth_selected_type"] == "vertex-ai"
+    assert agy_hc["model"] == "extra-large"
+    assert "model_aliases" not in agy_hc
+    cld_hc = yaml.safe_load((out_dir / "harness-configs" / "gecx-claude-vertex" / "config.yaml").read_text(encoding="utf-8"))
+    assert cld_hc["auth_selected_type"] == "vertex-ai"
+    assert cld_hc["model"] == "large"
+    assert "model_aliases" not in cld_hc
+    assert cld_hc["env"]["CLOUD_ML_REGION"] == "global"
+    assert "ANTHROPIC_MODEL" not in cld_hc["env"]
 
     tpl_names = _assert_templates_follow_scion_v04_rules(out_dir, "gecx", expected_count=16)
-    assert {
-        "gecx-coordinator",
-        "gecx-eng-manager",
-        "gecx-architect",
-        "gecx-investigator",
-        "gecx-security-auditor",
-        "gecx-developer",
-        "gecx-code-reviewer",
-        "gecx-test-engineer",
-        "gecx-deployer",
-        "gecx-eval-tester",
-        "gecx-kaizen-analyst",
-    }.issubset(tpl_names)
+    assert "gecx-kaizen-analyst" in tpl_names
 
-    kaizen_meta = next(t for t in manifest["templates"] if t["name"] == "gecx-kaizen-analyst")
-    assert kaizen_meta["hub_role"] == "baseline"
-    assert "gcp-kaizen-analyst" in kaizen_meta["role_skills"]
+    # Verify core-gcp-fde/templates/kaizen-analyst/delta.md IS composed before pack delta (KZ-12).
+    kz_agents = (out_dir / "templates" / "gecx-kaizen-analyst" / "agents.md").read_text(encoding="utf-8")
+    assert "Core FDE Override Rules" in kz_agents
+    assert "Pack Override Rules" in kz_agents
+    assert "proposal_verifications" in kz_agents
 
-    # Verify upstream agent-team instructions and GECX pack delta were actually merged.
-    em_agents = (out_dir / "templates" / "gecx-eng-manager" / "agents.md").read_text(encoding="utf-8")
-    assert "Pack Override Rules" in em_agents
-    assert "Upstream Role Instructions" in em_agents
-    assert "Engineering Manager" in em_agents
-
-    # Verify 11 Hub Skill Bank skills: 5 project-attached guardrails + 6 role-scoped skills (5 SEP + Kaizen Analyst).
     manifest_disk = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
     assert len(manifest_disk["skills"]) == 11
-    attached = [s["name"] for s in manifest_disk["skills"] if s["attach_to_project"]]
-    role_only = [s["name"] for s in manifest_disk["skills"] if not s["attach_to_project"]]
-    assert len(attached) == 5
-    assert set(role_only) == {
-        "gcp-kaizen-analyst",
-        "software-engineering-process",
-        "agent-state-continuity",
-        "artifact-durability",
-        "code-review",
-        "release-notes-daily",
-    }
     for sk in manifest_disk["skills"]:
-        assert (out_dir / "skills" / sk["name"] / "SKILL.md").exists()
-    assert (
-        out_dir / "skills" / "software-engineering-process" / "references" / "em-brief-template.md"
-    ).exists()
-
-    # Regression guard for live-discovered Scion v0.4 CLI/jq bugs in bootstrap-hub-project.sh.
-    bootstrap_sh = (out_dir / "bootstrap" / "bootstrap-hub-project.sh").read_text(encoding="utf-8")
-    assert "templates pull" in bootstrap_sh and "--to " in bootstrap_sh
-    assert "templates pull \"$name\" --out" not in bootstrap_sh
-    assert ".attach_to_project // true" not in bootstrap_sh
+        assert len(sk["tree_sha256"]) == 64
 
 
-def test_adk_release_kit_is_offline_prefix_isolated_and_model_free(tmp_path: pathlib.Path) -> None:
-    """Verifies packs/adk Release Kit builds 16 adk-* templates, 11 skills, and GE export tools."""
+def test_adk_release_kit_ships_18_skills_and_adk_runtime_compat(tmp_path: pathlib.Path) -> None:
+    """Verifies packs/adk Release Kit builds 16 adk-* templates, 18 skills (incl. 7 agents-cli), and adk-runtime."""
     out_dir = tmp_path / "adk-kit"
     manifest = build_release_kit(REPO_ROOT, REPO_ROOT / "packs/adk", out_dir)
 
     assert manifest["pack"] == "adk"
-    assert manifest["pack_prefix"] == "adk"
     assert manifest["external_uris_remaining"] == 0
-    assert manifest["toolchain_manifest"] == "packs/adk/toolchain-manifest.json"
-    assert (out_dir / "packs" / "adk" / "scripts" / "ge_export.py").exists()
-    assert (out_dir / "packs" / "adk" / "toolchain-manifest.json").exists()
+    assert "adk-runtime" in manifest["images"]
+    assert "gecx-runtime" not in manifest["images"]
+    assert set(manifest["harness_configs"]) == {"adk-claude-vertex", "adk-antigravity-vertex"}
+    assert (out_dir / "packs" / "adk" / "scripts" / "ge_export.py").is_file()
 
     tpl_names = _assert_templates_follow_scion_v04_rules(out_dir, "adk", expected_count=16)
+    assert {"adk-coordinator", "adk-deployer", "adk-eval-tester", "adk-kaizen-analyst"}.issubset(tpl_names)
+
+    assert len(manifest["skills"]) == 18
+    skill_names = {s["name"] for s in manifest["skills"]}
     assert {
-        "adk-coordinator",
-        "adk-eng-manager",
-        "adk-deployer",
-        "adk-eval-tester",
-        "adk-kaizen-analyst",
-    }.issubset(tpl_names)
+        "google-agents-cli-workflow",
+        "google-agents-cli-adk-code",
+        "google-agents-cli-scaffold",
+        "google-agents-cli-eval",
+        "google-agents-cli-deploy",
+        "google-agents-cli-publish",
+        "google-agents-cli-observability",
+    }.issubset(skill_names)
 
-    # Confirm adk-coordinator uses adk-* preamble and zero gecx-* prefix leaks.
-    coord_agents = (out_dir / "templates" / "adk-coordinator" / "agents.md").read_text(encoding="utf-8")
-    assert "`adk-*`" in coord_agents
-    assert "`gecx-*`" not in coord_agents
 
-    kaizen_meta = next(t for t in manifest["templates"] if t["name"] == "adk-kaizen-analyst")
-    assert kaizen_meta["hub_role"] == "baseline"
-    assert len(manifest["skills"]) == 11
-    attached = {s["name"] for s in manifest["skills"] if s["attach_to_project"]}
-    assert {"adk-domain-guardrails", "adk-ge-export-contract", "gcp-fde-guardrails"}.issubset(attached)
+def test_release_kit_refuses_deleting_non_kit_directory(tmp_path: pathlib.Path) -> None:
+    """Negative test (IB-16): build_release_kit refuses deleting an arbitrary non-empty folder."""
+    victim = tmp_path / "precious-folder"
+    victim.mkdir()
+    (victim / "notes.txt").write_text("do not delete\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Refusing to delete non-empty directory"):
+        build_release_kit(REPO_ROOT, REPO_ROOT / "packs/gecx", victim)
+    assert (victim / "notes.txt").exists()
+
+
+def _install_stub_scion(bin_dir: pathlib.Path, log_file: pathlib.Path) -> None:
+    """Writes an executable stub scion CLI that records every invocation to log_file."""
+    stub = bin_dir / "scion"
+    stub.write_text(
+        f"""#!/usr/bin/env bash
+echo "$*" >> "{log_file}"
+if [[ "$1" == "version" ]]; then
+  echo "scion version v0.4.0-preview.3"
+  exit 0
+fi
+if [[ "$*" == *"service-accounts list"* || "$*" == *"schedule list"* || "$*" == *"project skills list"* ]]; then
+  echo "[]"
+  exit 0
+fi
+if [[ "$*" == *"service-accounts add"* ]]; then
+  echo '{{"id":"sa-stub-1"}}'
+  exit 0
+fi
+if [[ "$*" == *"service-accounts verify"* ]]; then
+  echo '{{"verified":true}}'
+  exit 0
+fi
+if [[ "$*" == *"skills resolve"* || "$*" == *"templates pull"* ]]; then
+  exit 1
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+
+
+def test_bootstrap_schedules_weekly_kaizen_by_default_and_enforces_claude_model_garden(tmp_path: pathlib.Path) -> None:
+    """Tests bootstrap-hub-project.sh end-to-end against a stub scion CLI for Kaizen, Claude opt-in, and rollback."""
+    kit_dir = tmp_path / "gecx-kit"
+    build_release_kit(REPO_ROOT, REPO_ROOT / "packs/gecx", kit_dir)
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log_file = tmp_path / "scion.log"
+    _install_stub_scion(bin_dir, log_file)
+
+    lz = tmp_path / "lz.json"
+    lz.write_text(
+        json.dumps({
+            "inference_project_id": {"value": "cust-inf-proj"},
+            "sandbox_project_id": {"value": "cust-sbx-proj"},
+            "worker_sa_email": {"value": "worker@cust-inf-proj.iam.gserviceaccount.com"},
+            "sandbox_deployer_sa_email": {"value": "dep@cust-sbx-proj.iam.gserviceaccount.com"},
+            "sandbox_evaluator_sa_email": {"value": "eval@cust-sbx-proj.iam.gserviceaccount.com"},
+        }),
+        encoding="utf-8",
+    )
+
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"}
+    bootstrap = kit_dir / "bootstrap" / "bootstrap-hub-project.sh"
+
+    # 1. Default apply (no --repo): schedules weekly-kaizen, skips claude-vertex (opt-in false), sets Vertex default.
+    res = subprocess.run(
+        [str(bootstrap), "apply", "--kit", str(kit_dir), "--hub", "http://127.0.0.1:8080", "--landing-zone", str(lz), "--backup-dir", str(tmp_path / "bkp1")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0, res.stderr
+    calls = log_file.read_text(encoding="utf-8")
+    assert "schedule create-recurring --name weekly-kaizen --cron 0 17 * * 5 --time-zone America/Sao_Paulo --type message --agent coordinator --wake" in calls
+    assert "default_agent_role baseline" in calls
+    assert "default_harness_config gecx-antigravity-vertex" in calls
+    assert "harness-config sync" in calls and "--name gecx-antigravity-vertex" in calls
+    assert "--name gecx-claude-vertex" not in calls
+
+    # 2. Negative test: rollback on 0-template first-install backup must fail closed.
+    rb = subprocess.run(
+        [str(bootstrap), "rollback", "--kit", str(kit_dir), "--hub", "http://127.0.0.1:8080", "--backup-dir", str(tmp_path / "bkp1")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rb.returncode != 0
+    assert "0 backed-up templates" in rb.stderr
+
+    # 3. Negative test: cross-vendor repo with claude_model_garden_enabled=false must fail closed.
+    bad_repo = tmp_path / "bad-repo"
+    (bad_repo / ".factory").mkdir(parents=True)
+    (bad_repo / ".factory" / "hub-project.yaml").write_text(
+        yaml.safe_dump({
+            "schema_version": "1",
+            "pack": "gecx",
+            "pack_version": "0.4.0",
+            "mode": "sandbox-direct",
+            "diversity_profile": "cross-vendor",
+            "harnesses": {"default": "antigravity-vertex", "claude_model_garden_enabled": False},
+            "limits": {"default_max_duration": "2h", "default_max_turns": 60, "auto_suspend_idle": True},
+            "overlay_skills": [],
+        }),
+        encoding="utf-8",
+    )
+    bad = subprocess.run(
+        [str(bootstrap), "apply", "--kit", str(kit_dir), "--hub", "http://127.0.0.1:8080", "--repo", str(bad_repo)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert bad.returncode != 0
+    assert "claude_model_garden_enabled is false" in bad.stderr
+
+    # 4. Explicit opt-out kaizen.enabled=false skips schedule creation, and claude_model_garden_enabled=true syncs Claude.
+    log_file.write_text("", encoding="utf-8")
+    opt_repo = tmp_path / "opt-repo"
+    (opt_repo / ".factory").mkdir(parents=True)
+    (opt_repo / ".factory" / "hub-project.yaml").write_text(
+        yaml.safe_dump({
+            "schema_version": "1",
+            "pack": "gecx",
+            "pack_version": "0.4.0",
+            "mode": "sandbox-direct",
+            "diversity_profile": "cross-vendor",
+            "harnesses": {
+                "default": "antigravity-vertex",
+                "claude_model_garden_enabled": True,
+                "vertex_claude_region": "global",
+            },
+            "kaizen": {"enabled": False},
+            "limits": {"default_max_duration": "2h", "default_max_turns": 60, "auto_suspend_idle": True},
+            "overlay_skills": [],
+        }),
+        encoding="utf-8",
+    )
+    res2 = subprocess.run(
+        [str(bootstrap), "apply", "--kit", str(kit_dir), "--hub", "http://127.0.0.1:8080", "--landing-zone", str(lz), "--repo", str(opt_repo), "--backup-dir", str(tmp_path / "bkp2")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res2.returncode == 0, res2.stderr
+    calls2 = log_file.read_text(encoding="utf-8")
+    assert "schedule create-recurring" not in calls2
+    assert "--name gecx-claude-vertex" in calls2

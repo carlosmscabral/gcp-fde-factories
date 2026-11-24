@@ -1,0 +1,33 @@
+# Starter compatibility matrix for packs/_template-pack.
+schema_version: "1"
+pack: example-pack
+pack_version: "0.1.0"
+
+scion:
+  tested:
+    - "v0.4.0-preview.3"
+  binary_url: "https://github.com/GoogleCloudPlatform/scion/releases/download/v0.4.0-preview.3/scion-linux-amd64.tar.gz"
+  binary_sha256: "d210505c58393f68ae719bc6185e71a3f0455caa1dce6e7798d6bc355663e17f"
+  downgrade_floor: "nightly-20261121"
+  experiments_required: []
+
+agent_team:
+  repository: "scion-frontiers/agent-team"
+  commit: "08faf48269da7d8dd0a20c4e5ca5093afb37495d"
+  license: "Apache-2.0"
+  skills_lock: "skills.lock"
+
+toolchain: {}
+
+images:
+  core-gcp-fde-base: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/factory-images/core-gcp-fde-base@sha256:a1cbe2bd7401cff34b6da924428f57646c66004c1024d26e6f38e8c0ecdf9333"
+  example-pack-runtime: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/factory-images/example-pack-runtime@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+models:
+  claude_reviewer: "claude-sonnet-4-6"
+  gemini_developer: "gemini-3.1-pro-preview"
+
+canary:
+  run_id: "template-pack-skeleton-2026-11-24"
+  date_brt: "2026-11-24"
+  notes: "Starter skeleton only. Replace before deploying a real domain pack."

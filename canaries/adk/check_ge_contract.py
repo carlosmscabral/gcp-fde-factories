@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Canary contract verifier for packs/adk Gemini Enterprise (GE App) export payloads.
 
-Validates that both adkAgentDefinition and a2aAgentDefinition outputs from ge_payload.py
-satisfy the pinned Discovery Engine v1alpha API contract in canaries/adk/ge_export_contract.json.
+Enforces BOTH required fields AND strict allowed/forbidden Discovery Engine v1alpha keys
+(e.g. rejects undefined adkAgentDefinition.toolSettings) and A2A v0.3.0 AgentSkill.tags.
 """
 from __future__ import annotations
 
@@ -41,7 +41,6 @@ def check_ge_export_contract(contract_path: pathlib.Path) -> list[str]:
         "gemini_enterprise": {
             "project_id": "synthetic-sbx-001",
             "location": "global",
-            "endpoint_location": "global",
             "app_id": "synthetic-ge-app",
         },
         "agent_engine": {
@@ -53,6 +52,15 @@ def check_ge_export_contract(contract_path: pathlib.Path) -> list[str]:
         if not _has_dotted_path(ae_payload, field):
             errors.append(f"agent_engine payload missing required field '{field}'.")
 
+    adk_def = ae_payload.get("adkAgentDefinition", {})
+    allowed_keys = set(contract["allowed_adk_agent_def_keys"])
+    for key in adk_def:
+        if key not in allowed_keys:
+            errors.append(f"adkAgentDefinition contains unsupported key '{key}' (allowed: {sorted(allowed_keys)}).")
+    for bad in contract["forbidden_adk_agent_def_keys"]:
+        if bad in adk_def:
+            errors.append(f"adkAgentDefinition must not emit forbidden key '{bad}'.")
+
     sample_a2a = {
         "schema_version": "1",
         "export_mode": "a2a",
@@ -61,20 +69,31 @@ def check_ge_export_contract(contract_path: pathlib.Path) -> list[str]:
         "gemini_enterprise": {
             "project_id": "synthetic-sbx-001",
             "location": "us",
-            "endpoint_location": "us",
             "app_id": "synthetic-ge-app",
         },
         "a2a": {
             "protocol_version": "0.3.0",
             "url": "https://synthetic-agent.run.app/a2a",
             "version": "1.0.0",
-            "default_input_modes": ["text"],
-            "default_output_modes": ["text"],
-            "skills": [{"id": "triage", "name": "Triage", "description": "Routes synthetic requests."}],
+            "default_input_modes": ["text/plain"],
+            "default_output_modes": ["text/plain"],
+            "skills": [
+                {
+                    "id": "triage",
+                    "name": "Triage",
+                    "description": "Routes synthetic requests.",
+                    "tags": ["triage", "enterprise"],
+                }
+            ],
         },
+        "agent_authorization": "projects/synthetic-sbx-001/locations/us/authorizations/erp-oauth",
     }
     a2a_payload = build_ge_registration_payload(sample_a2a)
-    for field in contract["required_payload_fields"]["common"] + contract["required_payload_fields"]["a2a"]:
+    for field in (
+        contract["required_payload_fields"]["common"]
+        + contract["required_payload_fields"]["a2a"]
+        + contract["required_payload_fields"]["a2a_oauth"]
+    ):
         if not _has_dotted_path(a2a_payload, field):
             errors.append(f"a2a payload missing required field '{field}'.")
 
@@ -82,6 +101,10 @@ def check_ge_export_contract(contract_path: pathlib.Path) -> list[str]:
     for key in contract["required_agent_card_fields"]:
         if key not in card or not card[key]:
             errors.append(f"A2A jsonAgentCard missing required field '{key}'.")
+    for sk in card.get("skills", []):
+        for req_sk in contract["required_agent_skill_fields"]:
+            if req_sk not in sk or not sk[req_sk]:
+                errors.append(f"A2A AgentSkill missing required field '{req_sk}'.")
 
     url = build_ge_agents_url(sample_a2a["gemini_enterprise"])
     if not url.startswith("https://us-discoveryengine.googleapis.com/v1alpha/"):

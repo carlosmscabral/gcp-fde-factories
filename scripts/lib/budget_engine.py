@@ -126,17 +126,21 @@ def check_context_budget(
 
         delta_lines = 0
         delta_rules = 0
+        core_delta_md = repo_root / "core-gcp-fde" / "templates" / role_name / "delta.md"
+        if core_delta_md.exists():
+            delta_lines += count_lines(core_delta_md)
+            delta_rules += count_delta_rules(core_delta_md)
         if delta_dir_rel:
             delta_md = pack_dir / str(delta_dir_rel) / "delta.md"
             if not delta_md.exists():
                 errors.append(f"Missing specialist delta file: {delta_md}.")
                 continue
-            delta_lines = count_lines(delta_md)
-            delta_rules = count_delta_rules(delta_md)
-            if delta_rules > max_delta_rules:
-                errors.append(
-                    f"Specialist '{role_name}' defines {delta_rules} rules, exceeding max_delta_rules ({max_delta_rules})."
-                )
+            delta_lines += count_lines(delta_md)
+            delta_rules += count_delta_rules(delta_md)
+        if delta_rules > max_delta_rules:
+            errors.append(
+                f"Specialist '{role_name}' defines {delta_rules} rules, exceeding max_delta_rules ({max_delta_rules})."
+            )
 
         role_skills_lines = 0
         for rskill in tpl.get("role_skills", []):

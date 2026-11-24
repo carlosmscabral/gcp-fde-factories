@@ -1,13 +1,19 @@
-# Harness configuration for Claude models served via Vertex AI Model Garden.
-# Replace image digest and vertex_project during Stage 03 release staging.
+# Harness configuration for Claude Code via Vertex AI Model Garden (aligned to Scion v0.4.0-preview.3).
+# Uses Scion's generic model tier (`large`) without hardcoding model_aliases so upstream Scion
+# updates the concrete Opus model over time. ANTHROPIC_MODEL is omitted from env: so `--model` works.
+# Prerequisite: enable Anthropic Claude manually in Vertex AI Model Garden on inference_project_id
+# and set harnesses.claude_model_garden_enabled: true in .factory/hub-project.yaml.
 schema_version: "1"
 name: claude-vertex
 harness: claude
-image: "us-central1-docker.pkg.dev/cabral-gecx-spk-hub/gecx-spk-images/scion-gecx-runtime@sha256:730282ce9892339455780aaefb68c7d53cc9daa7bb2e9ea0d146e1626510ec1b"
-model: "claude-sonnet-4-6"
+auth_selected_type: vertex-ai
+image: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/factory-images/REPLACE_PACK_RUNTIME@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+model: "large"
 env:
   CLAUDE_CODE_USE_VERTEX: "1"
-  CLOUD_ML_REGION: "us-east5"
+  GOOGLE_CLOUD_LOCATION: "global"
+  CLOUD_ML_REGION: "global"
+  GOOGLE_CLOUD_PROJECT: "REPLACE_INFERENCE_PROJECT"
   ANTHROPIC_VERTEX_PROJECT_ID: "REPLACE_INFERENCE_PROJECT"
 resources:
   cpu: "2"

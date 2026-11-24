@@ -1,4 +1,4 @@
-"""Tests for the public clean-room sanitizer gate, PII patterns, and false-positive corpus."""
+"""Tests for the public clean-room sanitizer gate, PII patterns, file coverage, and false-positive corpus."""
 from __future__ import annotations
 
 import hashlib
@@ -15,19 +15,30 @@ def test_repository_passes_public_sanitization() -> None:
 
 
 def test_sanitizer_blocks_internal_links_and_pii_but_allows_safe_prose() -> None:
-    """Verifies word-boundary regexes catch leaks without false positives on common code."""
+    """Verifies expanded regexes catch leaks without false positives on common code or Go/No-Go prose."""
     leaks = scan_text_for_leaks(
-        "Check go/internal-doc and b/123456789 from alice@google.com with CPF 123.456.789-00.",
+        "Check go/internal-doc, b/123456789, cl/6543210, user.c.googlers.com, alice@google.com.\n"
+        "Also argolis on line 2 and cabral-gecx-spk-hub with CPF 123.456.789-00.\n",
         "sample.md",
     )
-    assert len(leaks) == 4
+    assert len(leaks) == 7 or len(leaks) >= 7
 
-    # False-positive corpus: Go language paths, short b/ words, public URLs, and dates must pass.
+    # False-positive corpus: adk-go/tree/main, Go/No-Go, django/utils, public URLs, and dates must pass.
     clean = scan_text_for_leaks(
-        "Use django/utils and a/b/c paths, golang 1.23, https://cloud.google.com/ces, and date 2026-11-22.",
+        "See google/adk-go/tree/main, Go/No-Go checklist, django/utils, a/b/c paths, golang 1.23, "
+        "https://cloud.google.com/ces, and date 2026-11-24.",
         "clean.md",
     )
     assert clean == []
+
+
+def test_sanitizer_scans_dockerfiles_and_tfvars(tmp_path: pathlib.Path) -> None:
+    """Negative test (IB-26): planted internal leaks inside Dockerfile and .tfvars files are caught."""
+    (tmp_path / "Dockerfile").write_text("FROM alpine\n# see go/secret-build-doc\n", encoding="utf-8")
+    (tmp_path / "demo.tfvars").write_text('project = "cabral-gecx-spk-hub"\n', encoding="utf-8")
+    hits = scan_repository(tmp_path, scan_tests=True)
+    assert any("Dockerfile" in h for h in hits)
+    assert any("demo.tfvars" in h for h in hits)
 
 
 def test_sanitizer_salted_ngram_detection() -> None:

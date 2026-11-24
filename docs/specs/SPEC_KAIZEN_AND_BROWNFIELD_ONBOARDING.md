@@ -1,12 +1,12 @@
 # Especificação Formal — Motor Kaizen Closed-Loop (`v0.3.0`) e Onboarding Dinâmico Brownfield (`v0.4.0`)
 
-**Status:** Implementada no repositório (`packs/gecx v0.4.0` e `packs/adk v0.1.0`), aguardando validação live em Argolis após o smoke test manual da `v0.2.0`
+**Status:** Implementada no repositório (`packs/gecx v0.4.0` e `packs/adk v0.1.0`), aguardando validação live em ambiente de referência GCP após o smoke test manual da `v0.2.0`
 **Data:** 24/11/2026 (BRT)
-**Baseline Protegido:** `packs/gecx v0.2.0` (live em Argolis), `scion v0.4.0-preview.3`, `scion-frontiers/agent-team@08faf48`
+**Baseline Protegido:** `packs/gecx v0.2.0` (live em ambiente de validação GCP), `scion v0.4.0-preview.3`, `scion-frontiers/agent-team@08faf48`
 **Escopo:** Evolução de `core-gcp-fde/` (Camada 1), `packs/gecx/` e `packs/adk/` (Camada 2) e Overlay `.factory/` (Camada 3), sem alterações na Camada 0 (`vendor/agent-team/`).
 
 > [!NOTE]
-> Esta especificação registra decisões arquiteturais e contratos verificáveis para as releases `v0.3.0` e `v0.4.0`. O ambiente live de validação da `v0.2.0` em Argolis permanece intacto até o término do smoke test manual.
+> Esta especificação registra decisões arquiteturais e contratos verificáveis para as releases `v0.3.0` e `v0.4.0`. O ambiente live de validação da `v0.2.0` permanece intacto até o término do smoke test manual. O coletor Tier B (`--enable-gcp-obs`) exige um JSON pré-coletado (`--gcp-obs-json`) e falha de forma explícita quando o payload não é fornecido.
 
 ---
 
@@ -156,8 +156,8 @@ Se o `Researcher` propuser uma nova skill ou ferramenta, a ficha entrega obrigat
 
 ### 3.6 Cadência e Entrega ao Humano
 
-1. O `Overlay` suporta execução sob demanda (pós-milestone) ou agendada via `scion schedule create-recurring` com `--time-zone America/Sao_Paulo` (exemplo: toda sexta às 17:00 BRT).
-2. O `Kaizen Analyst` publica o relatório consolidado como **Scion Artifact** (quando `hub.artifacts` estiver ativo) e grava cópia Markdown em `/scion-volumes/scratchpad/kaizen-reports/<YYYY-MM-DD>.md`.
+1. O `bootstrap-hub-project.sh apply` agenda o ciclo semanal (`weekly-kaizen`) como padrão em todo projeto via `scion schedule create-recurring` com `--time-zone America/Sao_Paulo`, `--type message`, `--agent coordinator` e `--wake` (sexta às 17:00 BRT), com opt-out explícito via `kaizen.enabled: false` em `.factory/hub-project.yaml`.
+2. O `Kaizen Analyst` publica o relatório consolidado como **Scion Artifact** (quando `hub.artifacts` estiver ativo) e grava cópia Markdown em `/scion-volumes/scratchpad/kaizen-reports/<YYYY-MM-DD>.md`. O `kaizen_verifier.py` fecha o ciclo automaticamente no período seguinte via `Kaizen-Ref: <proposal_id>` nos commits de merge (`verified_pass`, `rollback_triggered` ou `invalidated_regression`).
 3. O operador ou `PO` converte apenas os itens aprovados em issues `priority:hygiene` ou PRs.
 
 ### 3.7 Critérios de Aceite — Release `v0.3.0`
@@ -167,7 +167,7 @@ Se o `Researcher` propuser uma nova skill ou ferramenta, a ficha entrega obrigat
 3. O comando `./build.sh --check packs/gecx` passa com saída `0`, mantendo os 16 papéis abaixo de 1.800 linhas e sem aumentar o contexto dos 15 papéis originais.
 4. O `Release Kit v0.3.0` inclui `gecx-kaizen-analyst` com `hub_role: baseline` e zero URIs externas flutuantes.
 5. Um teste de integração comprova que `--role baseline` lê a API de métricas do Hub. O mesmo teste valida HTTP `403` ao criar agentes ou editar templates.
-6. Um ciclo em Argolis executa o `Kaizen Analyst` sobre a telemetria real do smoke test da `v0.2.0`. O agente gera relatório estruturado cobrindo os 4 Degraus.
+6. Um ciclo em ambiente de validação GCP executa o `Kaizen Analyst` sobre a telemetria real do smoke test da `v0.2.0`. O agente gera relatório estruturado cobrindo os 4 Degraus.
 7. Um teste valida o fluxo Opção A (`Kaizen Analyst` -> `coordinator` -> `Researcher`). O fluxo produz uma Ficha de Skill Candidata sem instalar nada no Hub.
 
 ---
