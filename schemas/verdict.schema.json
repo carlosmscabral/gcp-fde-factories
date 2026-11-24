@@ -24,7 +24,7 @@
     "diversity_profile": { "type": "string", "enum": ["cross-vendor", "cross-model", "single-family"] },
     "ephemeral_app_name": {
       "type": ["string", "null"],
-      "pattern": "^projects/[a-z0-9-]+/locations/[a-z0-9-]+/(apps|reasoningEngines)/[A-Za-z0-9-]+$"
+      "pattern": "^projects/[a-z0-9-]+/locations/[a-z0-9-]+/(apps|reasoningEngines|services)/[A-Za-z0-9-]+$"
     },
     "ge_agent_resource": {
       "type": ["string", "null"],
@@ -95,7 +95,7 @@
             "anyOf": [
               {
                 "required": ["ephemeral_app_name"],
-                "properties": { "ephemeral_app_name": { "type": "string", "pattern": "/reasoningEngines/" } }
+                "properties": { "ephemeral_app_name": { "type": "string", "pattern": "/(reasoningEngines|services)/" } }
               },
               {
                 "required": ["ge_agent_resource"],

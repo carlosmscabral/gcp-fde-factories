@@ -144,7 +144,22 @@ def _verify_adk_live(
 
     if app_name:
         if _extract_project(app_name) != sandbox_project:
-            errors.append(f"ReasoningEngine project '{_extract_project(app_name)}' != sandbox_project '{sandbox_project}'.")
+            errors.append(f"Ephemeral ADK runtime project '{_extract_project(app_name)}' != sandbox_project '{sandbox_project}'.")
+        elif "/services/" in app_name:
+            # Verify authenticated Cloud Run A2A service provenance bound to PR and commit labels (HC-03 F5).
+            url = f"https://run.googleapis.com/v2/{app_name}"
+            status, body = fetch_fn(url, access_token, sandbox_project)
+            if status != 200 or body.get("name") != app_name:
+                errors.append(f"Cloud Run GET {url} failed verification (HTTP {status}).")
+            else:
+                labels = body.get("labels") or {}
+                pr_label = str(labels.get("pr") or "").lower()
+                commit_label = str(labels.get("commit") or "").lower()
+                expected_pr_label = pr_tag.lower()
+                if pr_label != expected_pr_label or commit_label != sha7.lower():
+                    errors.append(
+                        f"Cloud Run service labels (pr='{pr_label}', commit='{commit_label}') are not bound to {expected_pr_label} and commit {sha7}."
+                    )
         else:
             loc = app_name.split("/locations/", 1)[1].split("/", 1)[0]
             url = f"https://{loc}-aiplatform.googleapis.com/v1beta1/{app_name}"

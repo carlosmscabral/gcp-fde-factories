@@ -118,9 +118,9 @@ Each gate uses a binary first-pass check (`first_pass: true` or `false`) and an 
 | **M4.5** | Live Agent Engine deploy and Gemini Enterprise App lifecycle | Deployer publishes the Dockerfile-first ADK agent to live Vertex AI Agent Engine and runs real register, readback, and delete in a Gemini Enterprise App via `packs/adk/scripts/ge_export.py` | `PASS (live AE + GE CRUD)` |
 | **M5.4** | Stateful GKE Hub pod restart resilience | Deleting the running `scion-hub` pod on GKE recovers with zero loss of projects, secrets, templates, schedules, or RoleBindings | `0 state loss after pod recycle` |
 
-## Additive Gates: `additive_gates.v3_real_factory_ops` (Planned for `HC-03`)
+## Additive Gates: `additive_gates.v3_real_factory_ops` (Qualified in `HC-03`)
 
-`HC-03` exercises Day-2 multi-agent factory operations, keyless GitHub Actions WIF gates, brownfield customer overlays, and Cloud Run A2A dual export in a fresh 3-project topology:
+`HC-03` qualified Day-2 multi-agent factory operations, keyless GitHub Actions WIF gates, brownfield customer overlays, and Cloud Run A2A dual export in a fresh 3-project topology:
 
 | Metric ID | Additive Gate | Verification Requirement (`HC-03` Real Factory Operations) | Target |
 | :--- | :--- | :--- | :--- |
@@ -140,6 +140,17 @@ Each gate uses a binary first-pass check (`first_pass: true` or `false`) and an 
 | **M5.6** | FinOps loop kill-switch and `max_turns` enforcement | Agent spawned with strict `max_turns` / `max_model_calls` cap terminates deterministically before exceeding budget, and `budget_alerts` Pub/Sub delivery verifies cleanly | `PASS (hard cap enforced)` |
 | **M3.5** | Starter pack (`packs/_template-pack`) and `cross-vendor` Claude review | A new pack cloned from `packs/_template-pack` passes build checks, and one live PR runs `diversity_profile: cross-vendor` (Gemini author plus Claude Vertex reviewer after manual Model Garden opt-in) | `PASS (template-pack + cross-vendor)` |
 
+## Additive Gates: `additive_gates.v5_brownfield_interview_and_coexistence` (Planned for `HC-05`)
+
+`HC-05` qualifies hostile brownfield onboarding, simulated `/grill-me` interviews, legacy hook isolation, and `.factory/Dockerfile.customer` builds on repositories without `repo-scaffold`:
+
+| Metric ID | Additive Gate | Verification Requirement (`HC-05` Hostile Brownfield and Interview) | Target |
+| :--- | :--- | :--- | :--- |
+| **M2.7** | Simulated `/grill-me` PO interview (`factory-onboard`) | Multi-turn harness runs `factory-onboard` against a vague synthetic PO, executes `scan` first, challenges weak answers, passes `check`, and emits `.factory/` cleanly | `PASS (0 redundant questions, ready=true)` |
+| **M2.8** | Legacy AI files, hooks, and skills coexistence | Scanner detects diverging `AGENTS.md` and `CLAUDE.md`, Git hooks, harness hooks, and local skills, isolates untrusted workspace hooks, and reconciles CI parity without clobber | `PASS (0 clobber, hooks isolated)` |
+| **M1.4** | Live `.factory/Dockerfile.customer` image build | `factory_onboard.py emit` generates `.factory/Dockerfile.customer` for detected `missing_binaries`, Cloud Build builds the image, and a live agent executes the added tools | `PASS (custom image built and verified)` |
+| **M3.6** | Raw brownfield PR under absorbed conventions | Autonomous agent edits the raw brownfield repository (without `repo-scaffold`), obeys absorbed rules and overlay skills, preserves legacy files, and passes the Verdict CI gate | `PASS (PR green, legacy preserved)` |
+
 ## Wave 2 Preview (Deferred Until Wave 1 = 100%)
 
 Once `core_v1` and active Wave 1 additive blocks reach `100%` with zero Showstoppers, Wave 2 introduces efficiency metrics:
@@ -154,3 +165,4 @@ Once `core_v1` and active Wave 1 additive blocks reach `100%` with zero Showstop
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `HC-2026-11-24-01` | 2026-11-24 | `acém` (`v0.4.0`) | `33.3%` (`6/18`) | `17/18 PASS`, `1 PARTIAL` | `31` (`24` / `7`) | `26` | Completed baseline (30 fixed in repo + 1 upstream `WK-005`) |
 | `HC-2026-11-24-02` | 2026-11-24 | `acém` (`v0.4.0` + HC-01) | `66.7%` (`12/18`) | `17/18 PASS`, `1 PARTIAL` | `14` (`9` / `5`) | `14` | Completed 3-project cross-project (`v2_cross_project`: `4/5 PASS`, `1 PARTIAL` GE billing license) |
+| `HC-2026-11-24-03` | 2026-11-24 | `acém` (`v0.4.0` + HC-02) | `66.7%` (`12/18`) | `17/18 PASS`, `1 PARTIAL` | `8` (`6` / `2`) | `8` | Completed real factory ops (`v3_real_factory_ops`: `3/4 PASS`, `1 PARTIAL` Cloud Run A2A `agent.json` + `run.routes.invoke`, all 8 findings fixed) |

@@ -544,13 +544,14 @@ resource "google_project_iam_custom_role" "adk_sandbox_evaluator" {
   project     = var.sandbox_project_id
   role_id     = "adkSandboxEvaluator"
   title       = "ADK and Gemini Enterprise Sandbox Evaluator"
-  description = "Queries ephemeral Vertex AI Agent Engine runtimes and inspects Gemini Enterprise Sandbox agents without mutating them."
+  description = "Queries ephemeral Vertex AI Agent Engine runtimes, invokes authenticated Cloud Run A2A services, and inspects Gemini Enterprise Sandbox agents without mutating them."
   permissions = [
     "aiplatform.reasoningEngines.get",
     "aiplatform.reasoningEngines.list",
     "aiplatform.reasoningEngines.query",
     "discoveryengine.agents.get",
     "discoveryengine.agents.list",
+    "run.routes.invoke",
     "run.services.get",
     "run.services.list",
   ]

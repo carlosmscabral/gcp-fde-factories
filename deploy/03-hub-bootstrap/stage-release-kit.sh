@@ -93,15 +93,25 @@ PY
 
 submit_and_stamp() {
   local base_img="$1" core_img_name="$2" target_img_name="$3" hc_suffix="${4:-}" final_user="${5:-scion}"
-  local builder_sa sa_args=()
+  local builder_sa staging_bkt sa_args=() staging_args=()
   builder_sa="$(jq -r '.release_builder_sa_email.value // empty' "$LANDING_ZONE_JSON")"
   if [[ -n "$builder_sa" ]]; then
     sa_args=(--service-account="projects/${HUB_PROJECT}/serviceAccounts/${builder_sa}")
+  fi
+  # Route Cloud Build staging and logs to the Landing Zone bucket to avoid concurrent races
+  # on auto-created <hub>_cloudbuild buckets in brand-new projects (HC-03 F1).
+  staging_bkt="$(jq -r '.sandbox_staging_bucket.value // empty' "$LANDING_ZONE_JSON")"
+  if [[ -n "$staging_bkt" ]]; then
+    staging_args=(
+      --gcs-source-staging-dir="gs://${staging_bkt}/release-kit-src/${PACK_NAME}-${target_img_name}"
+      --gcs-log-dir="gs://${staging_bkt}/release-kit-logs/${PACK_NAME}-${target_img_name}"
+    )
   fi
   run_or_echo gcloud "${GCLOUD_ARGS[@]}" builds submit "$KIT_DIR" \
     --project="$HUB_PROJECT" \
     --region="$REGION" \
     "${sa_args[@]}" \
+    "${staging_args[@]}" \
     --config="$SCRIPT_DIR/cloudbuild.yaml" \
     --substitutions="_AR_URL=${AR_URL},_BASE_IMAGE=${base_img},_CORE_VERSION=${CORE_VERSION},_PACK_VERSION=${PACK_VERSION},_CORE_IMAGE_NAME=${core_img_name},_IMAGE_NAME=${target_img_name},_DOCKERFILE=${PACK_DOCKERFILE},_FINAL_USER=${final_user}"
   if [[ "$DRY_RUN" != "true" ]]; then

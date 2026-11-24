@@ -371,10 +371,22 @@ do_apply() {
 
 do_overlay_sync() {
   [[ -n "$TARGET_REPO" ]] || { echo "--repo is required for overlay-sync" >&2; exit 2; }
-  local pack_name repo_cfg pack_skills_json count=0
+  local pack_name repo_cfg pack_skills_json proj_id existing_skills_json count=0
   pack_name="$(jq -re '.pack' "$KIT_DIR/manifest.json")"
   pack_skills_json="$(jq -c '[.skills[].name]' "$KIT_DIR/manifest.json")"
   repo_cfg="$(parse_repo_cfg "$pack_name")"
+
+  # Scion v0.4 requires the Hub project UUID in project-scoped skill URIs:
+  # skill://scion/project/<project_id>/<name>@<version> (HC-03 F2).
+  proj_id="$(resolve_project_id)"
+  if [[ -n "$proj_id" ]]; then
+    export SCION_HUB_PROJECT_ID="$proj_id"
+  fi
+  local ov_proj_flags=("${PROJ_FLAGS[@]}")
+  if [[ -n "${SCION_HUB_PROJECT_ID:-}" ]]; then
+    ov_proj_flags=()
+  fi
+  existing_skills_json="$(scion --format json project skills list "${ov_proj_flags[@]}" --hub "$HUB_URL" 2>/dev/null || echo '[]')"
 
   while IFS=$'\t' read -r rel_dir sver; do
     [[ -n "$rel_dir" ]] || continue
@@ -383,14 +395,23 @@ do_overlay_sync() {
     python3 "$SCRIPT_DIR/parse_hub_project.py" \
       --check-overlay-skill "$sdir" \
       --pack-skills-json "$pack_skills_json"
-    local sname
+    local sname uri
     sname="$(basename "$sdir")"
-    if scion skills resolve "skill://scion/project/${sname}@${sver}" --hub "$HUB_URL" >/dev/null 2>&1; then
+    if [[ -n "$proj_id" ]]; then
+      uri="skill://scion/project/${proj_id}/${sname}@${sver}"
+    else
+      uri="skill://scion/project/${sname}@${sver}"
+    fi
+    if scion skills resolve "$uri" --hub "$HUB_URL" >/dev/null 2>&1; then
       echo "SKIP overlay publish: ${sname}@${sver} already published."
     else
-      scion skills publish "$sdir" --scope project --version "$sver" --hub "$HUB_URL"
+      scion skills publish "$sdir" --scope project --version "$sver" "${ov_proj_flags[@]}" --hub "$HUB_URL"
     fi
-    scion project skills add "skill://scion/project/${sname}@${sver}" --hub "$HUB_URL"
+    if ! jq -e --arg u "$uri" --arg n "$sname" '(if type == "array" then . else (.entries // .skills // .items // []) end) | any((.skillUri? // .uri? // "") == $u or (.skillName? // .name? // "") == $n)' <<< "$existing_skills_json" >/dev/null 2>&1; then
+      scion project skills add "$uri" "${ov_proj_flags[@]}" --hub "$HUB_URL"
+    else
+      echo "SKIP overlay attach: ${uri} already attached."
+    fi
     count=$((count + 1))
   done < <(jq -r '.overlay_skills[] | [.dir, .version] | @tsv' <<< "$repo_cfg")
 
@@ -404,7 +425,7 @@ do_rollback() {
     [[ -d "$tpl_dir" ]] || continue
     local tname
     tname="$(basename "$tpl_dir")"
-    scion templates sync "$tpl_dir" --name "$tname" --hub "$HUB_URL"
+    scion templates sync "$tpl_dir" --name "$tname" "${PROJ_FLAGS[@]}" --hub "$HUB_URL"
     restored=$((restored + 1))
   done
   if [[ "$restored" -eq 0 ]]; then

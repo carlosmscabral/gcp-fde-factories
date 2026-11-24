@@ -115,11 +115,13 @@ jobs:
             REG="${GECX_RUNTIME_IMAGE%%/*}"
             printf '%s' "$EVAL_ACCESS_TOKEN" | docker login -u oauth2accesstoken --password-stdin "https://${REG}" >/dev/null
           fi
+          # Bind Verdict commit_sha to the latest non-verdict code commit on the PR branch (HC-03 F6).
+          export EXPECTED_CODE_SHA="$(git log -n 1 --format=%H "$PR_HEAD_SHA" -- . ':(exclude).factory/verdicts/')"
           EXTRA_ARGS=()
           if [[ "$REQUIRE_LIVE" == "true" ]]; then
             EXTRA_ARGS+=(--require-live)
           fi
-          docker run --rm --user "$(id -u):$(id -g)" \
+          docker run --rm --entrypoint "" --user "$(id -u):$(id -g)" \
             -v "$PWD:/workspace" -w /workspace \
             -e EVAL_ACCESS_TOKEN \
             "$GECX_RUNTIME_IMAGE" \
@@ -128,7 +130,7 @@ jobs:
               --verdict "$VERDICT_FILE" \
               --expected-pack gecx \
               --expected-pr-number "$PR_NUM" \
-              --expected-commit "$PR_HEAD_SHA" \
+              --expected-commit "$EXPECTED_CODE_SHA" \
               --evals-dir evals \
               --sandbox-project "$SANDBOX_PROJECT" \
               --expected-evaluator-sa "$EVALUATOR_SA" \

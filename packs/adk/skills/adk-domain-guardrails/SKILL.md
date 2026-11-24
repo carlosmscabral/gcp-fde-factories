@@ -9,6 +9,8 @@ description: Opinionated Dockerfile-first ADK 2.15+ deployment using upstream go
 - Default every ADK project to container-based deployment via a root `Dockerfile` and `agents-cli deploy` (`agent_runtime`, `cloud_run`, or `gke`).
 - Follow the mounted upstream `google-agents-cli-*` skills (`workflow`, `scaffold`, `adk-code`, `eval`, `deploy`, `publish`, `observability`) as the primary reference.
 - Keep `agent/agent.py` as a thin composition root (`<= 250` lines) exporting `root_agent`, with prompts, config, and tools in separate submodules.
+- Include `agent/agent.json` (A2A v0.3.0 AgentCard descriptor) alongside `agent/agent.py` whenever the root `Dockerfile` runs `adk api_server --a2a /app`, because `google-adk` skips A2A route registration (`404` on `/a2a/agent/.well-known/agent-card.json`) when `agent.json` is absent (HC-03 F4).
+- When deploying ephemeral Cloud Run A2A services for Contract 5 CI verification, label the service with `pr=pr-<N>` and `commit=<sha7>` and attach the same-project `<prefix>-adk-runtime@<sandbox_project_id>` SA (HC-02 F10, HC-03 F5).
 - Validate the root `Dockerfile` contract (non-root user, explicit `adk api_server` entrypoint, pinned dependencies) before any Sandbox deploy.
 - source: https://github.com/google/agents-cli
 

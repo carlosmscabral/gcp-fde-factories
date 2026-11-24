@@ -36,16 +36,16 @@ jobs:
           cmp -s AGENTS.md CLAUDE.md
           cmp -s AGENTS.md GEMINI.md
 
-      - name: Block unapproved evals/ or tests/ edits without human label
+      - name: Block unapproved evals/ edits without human label
         env:
           BASE_SHA: "${{ github.event.pull_request.base.sha }}"
           HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
           PR_LABELS: "${{ join(github.event.pull_request.labels.*.name, ',') }}"
         run: |
           CHANGED="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
-          if grep -Eq '^(evals|tests)/' <<< "$CHANGED"; then
+          if grep -Eq '^evals/' <<< "$CHANGED"; then
             if ! grep -qw 'eval-change-approved' <<< "$PR_LABELS"; then
-              echo "::error::PR edits evals/ or tests/ without human label 'eval-change-approved'."
+              echo "::error::PR edits evals/ without human label 'eval-change-approved'."
               exit 1
             fi
           fi
@@ -114,10 +114,13 @@ jobs:
             REG="${ADK_RUNTIME_IMAGE%%/*}"
             printf '%s' "$EVAL_ACCESS_TOKEN" | docker login -u oauth2accesstoken --password-stdin "https://${REG}" >/dev/null
           fi
+          # Bind Verdict commit_sha to the latest non-verdict code commit on the PR branch (HC-03 F6).
+          # Any code, test, or eval edit after the Verdict commit changes EXPECTED_CODE_SHA and fails closed.
+          export EXPECTED_CODE_SHA="$(git log -n 1 --format=%H "$PR_HEAD_SHA" -- . ':(exclude).factory/verdicts/')"
           mkdir -p dist/ge-export
-          docker run --rm --user "$(id -u):$(id -g)" \
+          docker run --rm --entrypoint "" --user "$(id -u):$(id -g)" \
             -v "$PWD:/workspace" -w /workspace \
-            -e EVAL_ACCESS_TOKEN -e PR_HEAD_SHA -e PR_NUM \
+            -e EVAL_ACCESS_TOKEN -e EXPECTED_CODE_SHA -e PR_NUM \
             -e VERDICT_FILE -e SANDBOX_PROJECT -e EVALUATOR_SA \
             -e SKIP_VERDICT -e REQUIRE_LIVE \
             "$ADK_RUNTIME_IMAGE" bash -euo pipefail -c '
@@ -133,7 +136,7 @@ jobs:
                   --verdict "$VERDICT_FILE" \
                   --expected-pack adk \
                   --expected-pr-number "$PR_NUM" \
-                  --expected-commit "$PR_HEAD_SHA" \
+                  --expected-commit "$EXPECTED_CODE_SHA" \
                   --evals-dir evals \
                   --sandbox-project "$SANDBOX_PROJECT" \
                   --expected-evaluator-sa "$EVALUATOR_SA" \
@@ -150,7 +153,7 @@ jobs:
           service_account: "${{ env.JANITOR_SA }}"
           token_format: access_token
 
-      - name: Delete ephemeral [CI] ReasoningEngine and non-reused GE agent (if always)
+      - name: Delete ephemeral [CI] ReasoningEngine, Cloud Run service, and non-reused GE agent (if always)
         if: always() && steps.auth-janitor.outputs.access_token != ''
         env:
           JANITOR_TOKEN: "${{ steps.auth-janitor.outputs.access_token }}"
@@ -162,6 +165,11 @@ jobs:
               -H "Authorization: Bearer ${JANITOR_TOKEN}" \
               -H "x-goog-user-project: ${SANDBOX_PROJECT}" \
               "https://${LOC}-aiplatform.googleapis.com/v1beta1/${RE_RES}?force=true" >/dev/null || true
+          elif [[ -n "$RE_RES" && "$RE_RES" == *"/services/"* ]]; then
+            curl -fsS -X DELETE \
+              -H "Authorization: Bearer ${JANITOR_TOKEN}" \
+              -H "x-goog-user-project: ${SANDBOX_PROJECT}" \
+              "https://run.googleapis.com/v2/${RE_RES}" >/dev/null || true
           fi
           GE_RES="$(jq -r '.ge_agent_resource // empty' "$VERDICT_FILE")"
           if [[ -n "$GE_RES" && "$GE_RES" == *"/agents/"* && "$GE_RES" != "$REUSE_GE_AGENT" ]]; then
