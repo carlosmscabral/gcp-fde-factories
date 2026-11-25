@@ -18,6 +18,7 @@ REPO_ROOT = SCRIPT_ROOT.parent.parent if (SCRIPT_ROOT.parent.parent / "scripts" 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.lib.dockerfile_recipes import validate_customer_dockerfile
 from scripts.lib.io_utils import load_yaml
 from scripts.lib.onboard_emitter import check_readiness, emit_layer3_overlay
 from scripts.lib.onboard_scanner import detect_repo_drift, scan_repository_facts
@@ -54,13 +55,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=pathlib.Path,
         default=REPO_ROOT / "schemas" / "factory-profile.schema.json",
     )
+    p_val = sub.add_parser("validate-dockerfile")
+    p_val.add_argument("--dockerfile", type=pathlib.Path, required=True)
+    p_val.add_argument("--strict", action="store_true", help="Fail closed on advisory security findings.")
+    p_val.add_argument("--json", action="store_true", help="Emit JSON output (default behavior).")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Dispatches scan, Readiness Gate check, or Layer 3 overlay emission with JSON error handling."""
+    """Dispatches scan, Readiness Gate check, emit, or Dockerfile contract validation."""
     args = parse_args(argv)
     try:
+        if args.cmd == "validate-dockerfile":
+            report = validate_customer_dockerfile(args.dockerfile, strict=args.strict)
+            print(json.dumps(report, indent=2))
+            return 0 if report["ok"] else 1
+
         if args.cmd == "scan":
             if not args.repo.is_dir():
                 raise ValueError(f"Repository directory does not exist: {args.repo}")

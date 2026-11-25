@@ -1,6 +1,6 @@
 # ADR-008: Adopt-First Brownfield Onboarding
 
-- **Status:** Accepted
+- **Status:** Accepted (amended by [ADR-015](ADR-015-cognitive-brownfield-adaptation-and-contract-validators.md))
 - **Date:** 2026-11-23
 - **Invariants:** [INV-12](../INVARIANTS.md#inv-12-non-destructive-brownfield-onboarding-and-config-schema)
 

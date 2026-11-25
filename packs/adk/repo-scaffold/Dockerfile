@@ -12,8 +12,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /code
 
-COPY pyproject.toml README.md agents-cli-manifest.yaml ge_manifest.json ./
-COPY uv.lock* ./
+COPY pyproject.toml README.md agents-cli-manifest.yaml ge_manifest.json uv.lock* ./
 COPY app/ ./app/
 
 RUN if [ -f uv.lock ]; then uv sync --frozen --no-dev; else uv sync --no-dev; fi \

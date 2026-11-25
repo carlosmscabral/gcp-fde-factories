@@ -58,7 +58,8 @@
         "commit_convention": { "type": "string", "pattern": "^[^\\r\\n`]{1,80}$" },
         "ci_platform": { "type": "string", "enum": ["github-actions", "azure-devops", "gitlab-ci", "none"] },
         "pr_template": { "type": ["string", "null"], "pattern": "^[^\\r\\n`]{1,160}$" },
-        "workflows": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n`]{1,160}$" }, "default": [] }
+        "workflows": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n`]{1,160}$" }, "default": [] },
+        "has_codeowners": { "type": "boolean" }
       }
     },
     "commands": {

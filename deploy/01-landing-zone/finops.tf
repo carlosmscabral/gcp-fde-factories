@@ -41,11 +41,14 @@ resource "google_billing_budget" "inference_budget" {
     threshold_percent = 0.90
   }
 
-  # Attach Pub/Sub only when Domain Restricted Sharing permits billing-budget-alert@system.gserviceaccount.com (HC-04 F2).
-  all_updates_rule {
-    pubsub_topic                   = var.enable_budget_pubsub_topic ? google_pubsub_topic.budget_alerts.id : null
-    schema_version                 = var.enable_budget_pubsub_topic ? "1.0" : null
-    disable_default_iam_recipients = false
+  # Attach Pub/Sub only when Domain Restricted Sharing permits billing-budget-alert@system.gserviceaccount.com (HC-04 F2, HC-05 F1).
+  dynamic "all_updates_rule" {
+    for_each = var.enable_budget_pubsub_topic ? [1] : []
+    content {
+      pubsub_topic                   = google_pubsub_topic.budget_alerts.id
+      schema_version                 = "1.0"
+      disable_default_iam_recipients = false
+    }
   }
 
   depends_on = [google_project_service.enabled]

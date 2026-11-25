@@ -20,9 +20,10 @@ GcpHttpFn = Callable[[str, str, dict[str, str], dict[str, Any] | None], tuple[in
 
 def resolve_gcp_access_token() -> str:
     """Resolves a short-lived GCP OAuth token from env, metadata server, or gcloud CLI."""
-    env_tok = os.environ.get("GCP_ACCESS_TOKEN", "").strip()
-    if env_tok:
-        return env_tok
+    for env_var in ("GCP_ACCESS_TOKEN", "GOOGLE_OAUTH_ACCESS_TOKEN", "CLOUDSDK_AUTH_ACCESS_TOKEN"):
+        env_tok = os.environ.get(env_var, "").strip()
+        if env_tok:
+            return env_tok
 
     # Prefer the GCE or GKE Workload Identity metadata endpoint inside factory containers.
     meta_url = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"

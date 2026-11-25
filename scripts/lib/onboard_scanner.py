@@ -13,6 +13,7 @@ from scripts.lib.io_utils import load_json, load_yaml
 from scripts.lib.onboard_parsers import (
     detect_binaries_and_commands,
     detect_git_and_ci,
+    detect_hooks_and_ai_divergence,
     detect_knowledge_sources,
     detect_modernization_gaps,
 )
@@ -44,7 +45,8 @@ def scan_repository_facts(
     binaries, commands, stacks, versions = detect_binaries_and_commands(repo)
     git_ci = detect_git_and_ci(repo)
     knowledge = detect_knowledge_sources(repo)
-    gaps = detect_modernization_gaps(repo, git_ci)
+    untrusted_hooks, ai_divergence, advisory_findings = detect_hooks_and_ai_divergence(repo)
+    gaps = detect_modernization_gaps(repo, git_ci, untrusted_hooks=untrusted_hooks, ai_divergence=ai_divergence)
 
     ai_files = [rel for rel in AI_FILE_CANDIDATES if (repo / rel).is_file()]
     if (repo / ".claude" / "skills").is_dir():
@@ -84,6 +86,9 @@ def scan_repository_facts(
         "unsupported_binaries": unsupported_missing,
         "commands": commands,
         "ai_files_detected": ai_files,
+        "untrusted_hooks_detected": untrusted_hooks,
+        "ai_file_divergence": ai_divergence,
+        "advisory_findings": advisory_findings,
         "git_flow": git_ci,
         "knowledge_sources": knowledge,
         "modernization_gaps": gaps,

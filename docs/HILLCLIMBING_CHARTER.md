@@ -140,17 +140,29 @@ Each gate uses a binary first-pass check (`first_pass: true` or `false`) and an 
 | **M5.6** | FinOps loop kill-switch and `max_turns` enforcement | Agent spawned with strict `max_turns` / `max_model_calls` cap terminates deterministically before exceeding budget, and `budget_alerts` Pub/Sub delivery verifies cleanly | `PASS (hard cap enforced)` |
 | **M3.5** | Starter pack (`packs/_template-pack`) and `cross-vendor` Claude review | A new pack cloned from `packs/_template-pack` passes build checks, and one live PR runs `diversity_profile: cross-vendor` (Gemini author plus Claude Vertex reviewer after manual Model Garden opt-in) | `PASS (template-pack + cross-vendor)` |
 
-## Additive Gates: `additive_gates.v5_brownfield_interview_and_coexistence` (Planned for `HC-05`)
+## Additive Gates: `additive_gates.v5_brownfield_interview_and_coexistence` (Qualified in `HC-05`)
 
-`HC-05` qualifies hostile brownfield onboarding, simulated `/grill-me` interviews, legacy hook isolation, `.factory/Dockerfile.customer` builds, and live execution of the native `google-agents-cli` (`adk_python`) scaffold (ADR-014):
+`HC-05` qualified hostile brownfield onboarding, simulated `/grill-me` interviews, legacy hook coexistence, `.factory/Dockerfile.customer` live Cloud Builds, and live execution of the native `google-agents-cli` (`adk_python`) scaffold (ADR-014):
 
 | Metric ID | Additive Gate | Verification Requirement (`HC-05` Hostile Brownfield, Interview, and Native ADK Scaffold) | Target |
 | :--- | :--- | :--- | :--- |
 | **M2.7** | Simulated `/grill-me` PO interview (`factory-onboard`) | Multi-turn harness runs `factory-onboard` against a vague synthetic PO, executes `scan` first, challenges weak answers, passes `check`, and emits `.factory/` cleanly | `PASS (0 redundant questions, ready=true)` |
-| **M2.8** | Legacy AI files, hooks, and skills coexistence | Scanner detects diverging `AGENTS.md` and `CLAUDE.md`, Git hooks, harness hooks, and local skills, isolates untrusted workspace hooks, and reconciles CI parity without clobber | `PASS (0 clobber, hooks isolated)` |
+| **M2.8** | Legacy AI files, hooks, and skills coexistence | Scanner detects diverging `AGENTS.md` and `CLAUDE.md`, Git hooks, harness hooks, and local skills, isolates untrusted workspace hooks, and reconciles CI parity without clobber | `PASS (0 clobber, hooks flagged)` |
 | **M1.4** | Live `.factory/Dockerfile.customer` image build | `factory_onboard.py emit` generates `.factory/Dockerfile.customer` for detected `missing_binaries`, Cloud Build builds the image, and a live agent executes the added tools | `PASS (custom image built and verified)` |
 | **M3.6** | Raw brownfield PR under absorbed conventions | Autonomous agent edits the raw brownfield repository (without `repo-scaffold`), obeys absorbed rules and overlay skills, preserves legacy files, and passes the Verdict CI gate | `PASS (PR green, legacy preserved)` |
 | **M4.8** | Native `google-agents-cli` (`adk_python`) scaffold live proof (`ADR-014`) | New `packs/adk/repo-scaffold` (`app/fast_api_app.py` + `uv` non-root `Dockerfile`, zero `deployment/terraform/`) deploys to authenticated Cloud Run with `APP_URL`, serves dynamic HTTPS `/a2a/app/.well-known/agent-card.json` (v0.3 compat), executes live JSON-RPC `message/send` as `eval` SA, exposes `/api/reasoning_engine`, and passes keyless WIF Verdict Gate + Janitor | `PASS (live ADK HTTP + dynamic A2A + Playground + WIF)` |
+
+## Additive Gates: `additive_gates.v6_endurance_soak` (Planned for `HC-06`)
+
+`HC-06` qualifies extended multi-wave endurance on Lite Single-VM (`packs/adk`, ADR-014 layout, 3-project unified topology, hard budget cap `monthly_budget_usd = 30`, guaranteed `$0` residual teardown):
+
+| Metric ID | Additive Gate | Verification Requirement (`HC-06` Extended Endurance Soak) | Target |
+| :--- | :--- | :--- | :--- |
+| **M6.1** | Multi-wave PO lifecycle with mid-flight scope change | Simulated PO merges Wave 1, waits over 75 minutes across OIDC expiry and `auto_suspend_idle`, posts a Wave 2 scope change, and verifies clean resume and re-verified Verdict | `PASS (0 auth stalls, clean resume)` |
+| **M6.2** | Conflicting requests and invariant enforcement (Andon Cord) | Simulated PO submits conflicting requests (raw CPF logging, Wave 1 contract break, unapproved `evals/` edit) and verifies strict `security-auditor` Andon Cord defense and CI block | `PASS (100% invariant defense)` |
+| **M6.3** | Concurrent PR merge conflict and live over-4h TTL Janitor | Two concurrent issues modify `app/tools.py` forcing real rebase and re-review while scheduled Janitor deletes an over-4h `[CI]` orphan Cloud Run service and preserves a non-`[CI]` control service | `PASS (conflict resolved + 4h TTL verified)` |
+| **M6.4** | Closed-loop Kaizen impact measurement | Accelerated Kaizen runs over real 4-wave Hub and GCP telemetry, opens and merges a real improvement PR with `Kaizen-Ref:`, and Wave 5 measures before-versus-after delta via `kaizen_verifier.py` | `PASS (merged Kaizen PR + delta measured)` |
+| **M6.5** | Sustained runtime stability and real TCO report | Lite VM Hub (SQLite, Docker disk, git worktrees, container GC) stays healthy with zero restarts or `SQLITE_BUSY` errors and reports measured per-PR and idle TCO | `PASS (0 crashes, TCO measured)` |
 
 ## Wave 2 Preview (Deferred Until Wave 1 = 100%)
 
@@ -168,3 +180,4 @@ Once `core_v1` and active Wave 1 additive blocks reach `100%` with zero Showstop
 | `HC-2026-11-24-02` | 2026-11-24 | `acém` (`v0.4.0` + HC-01) | `66.7%` (`12/18`) | `17/18 PASS`, `1 PARTIAL` | `14` (`9` / `5`) | `14` | Completed 3-project cross-project (`v2_cross_project`: `4/5 PASS`, `1 PARTIAL` GE billing license) |
 | `HC-2026-11-24-03` | 2026-11-24 | `acém` (`v0.4.0` + HC-02) | `66.7%` (`12/18`) | `17/18 PASS`, `1 PARTIAL` | `8` (`6` / `2`) | `8` | Completed real factory ops (`v3_real_factory_ops`: `3/4 PASS`, `1 PARTIAL` Cloud Run A2A `agent.json` + `run.routes.invoke`, all 8 findings fixed) |
 | `HC-2026-11-24-04` | 2026-11-24 | `acém` (`v0.4.0` + HC-03) | `77.8%` (`14/18`) | `17/18 PASS`, `1 PARTIAL` | `5` (`3` / `2`) | `3` | Completed Day-2 resilience and cross-vendor (`v4_day2_resilience`: `4/4 PASS` — `M2.6`, `M5.5`, `M5.6`, `M3.5` live Claude Opus 5.5 review, all 5 findings fixed) |
+| `HC-2026-11-24-05` | 2026-11-24 | `acém` (`v0.4.0` + HC-04 + `ADR-014`) | `72.2%` (`13/18`) | `17/18 PASS`, `1 PARTIAL` | `6` (`4` / `2`) | `6` | Completed hostile brownfield, `/grill-me`, and `ADR-014` native `agents-cli` proof (`v5_brownfield_interview_and_coexistence`: `4/5 PASS`, `1 PARTIAL` scanner hook detection, all 6 findings fixed + `ADR-015`) |

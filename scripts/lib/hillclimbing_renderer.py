@@ -31,6 +31,8 @@ LAYER_LABELS = {
     "stage03-kit": "Stage 03 Kit Build",
     "stage03-bootstrap": "Stage 03 Bootstrap",
     "pack-adk": "Pack ADK",
+    "brownfield": "Brownfield Onboarding",
+    "ci-verdict": "CI & Verdict Gate",
     "kaizen": "Kaizen Engine",
     "upstream-scion": "Upstream Scion",
     "docs": "Docs & Scaffolding",

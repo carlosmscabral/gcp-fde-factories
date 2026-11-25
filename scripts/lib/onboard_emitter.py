@@ -112,6 +112,18 @@ def _content_semver(skill_text: str) -> str:
     return f"1.0.{patch}"
 
 
+def _ensure_scion_gitignore_bytes(existing: bytes | None) -> bytes | None:
+    """Appends .scion/agents/ to .gitignore idempotently while preserving CRLF/LF line endings (HC-05 F5)."""
+    if existing is None:
+        return b"# Scion project-local agent runtime metadata\n.scion/agents/\n"
+    text = existing.decode("utf-8", errors="replace")
+    if any(ln.strip() in (".scion/agents/", ".scion/agents") for ln in text.splitlines()):
+        return None
+    eol = "\r\n" if "\r\n" in text else "\n"
+    suffix = "" if (not text or text.endswith(("\n", "\r"))) else eol
+    return (text + suffix + f"# Scion project-local agent runtime metadata{eol}.scion/agents/{eol}").encode("utf-8")
+
+
 def emit_layer3_overlay(
     repo_dir: pathlib.Path,
     profile: dict[str, Any],
@@ -240,7 +252,14 @@ def emit_layer3_overlay(
         and (repo / "GEMINI.md").read_bytes() == existing_agents_raw
     )
 
-    # All validations and merges succeeded; commit outputs cleanly and remove stale generated Dockerfiles.
+    # Pre-compute .gitignore update atomically before writing any file (HC-05 F5).
+    gitignore_path = repo / ".gitignore"
+    if gitignore_path.is_symlink():
+        raise ValueError(f"Refusing to write through symlink: {gitignore_path}")
+    existing_gi_raw = gitignore_path.read_bytes() if gitignore_path.exists() else None
+    updated_gi_bytes = _ensure_scion_gitignore_bytes(existing_gi_raw)
+
+    # All validations and merges succeeded; commit outputs cleanly and preserve cognitive custom Dockerfiles (ADR-015).
     factory_dir = repo / ".factory"
     factory_dir.mkdir(parents=True, exist_ok=True)
     created: list[str] = []
@@ -250,7 +269,7 @@ def emit_layer3_overlay(
         if content:
             df_path.write_text(content, encoding="utf-8")
             created.append(rel_df)
-        elif df_path.is_file():
+        elif df_path.is_file() and df_path.read_text(encoding="utf-8", errors="ignore").startswith("# Conditional Layer 3 derived customer image"):
             df_path.unlink()
 
     skill_dir = repo / conv_dir_rel
@@ -285,6 +304,9 @@ def emit_layer3_overlay(
 
     agents_path.write_bytes(merged_agents_bytes)
     created.append("AGENTS.md")
+    if updated_gi_bytes is not None:
+        gitignore_path.write_bytes(updated_gi_bytes)
+        created.append(".gitignore")
     if mirror_siblings:
         (repo / "CLAUDE.md").write_bytes(merged_agents_bytes)
         (repo / "GEMINI.md").write_bytes(merged_agents_bytes)

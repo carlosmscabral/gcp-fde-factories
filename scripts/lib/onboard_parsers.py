@@ -218,7 +218,67 @@ def detect_knowledge_sources(repo: pathlib.Path) -> list[str]:
     return sorted(set(found))
 
 
-def detect_modernization_gaps(repo: pathlib.Path, git_ci: dict[str, Any]) -> list[dict[str, str]]:
+def detect_hooks_and_ai_divergence(repo: pathlib.Path) -> tuple[list[str], list[str], list[dict[str, str]]]:
+    """Detects untrusted workspace hooks and diverging AI instruction files for Day-0 advisory reporting."""
+    hooks: list[str] = []
+    advisory: list[dict[str, str]] = []
+
+    # Check harness settings files for workspace-level command hooks.
+    for rel in (
+        ".claude/settings.json",
+        ".claude/settings.local.json",
+        ".gemini/settings.json",
+        ".gemini/settings.local.json",
+    ):
+        p = repo / rel
+        if p.is_file():
+            raw = read_text_safe(p)
+            if '"hooks"' in raw or "'hooks'" in raw:
+                hooks.append(rel)
+
+    # Check repository-managed Git hook directories.
+    for hook_dir in (".githooks", ".husky"):
+        d = repo / hook_dir
+        if d.is_dir():
+            for child in sorted(d.iterdir()):
+                if child.is_file() and not child.name.startswith("."):
+                    hooks.append(child.relative_to(repo).as_posix())
+
+    # Check whether co-existing AGENTS.md, CLAUDE.md, and GEMINI.md files diverge.
+    ai_present: dict[str, bytes] = {}
+    for fname in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
+        p = repo / fname
+        if p.is_file() and not p.is_symlink():
+            ai_present[fname] = p.read_bytes().replace(b"\r\n", b"\n").strip()
+    diverged: list[str] = []
+    if len(ai_present) >= 2 and len(set(ai_present.values())) > 1:
+        diverged = sorted(ai_present.keys())
+
+    if hooks:
+        advisory.append({
+            "code": "UNTRUSTED_WORKSPACE_HOOKS",
+            "severity": "medium",
+            "blocking": False,
+            "paths": hooks,
+            "message": f"Detected workspace hook definitions ({', '.join(hooks)}). Review before trusting in automated runs.",
+        })
+    if diverged:
+        advisory.append({
+            "code": "AI_INSTRUCTION_DIVERGENCE",
+            "severity": "low",
+            "blocking": False,
+            "paths": diverged,
+            "message": f"Pre-existing AI instruction files diverge ({', '.join(diverged)}). Consolidate key rules into absorbed_conventions.",
+        })
+    return sorted(set(hooks)), diverged, advisory
+
+
+def detect_modernization_gaps(
+    repo: pathlib.Path,
+    git_ci: dict[str, Any],
+    untrusted_hooks: list[str] | None = None,
+    ai_divergence: list[str] | None = None,
+) -> list[dict[str, str]]:
     """Identifies non-blocking brownfield maturity gaps with severity and effort."""
     gaps: list[dict[str, str]] = []
     if not (repo / "evals").is_dir():
@@ -247,5 +307,23 @@ def detect_modernization_gaps(repo: pathlib.Path, git_ci: dict[str, Any]) -> lis
             "effort": "S",
             "status": "open",
             "benefit": "Enforces explicit human reviewers on sensitive directories.",
+        })
+    if untrusted_hooks:
+        gaps.append({
+            "id": "GAP-UNTRUSTED-HOOKS",
+            "title": f"Review workspace hooks ({', '.join(untrusted_hooks[:3])})",
+            "severity": "medium",
+            "effort": "S",
+            "status": "open",
+            "benefit": "Prevents unexpected shell execution from legacy workspace hooks inside agent containers.",
+        })
+    if ai_divergence:
+        gaps.append({
+            "id": "GAP-AI-DIVERGENCE",
+            "title": f"Consolidate diverging AI files ({', '.join(ai_divergence)})",
+            "severity": "low",
+            "effort": "S",
+            "status": "open",
+            "benefit": "Keeps agent instructions consistent across Antigravity and Claude harnesses.",
         })
     return gaps

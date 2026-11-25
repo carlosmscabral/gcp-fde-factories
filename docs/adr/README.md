@@ -22,6 +22,7 @@ flowchart TB
   ADR012["ADR-012<br/>Functional Hillclimbing"]
   ADR013["ADR-013<br/>Cross-Project Quota & ADK SA"]
   ADR014["ADR-014<br/>Native agents-cli ADK Layout"]
+  ADR015["ADR-015<br/>Cognitive Brownfield & Validators"]
 
   ADR001 --> ADR004
   ADR001 --> ADR008
@@ -41,6 +42,8 @@ flowchart TB
   ADR012 --> ADR013
   ADR009 --> ADR014
   ADR012 --> ADR014
+  ADR008 --> ADR015
+  ADR012 --> ADR015
 ```
 
 ## Decision Index
@@ -61,6 +64,7 @@ flowchart TB
 | [ADR-012](ADR-012-functional-hillclimbing-e2e-qualification.md) | Functional-First Live Hillclimbing Qualification | Accepted | INV-16 | [HILLCLIMBING_CHARTER.md](../HILLCLIMBING_CHARTER.md) |
 | [ADR-013](ADR-013-cross-project-adc-quota-and-sandbox-runtime-sa.md) | Cross-Project ADC Quota Routing and Same-Project ADK Runtime SA | Accepted | INV-02, INV-03, INV-09, INV-13 | `deploy/01-landing-zone/iam.tf`, `parse_hub_project.py`, `ge_payload.py` |
 | [ADR-014](ADR-014-agents-cli-native-adk-scaffold.md) | Native `google-agents-cli` (`adk_python`) Layout for `packs/adk` | Accepted | INV-12, INV-13 | `packs/adk/repo-scaffold/app/`, `agents-cli-manifest.yaml`, `pyproject.toml`, `Dockerfile` |
+| [ADR-015](ADR-015-cognitive-brownfield-adaptation-and-contract-validators.md) | Cognitive Brownfield Adaptation and Advisory Day-0 Contract Validators | Accepted | INV-12 | `core-gcp-fde/skills/factory-onboard/SKILL.md`, `factory_onboard.py`, `dockerfile_recipes.py`, `onboard_scanner.py` |
 
 ## Lifecycle Rules
 

@@ -7,10 +7,13 @@ Enforces three security and correctness invariants:
 """
 from __future__ import annotations
 
+import pathlib
 import re
 from dataclasses import dataclass
+from typing import Any
 
 DIGEST_IMAGE_RE = re.compile(r"^[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}$")
+SHELL_PIPE_RE = re.compile(r"\b(curl|wget)\b[^|\n]*\|\s*(sudo\s+)?(ba|da|z)?sh\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -153,3 +156,97 @@ def render_conditional_dockerfile(
         "",
     ]
     return "\n".join(lines)
+
+
+def validate_customer_dockerfile(
+    dockerfile_path: pathlib.Path,
+    *,
+    strict: bool = False,
+) -> dict[str, Any]:
+    """Validates any agent-authored .factory/Dockerfile.customer with advisory-default Day-0 findings (ADR-015).
+
+    Structural errors (missing file or missing FROM) always fail. Security findings
+    (unpinned base image, non-root USER, shell-pipe installs, or missing post-USER smoke
+    check) emit named warnings with exit 0 by default, and fail only when strict=True.
+    """
+    structural_errors: list[str] = []
+    advisory_findings: list[dict[str, str]] = []
+
+    if not dockerfile_path.is_file():
+        structural_errors.append(f"Dockerfile does not exist: {dockerfile_path}")
+        return {
+            "ok": False,
+            "mode": "strict" if strict else "advisory",
+            "structural_errors": structural_errors,
+            "advisory_findings": advisory_findings,
+        }
+
+    raw_lines = [
+        ln.strip()
+        for ln in dockerfile_path.read_text(encoding="utf-8").splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    ]
+    stages: list[list[str]] = []
+    for ln in raw_lines:
+        if ln.upper().startswith("FROM "):
+            stages.append([ln])
+        elif stages:
+            stages[-1].append(ln)
+
+    if not stages:
+        structural_errors.append("Dockerfile missing FROM instruction.")
+        return {
+            "ok": False,
+            "mode": "strict" if strict else "advisory",
+            "structural_errors": structural_errors,
+            "advisory_findings": advisory_findings,
+        }
+
+    final_stage = stages[-1]
+    base_tokens = final_stage[0].split()
+    base_ref = next((tok for tok in base_tokens[1:] if not tok.startswith("--")), "")
+    if not DIGEST_IMAGE_RE.match(base_ref):
+        advisory_findings.append({
+            "code": "BASE_IMAGE_NOT_DIGEST_PINNED",
+            "severity": "medium",
+            "message": f"Final stage FROM '{base_ref}' is not digest-pinned (@sha256:<64-hex>).",
+        })
+
+    for ln in raw_lines:
+        if ln.upper().startswith("RUN ") and SHELL_PIPE_RE.search(ln):
+            advisory_findings.append({
+                "code": "SHELL_PIPE_INSTALL_DETECTED",
+                "severity": "high",
+                "message": f"Detected shell-pipe installer in '{ln[:100]}'. Prefer pinned package manager installs.",
+            })
+
+    last_user_idx = -1
+    last_user_val = ""
+    for idx, ln in enumerate(final_stage):
+        if ln.upper().startswith("USER ") and len(ln.split(None, 1)) > 1:
+            last_user_idx = idx
+            last_user_val = ln.split(None, 1)[1].strip()
+
+    user_name = last_user_val.split(":", 1)[0].strip().lower()
+    if last_user_idx == -1 or "$" in last_user_val or user_name in ("root", "0", ""):
+        advisory_findings.append({
+            "code": "FINAL_STAGE_NON_ROOT_USER_MISSING",
+            "severity": "high",
+            "message": "Final stage must end with a literal non-root USER (such as 'USER scion').",
+        })
+    else:
+        has_smoke = any(ln.upper().startswith("RUN ") for ln in final_stage[last_user_idx + 1 :])
+        if not has_smoke:
+            advisory_findings.append({
+                "code": "MISSING_POST_USER_SMOKE_CHECK",
+                "severity": "low",
+                "message": "Add a non-root smoke check RUN command after the final USER instruction.",
+            })
+
+    ok = (not structural_errors) and (not strict or not advisory_findings)
+    return {
+        "ok": ok,
+        "mode": "strict" if strict else "advisory",
+        "structural_errors": structural_errors,
+        "advisory_findings": advisory_findings,
+    }

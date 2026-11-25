@@ -51,7 +51,8 @@ class TestHC04Day2ResilienceRegressions(unittest.TestCase):
         vars_tf = (REPO_ROOT / "deploy/01-landing-zone/variables.tf").read_text(encoding="utf-8")
         finops_tf = (REPO_ROOT / "deploy/01-landing-zone/finops.tf").read_text(encoding="utf-8")
         self.assertIn('variable "enable_budget_pubsub_topic"', vars_tf)
-        self.assertIn("var.enable_budget_pubsub_topic ? google_pubsub_topic.budget_alerts.id : null", finops_tf)
+        self.assertIn('dynamic "all_updates_rule"', finops_tf)
+        self.assertIn("for_each = var.enable_budget_pubsub_topic ? [1] : []", finops_tf)
 
     def test_enterprise_prerequisites_documents_drs_and_partner_model_org_policies(self) -> None:
         """Verifies HC04-F2 and HC04-F3: ENTERPRISE_PREREQUISITES documents DRS and allowedPartnerModelFeatures."""
