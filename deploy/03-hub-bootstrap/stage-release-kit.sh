@@ -10,7 +10,7 @@ GCLOUD_CONFIG=""
 BASE_IMAGE="python:3.12-slim-bookworm"
 ANTIGRAVITY_BASE_IMAGE=""
 CLAUDE_BASE_IMAGE=""
-CORE_VERSION="0.4.0"
+CORE_VERSION="0.5.0"
 DRY_RUN="false"
 
 usage() {

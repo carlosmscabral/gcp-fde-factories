@@ -1,4 +1,4 @@
-# Executable Pack Contract (Contract 1) for packs/adk (v0.1.0).
+# Executable Pack Contract (Contract 1) for packs/adk (v0.5.0).
 # Composes the 13-role scion-frontiers/agent-team (SEP) hierarchy + 3 specialists (16 offline adk-* templates)
 # and 18 Hub Skill Bank skills (5 project-attached + 6 SEP/Kaizen + 7 vendored google/agents-cli v1.15.0).
 schema_version: "1"
@@ -6,8 +6,8 @@ schema_version: "1"
 pack:
   name: adk
   prefix: adk
-  version: "0.1.0"
-  status: pilot
+  version: "0.5.0"
+  status: active
   description: "Google ADK (2.15+) Dockerfile-first factory pack with upstream google/agents-cli skills and dual Gemini Enterprise (GE App) export."
 
 upstream:

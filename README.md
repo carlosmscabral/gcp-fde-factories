@@ -2,7 +2,7 @@
 
 **Reusable Autonomous Software Factories for Google Cloud Forward Deployed Engineers (FDEs)** — built on **Google Cloud Scion (`v0.4.0-preview.3`)**, **`scion-frontiers/agent-team` (SEP)**, **Vertex AI-first generic model tiers**, **split-SA Sandbox verification**, **closed-loop Kaizen**, and **zero-overwrite Brownfield onboarding**.
 
-> **Release `acém` (`v0.4.0`):** Self-contained offline Release Kits, zero static GCP keys, fail-closed IAM and container image validation, dual active domain packs (`packs/gecx` + `packs/adk`), and an empirical [Enterprise GCP Prerequisites Checklist](deploy/ENTERPRISE_PREREQUISITES.md) plus live [Hillclimbing Qualification Ledger](docs/HILLCLIMBING_CHARTER.md).
+> **Release `bife` (`v0.5.0`):** Self-contained offline Release Kits, 3-project cross-project isolation (`hub` + `inf` + `sbx`), keyless GitHub Actions WIF Verdict Gates, native `google-agents-cli` (`adk_python`) single-container Cloud Run A2A + Playground (`ADR-014`), cognitive Day-0 brownfield onboarding with advisory validators (`ADR-015`), closed-loop Tier A + Tier B Kaizen, cross-vendor Claude Opus 5.5 review, and 12h Lite Single-VM endurance qualification ([Enterprise GCP Prerequisites Checklist](deploy/ENTERPRISE_PREREQUISITES.md) | [Hillclimbing Qualification Ledger](docs/HILLCLIMBING_CHARTER.md)).
 
 ---
 
@@ -24,8 +24,8 @@ flowchart TB
     end
 
     subgraph L2["Layer 2 — Domain Factory Packs (packs/)"]
-        GECX["packs/gecx (v0.4.0)<br/>16 templates • 11 skills<br/>CX Agent Studio + Audio"]
-        ADK["packs/adk (v0.1.0)<br/>16 templates • 18 skills<br/>ADK 2.15 + Dockerfile + GE App"]
+        GECX["packs/gecx (v0.5.0)<br/>16 templates • 11 skills<br/>CX Agent Studio + Audio"]
+        ADK["packs/adk (v0.5.0)<br/>16 templates • 18 skills<br/>ADK 2.15 + Dockerfile + GE App"]
         TPL["packs/_template-pack<br/>Starter Skeleton"]
     end
 
@@ -54,9 +54,9 @@ flowchart TB
 
 ## 2. Active Domain Packs Matrix
 
-| Dimension | [`packs/gecx`](packs/gecx/README.md) (`v0.4.0`) | [`packs/adk`](packs/adk/README.md) (`v0.1.0`) | `packs/_template-pack` | `packs/agent-platform` |
+| Dimension | [`packs/gecx`](packs/gecx/README.md) (`v0.5.0`) | [`packs/adk`](packs/adk/README.md) (`v0.5.0`) | `packs/_template-pack` | `packs/agent-platform` |
 | :--- | :--- | :--- | :--- | :--- |
-| **Status** | Active Pilot Pack 1 | Active Pilot Pack 2 | Validated Starter Skeleton | Frozen (Future Release) |
+| **Status** | Active (`v0.5.0` `bife`) | Active (`v0.5.0` `bife`) | Validated Starter Skeleton | Frozen (Future Release) |
 | **Target GCP Platform** | CX Agent Studio (CES text + synthetic `BidiRunSession` audio) | ADK `2.15.0` (Dockerfile-first) + Gemini Enterprise (`GE App`) | Template for new domains | Reserved |
 | **Offline Templates** | **16** (`gecx-*`, `<= 1,800` lines/role) | **16** (`adk-*`, `<= 1,800` lines/role) | **1** (`example-coordinator`) | — |
 | **Hub Skill Bank** | **11** skills (5 project + 6 role-scoped) | **18** skills (5 project + 13 role-scoped incl. 7 `agents-cli`) | `0` | — |

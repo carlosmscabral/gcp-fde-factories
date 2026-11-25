@@ -1,6 +1,6 @@
 # Runtime container layer for packs/adk (ADK 2.15.0 + google-agents-cli 1.15.0 + Gemini Enterprise export).
 # Pins verified co-installable via `uv pip compile --python-version 3.12`.
-ARG CORE_BASE_IMAGE=core-gcp-fde-base:0.4.0
+ARG CORE_BASE_IMAGE=core-gcp-fde-base:0.5.0
 FROM ${CORE_BASE_IMAGE}
 
 USER root

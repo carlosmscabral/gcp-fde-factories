@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gcp-fde-factories"
-version = "0.4.0"
+version = "0.5.0"
 description = "Reusable, empirically validated Scion software factory packs for Google Cloud FDEs."
 requires-python = ">=3.12"
 dependencies = [

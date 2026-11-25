@@ -10,7 +10,7 @@
 #   3. Set code-reviewer and security-auditor harness: "claude-vertex", model: "large", thinking_level: 75
 schema_version: "1"
 pack: "adk"
-pack_version: "0.1.0"
+pack_version: "0.5.0"
 mode: "sandbox-direct"
 diversity_profile: "cross-model"
 

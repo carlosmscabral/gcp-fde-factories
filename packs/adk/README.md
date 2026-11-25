@@ -1,4 +1,4 @@
-# `packs/adk` — ADK 2.15 + Dockerfile-First + Gemini Enterprise App Factory Pack (`v0.1.0`)
+# `packs/adk` — ADK 2.15 + Dockerfile-First + Gemini Enterprise App Factory Pack (`v0.5.0`)
 
 Reusable autonomous software factory pack for **Google Cloud Agent Development Kit (`google-adk[eval,a2a]==2.15.0`)** built around an opinionated **container-first root `Dockerfile`** deployment contract (`agents-cli deploy`), **7 vendored upstream `google/agents-cli v1.15.0` skills**, and deterministic dual export into **Gemini Enterprise (`GE App`)**.
 

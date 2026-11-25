@@ -1,8 +1,8 @@
-# Closed compatibility matrix for packs/gecx (v0.4.0).
+# Closed compatibility matrix for packs/gecx (v0.5.0).
 # bootstrap-hub-project.sh rejects any Hub whose scion version is not in scion.tested.
 schema_version: "1"
 pack: gecx
-pack_version: "0.4.0"
+pack_version: "0.5.0"
 
 scion:
   tested:

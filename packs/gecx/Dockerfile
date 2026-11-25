@@ -1,7 +1,7 @@
 # Runtime container layer for packs/gecx.
 # Installs pinned cxas-scrapi==1.11.0 into /opt/gcp-fde/.venv, vendors Apache-2.0
 # cxas-agent-foundry scripts into /opt/gecx-foundry/, and copies pack scripts into /opt/gecx-factory/.
-ARG CORE_BASE_IMAGE=core-gcp-fde-base:0.4.0
+ARG CORE_BASE_IMAGE=core-gcp-fde-base:0.5.0
 FROM ${CORE_BASE_IMAGE}
 
 USER root

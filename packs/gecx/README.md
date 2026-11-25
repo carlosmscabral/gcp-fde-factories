@@ -1,4 +1,4 @@
-# `packs/gecx` — CX Agent Studio Autonomous Factory Pack (`v0.4.0`)
+# `packs/gecx` — CX Agent Studio Autonomous Factory Pack (`v0.5.0`)
 
 Reusable autonomous software factory pack for **Google Cloud Customer Engagement Suite (CES) / CX Agent Studio (GECX)** supporting text, callback unit tests, golden/simulation evaluations, and synthetic `BidiRunSession` audio verification.
 

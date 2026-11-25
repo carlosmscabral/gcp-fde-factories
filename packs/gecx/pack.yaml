@@ -6,8 +6,8 @@ schema_version: "1"
 pack:
   name: "gecx"
   prefix: "gecx"
-  version: "0.4.0"
-  status: "pilot"
+  version: "0.5.0"
+  status: "active"
   description: "Google Cloud Customer Engagement Suite (GECX / CES) autonomous software factory pack with full 13-role SEP hierarchy, split-SA Sandbox verification, and closed-loop Kaizen."
 
 upstream:
