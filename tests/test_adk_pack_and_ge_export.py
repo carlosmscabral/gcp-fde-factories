@@ -279,6 +279,21 @@ def test_adk_sandbox_gate_level1_honesty_and_dual_janitor(tmp_path: pathlib.Path
             if "pageToken=p2" in url:
                 return 200, {"reasoningEngines": [{"name": "projects/sbx/locations/us-central1/reasoningEngines/old2", "displayName": "[CI] PR-2", "createTime": "2026-11-24T08:00:00Z"}]}
             return 200, {"reasoningEngines": [resources[0]], "nextPageToken": "p2"}
+        if method == "GET" and "run.googleapis.com/v2/" in url and "/services" in url:
+            return 200, {
+                "services": [
+                    {
+                        "name": "projects/sbx/locations/us-central1/services/ci-orphan",
+                        "labels": {"factory_ci": "true"},
+                        "createTime": "2026-11-24T08:00:00Z",
+                    },
+                    {
+                        "name": "projects/sbx/locations/us-central1/services/customer-prod-control",
+                        "labels": {"env": "prod"},
+                        "createTime": "2026-11-24T08:00:00Z",
+                    },
+                ]
+            }
         if method == "GET" and "/agents" in url:
             return 200, {"agents": [{"name": ge_res, "displayName": "[CI] PR-1", "createTime": "2026-11-24T08:00:00Z"}]}
         if method == "DELETE":
@@ -301,6 +316,8 @@ def test_adk_sandbox_gate_level1_honesty_and_dual_janitor(tmp_path: pathlib.Path
     )
     assert rc == 1
     assert any("reasoningEngines/old?force=true" in u for u in deleted_urls)
+    assert any("services/ci-orphan" in u for u in deleted_urls)
+    assert not any("customer-prod-control" in u for u in deleted_urls)
     assert any(ge_res in u for u in deleted_urls)
     assert len(summary["failures"]) == 1
 

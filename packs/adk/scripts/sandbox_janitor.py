@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Hourly out-of-band Sandbox Janitor for packs/adk (Vertex AI ReasoningEngines + Gemini Enterprise agents).
+"""Hourly out-of-band Sandbox Janitor for packs/adk (ReasoningEngines, Cloud Run, and GE agents).
 
 Runs exclusively under the dedicated Janitor SA (never registered on Scion Hub).
-Paginates all resources, selects only `[CI]`-prefixed resources older than max_age_hours (4h),
-deletes ReasoningEngines with force=true and ephemeral GE agents via Discovery Engine v1alpha,
-and exits non-zero if any deletion fails.
+Paginates all resources, selects only `[CI]`-prefixed Vertex AI / GE resources and
+`factory_ci=true`-labeled Cloud Run services older than max_age_hours (4h), deletes
+them without touching non-CI customer workloads, and exits non-zero on failure.
 """
 from __future__ import annotations
 
@@ -37,6 +37,32 @@ def select_expired_ci_resources(
         # Use updateTime when present so shared PATCH-reused Sandbox GE agents stay alive while active.
         ts_raw = str(item.get("updateTime") or item.get("createTime") or "")
         if not (display.startswith("[CI]") and name and ts_raw) or name in skipped:
+            continue
+        try:
+            ref_time = dt.datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if ref_time.tzinfo is None:
+            ref_time = ref_time.replace(tzinfo=dt.timezone.utc)
+        if ref_time <= cutoff:
+            expired.append(name)
+    return sorted(expired)
+
+
+def select_expired_ci_cloud_run_services(
+    services: list[dict[str, Any]],
+    now_utc: dt.datetime,
+    max_age_hours: float = 4.0,
+) -> list[str]:
+    """Filters Cloud Run v2 services labeled factory_ci=true older than max_age_hours (HC-06 F1)."""
+    expired: list[str] = []
+    cutoff = now_utc - dt.timedelta(hours=max_age_hours)
+    for item in services:
+        labels = item.get("labels") if isinstance(item.get("labels"), dict) else {}
+        name = str(item.get("name") or "")
+        # Cloud Run v2 uses updateTime/createTime; skip any service lacking factory_ci=true to protect customer apps.
+        ts_raw = str(item.get("updateTime") or item.get("createTime") or "")
+        if not (str(labels.get("factory_ci", "")).lower() == "true" and name and ts_raw):
             continue
         try:
             ref_time = dt.datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
@@ -118,16 +144,38 @@ def run_janitor(
         )
         if not ok:
             failures.append(err)
-            continue
-        expired = select_expired_ci_resources(engines, ref_now, max_age_hours)
-        found.extend(expired)
-        if apply:
-            for name in expired:
-                st, _ = rest_fn("DELETE", f"{base}/{name}?force=true", token, project)
-                if 200 <= st < 300:
-                    deleted.append(name)
-                else:
-                    failures.append(f"DELETE {name} failed with HTTP {st}")
+        else:
+            expired = select_expired_ci_resources(engines, ref_now, max_age_hours)
+            found.extend(expired)
+            if apply:
+                for name in expired:
+                    st, _ = rest_fn("DELETE", f"{base}/{name}?force=true", token, project)
+                    if 200 <= st < 300:
+                        deleted.append(name)
+                    else:
+                        failures.append(f"DELETE {name} failed with HTTP {st}")
+
+        # Sweep orphaned ephemeral Cloud Run v2 services labeled factory_ci=true (HC-06 F1).
+        cr_base = "https://run.googleapis.com/v2"
+        ok_cr, cr_services, err_cr = _list_paginated(
+            f"{cr_base}/projects/{project}/locations/{region}/services",
+            "services",
+            token,
+            project,
+            rest_fn,
+        )
+        if not ok_cr:
+            failures.append(err_cr)
+        else:
+            expired_cr = select_expired_ci_cloud_run_services(cr_services, ref_now, max_age_hours)
+            found.extend(expired_cr)
+            if apply:
+                for name in expired_cr:
+                    st, _ = rest_fn("DELETE", f"{cr_base}/{name}", token, project)
+                    if 200 <= st < 300:
+                        deleted.append(name)
+                    else:
+                        failures.append(f"DELETE {name} failed with HTTP {st}")
 
     if ge_app:
         prefix = "" if ge_location == "global" else f"{ge_location}-"
