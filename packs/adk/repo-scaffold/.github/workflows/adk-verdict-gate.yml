@@ -49,7 +49,7 @@ jobs:
               exit 1
             fi
           fi
-          if grep -Eq '^(agent/|Dockerfile$)' <<< "$CHANGED"; then
+          if grep -Eq '^(app/|agent/|Dockerfile$)' <<< "$CHANGED"; then
             echo "REQUIRE_LIVE=true" >> "$GITHUB_ENV"
           else
             echo "REQUIRE_LIVE=false" >> "$GITHUB_ENV"

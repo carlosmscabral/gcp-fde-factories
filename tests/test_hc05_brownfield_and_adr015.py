@@ -163,3 +163,7 @@ def test_adr015_validate_dockerfile_advisory_default_vs_strict_and_nx_custom_cli
         sa_delta = (REPO_ROOT / f"packs/{pack}/templates/security-auditor/delta.md").read_text(encoding="utf-8")
         assert "report-only" not in sa_delta.lower()
         assert "advisory" not in sa_delta.lower()
+
+    # 5. ADR-014 ADK Verdict Gate requires live verification on app/ changes as well as legacy agent/ and Dockerfile.
+    wf = (REPO_ROOT / "packs/adk/repo-scaffold/.github/workflows/adk-verdict-gate.yml").read_text(encoding="utf-8")
+    assert "^(app/|agent/|Dockerfile$)" in wf
