@@ -528,6 +528,8 @@ resource "google_project_iam_custom_role" "adk_sandbox_deployer" {
     "discoveryengine.agents.manage",
     "discoveryengine.agents.update",
     "run.operations.get",
+    "run.revisions.get",
+    "run.revisions.list",
     "run.services.create",
     "run.services.delete",
     "run.services.get",
@@ -768,6 +770,8 @@ resource "google_iam_workload_identity_pool" "github_actions" {
   workload_identity_pool_id = "${var.name_prefix}-gh-pool"
   display_name              = "GitHub Actions Verdict Gate Pool"
   description               = "Keyless OIDC federation strictly scoped to the customer repository for PR Verdict verification."
+
+  depends_on = [google_project_service.enabled]
 }
 
 resource "google_iam_workload_identity_pool_provider" "github_oidc" {

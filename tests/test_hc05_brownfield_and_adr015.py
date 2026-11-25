@@ -167,3 +167,20 @@ def test_adr015_validate_dockerfile_advisory_default_vs_strict_and_nx_custom_cli
     # 5. ADR-014 ADK Verdict Gate requires live verification on app/ changes as well as legacy agent/ and Dockerfile.
     wf = (REPO_ROOT / "packs/adk/repo-scaffold/.github/workflows/adk-verdict-gate.yml").read_text(encoding="utf-8")
     assert "^(app/|agent/|Dockerfile$)" in wf
+
+
+def test_hc07_f1_github_wif_pool_depends_on_project_services() -> None:
+    """Locks in HC07-F1 (WIF pool service dependency) and HC07-F2 (adkSandboxDeployer revision read permissions)."""
+    iam_tf = (REPO_ROOT / "deploy/01-landing-zone/iam.tf").read_text(encoding="utf-8")
+    marker = 'resource "google_iam_workload_identity_pool" "github_actions"'
+    start = iam_tf.index(marker)
+    block = iam_tf[start : iam_tf.index("\n}", start) + 2]
+    assert "depends_on = [google_project_service.enabled]" in block
+
+    deployer_marker = 'resource "google_project_iam_custom_role" "adk_sandbox_deployer"'
+    d_start = iam_tf.index(deployer_marker)
+    d_block = iam_tf[d_start : iam_tf.index("\n}", d_start) + 2]
+    assert '"run.revisions.get"' in d_block
+    assert '"run.revisions.list"' in d_block
+
+

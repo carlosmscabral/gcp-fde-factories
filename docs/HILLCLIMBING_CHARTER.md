@@ -164,9 +164,17 @@ Each gate uses a binary first-pass check (`first_pass: true` or `false`) and an 
 | **M6.4** | Closed-loop Kaizen impact measurement | Accelerated Kaizen runs over real 4-wave Hub and GCP telemetry, opens and merges a real improvement PR with `Kaizen-Ref:`, and Wave 5 measures before-versus-after delta via `kaizen_verifier.py` | `PASS (merged Kaizen PR + delta measured)` |
 | **M6.5** | Sustained runtime stability and real TCO report | Lite VM Hub (SQLite, Docker disk, git worktrees, container GC) stays healthy with zero restarts or `SQLITE_BUSY` errors and reports measured per-PR and idle TCO | `PASS (0 crashes, TCO measured)` |
 
-## Release Candidate Sanity Gate (`HC-07` for `v0.5.0` `bife`)
+## Release Candidate Sanity Gate: `additive_gates.v7_release_sanity_gate` (Qualified in `HC-07` for `v0.5.0` `bife`)
 
-`HC-07` executes a zero-new-scope regression freeze across both Lite Single-VM (`packs/gecx` with `ADR-015` cognitive brownfield advisory validators) and Stateful GKE Standard (`packs/adk` `ADR-014` under root org `requireShieldedVm` plus `HC06-F1` Cloud Run Janitor) before cutting annotated tag `bife` (`v0.5.0`).
+`HC-07` executed a zero-new-scope regression freeze across both Lite Single-VM (`packs/gecx` `v0.5.0` with `ADR-015` cognitive brownfield advisory validators) and Stateful GKE Standard (`packs/adk` `v0.5.0` `ADR-014` under root org `requireShieldedVm` plus `HC06-F1` Cloud Run Janitor) before cutting annotated tag `bife` (`v0.5.0`):
+
+| Metric ID | Additive Gate | Verification Requirement (`HC-07` Dual-Runtime Release Sanity Gate) | Target |
+| :--- | :--- | :--- | :--- |
+| **M7.1** | Dual-runtime hardened org bring-up (`HC05-F1` + `HC05-F2`) | Unified 3-project Landing Zone applies under root org DRS (`enable_budget_pubsub_topic=false`) and brings up both Lite Single-VM and GKE Standard (`--shielded-secure-boot`) | `PASS (both runtimes healthy Attempt 1)` |
+| **M7.2** | Cold-start `ADR-015` brownfield and `HC05-F3/F4/F5` proof | Raw brownfield `scan`, `check`, `emit`, and `validate-dockerfile` (advisory vs `--strict`) pass cold-start, `.factory/Dockerfile.customer` builds via Cloud Build, and `gecx-developer` opens PR #1 with zero `.gitignore` workaround | `PASS (0 clobber, Cloud Build green)` |
+| **M7.3** | Cold-start `ADR-014` ADK, `HC05-F6`, and `app/` WIF gate | Unmodified `packs/adk` `v0.5.0` deploys on GKE to authenticated Cloud Run, passes 5/5 live HTTP 200 probes as `eval` SA, and triggers `REQUIRE_LIVE=true` on `app/` for a GREEN keyless WIF run | `PASS (5/5 HTTP 200 + WIF GREEN)` |
+| **M7.4** | Cold-start `HC06-F1` Cloud Run Janitor sweep | Unmodified `packs/adk/scripts/sandbox_janitor.py` deletes an expired `factory_ci=true` Cloud Run service on Attempt 1 and preserves an unlabeled control service | `PASS (orphan deleted, control preserved)` |
+| **M7.5** | Dual-runtime security, Tier-B Kaizen, and zero-Showstopper gate | Live 4/4 negative IAM HTTP 403 probes pass, 0-token Tier A+B Kaizen collects 6/6 sources with zero errors, round completes with zero Showstoppers, and teardown reaches `$0` residual | `PASS (0 Showstoppers, $0 residual)` |
 
 ## Wave 2 Preview (Deferred Until Wave 1 = 100%)
 
@@ -186,3 +194,4 @@ Once `core_v1` and active Wave 1 additive blocks reach `100%` with zero Showstop
 | `HC-2026-11-24-04` | 2026-11-24 | `acém` (`v0.4.0` + HC-03) | `77.8%` (`14/18`) | `17/18 PASS`, `1 PARTIAL` | `5` (`3` / `2`) | `3` | Completed Day-2 resilience and cross-vendor (`v4_day2_resilience`: `4/4 PASS` — `M2.6`, `M5.5`, `M5.6`, `M3.5` live Claude Opus 5.5 review, all 5 findings fixed) |
 | `HC-2026-11-24-05` | 2026-11-24 | `acém` (`v0.4.0` + HC-04 + `ADR-014`) | `72.2%` (`13/18`) | `17/18 PASS`, `1 PARTIAL` | `6` (`4` / `2`) | `6` | Completed hostile brownfield, `/grill-me`, and `ADR-014` native `agents-cli` proof (`v5_brownfield_interview_and_coexistence`: `4/5 PASS`, `1 PARTIAL` scanner hook detection, all 6 findings fixed + `ADR-015`) |
 | `HC-2026-11-25-06` | 2026-11-25 | `acém` (`v0.4.0` + HC-05 + `ADR-015`) | `94.4%` (`17/18`) | `17/18 PASS`, `1 PARTIAL` | `1` (`1` / `0`) | `1` | Completed 11.7h Lite Single-VM endurance soak (`v6_endurance_soak`: `5/5 PASS` across 5 waves, `101.8m` idle resume, strict Andon Cord, `4.8h` real TTL Janitor + `HC06-F1` fix, `KZ-2026-11-25-01` `verified_pass`, `0` restarts, `~$3.06` list-price est.) |
+| `HC-2026-11-25-07` | 2026-11-25 | `bife` (`v0.5.0`) | `88.9%` (`16/18`) | `17/18 PASS`, `1 PARTIAL` | `2` (`0` / `2`) | `2` | Completed dual-runtime release sanity gate (`v7_release_sanity_gate`: `5/5 PASS`, **0 Showstoppers**, all HC-05/HC-06/`ADR-014`/`ADR-015` fixes cold-start verified on VM + GKE, 2 minor IAM items `HC07-F1`/`HC07-F2` fixed, `$0` teardown) |
