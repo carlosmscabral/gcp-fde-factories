@@ -47,7 +47,9 @@ def _extract_project(resource_name: str) -> str:
 
 def _project_matches(actual_project: str, sandbox_project: str, sandbox_project_number: str = "") -> bool:
     """Checks whether actual_project matches sandbox_project ID or explicit numeric sandbox_project_number (HC-10 F8)."""
-    allowed = {p for p in (sandbox_project.strip(), sandbox_project_number.strip()) if p}
+    num = sandbox_project_number.strip()
+    valid_num = num if num.isdigit() else ""
+    allowed = {p for p in (sandbox_project.strip(), valid_num) if p}
     return bool(actual_project and actual_project in allowed)
 
 
@@ -159,13 +161,21 @@ def _verify_adk_live(
         errors.append("ADK live-gcp-verified requires non-empty expected_evaluator_sa.")
     if expected_evaluator_sa and v_sa != expected_evaluator_sa:
         errors.append(f"Verdict expected_evaluator_sa '{v_sa}' != CI evaluator SA '{expected_evaluator_sa}'.")
-    if "l2:adk-eval" not in (verdict.get("gates_executed") or []):
+    gates_exec = verdict.get("gates_executed") or []
+    gates_skip = verdict.get("gates_skipped") or []
+    if "l2:adk-eval" not in gates_exec:
         errors.append("ADK live-gcp-verified requires 'l2:adk-eval' in gates_executed.")
 
     pr_tag = f"PR-{verdict['pr_number']}"
     sha7 = str(verdict["commit_sha"])[:7]
     app_name = str(verdict.get("ephemeral_app_name") or "")
     ge_agent = str(verdict.get("ge_agent_resource") or "")
+
+    if app_name and "/reasoningEngines/" in app_name:
+        if "l2:agent-engine-remote-smoke" not in gates_exec or "l2:agent-engine-remote-smoke" in gates_skip:
+            errors.append(
+                "ADK ReasoningEngine live-gcp-verified requires 'l2:agent-engine-remote-smoke' in gates_executed and not in gates_skipped."
+            )
 
     if app_name:
         if not _project_matches(_extract_project(app_name), sandbox_project, sandbox_project_number):

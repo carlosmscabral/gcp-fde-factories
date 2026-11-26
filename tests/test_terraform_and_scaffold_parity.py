@@ -59,7 +59,7 @@ def test_stage01_iam_and_stage02_cloud_init_security_guards() -> None:
     assert "evaluator_ar_reader" in code_only
     assert "operator_builder_act_as" in code_only
     assert "operator_cloudbuild_editor" in code_only
-    assert "assertion.repository ==" in code_only
+    assert "assertion.repository.lowerAscii() ==" in code_only
 
     # ADK-17: adkSandboxDeployer custom role must NOT grant project-wide storage.objects.*.
     role_blocks = re.findall(r'resource "google_project_iam_custom_role" "[^"]+" \{[\s\S]+?\n\}', code_only)

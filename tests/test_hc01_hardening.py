@@ -49,10 +49,11 @@ def test_stage01_cross_project_iam_and_apis_hc01_hardening() -> None:
         "sandbox_agent_engine_re_ar_reader",
         "deployer_builder_act_as",
         "deployer_worker_act_as",
-        "deployer_hub_cloudbuild_editor",
-        "deployer_hub_service_usage",
+        "deployer_sandbox_cloudbuild_editor",
+        "sandbox_builder_ar_writer",
     ):
         assert f'"{res_name}"' in iam_tf, f"Missing HC-01 IAM resource {res_name}"
+    assert "deployer_hub_cloudbuild_editor" not in iam_tf
 
     # INV-04: janitor must never be granted Hub token minting.
     sa_iam_blocks = re.findall(r'resource "google_service_account_iam_member" "[^"]+" \{[^}]+\}', iam_tf)

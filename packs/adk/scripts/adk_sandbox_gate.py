@@ -385,17 +385,28 @@ def main(argv: list[str] | None = None) -> int:
         return _write_verdict(args, diversity_profile, evals_dir, gates_executed, _remaining_gates(gates_executed, ["l2:missing-sandbox-target"]), "verifier-blocked", exit_code=1)
 
     # Verify the deployed Vertex AI Agent Engine handles real session creation and streamed replies remotely (HC-11).
-    if args.reasoning_engine and not args.skip_remote_smoke:
-        ok_remote, remote_info = run_remote_agent_engine_smoke(
-            reasoning_engine=args.reasoning_engine,
-            access_token=evaluator_tok,
-            quota_project=args.sandbox_project,
-            prompt=args.remote_smoke_prompt,
-        )
-        gates_executed.append("l2:agent-engine-remote-smoke")
-        if not ok_remote:
-            print(f"REMOTE AGENT ENGINE SMOKE FAILED: {remote_info}", file=sys.stderr)
-            return _write_verdict(args, diversity_profile, evals_dir, gates_executed, _remaining_gates(gates_executed), "verifier-failed", exit_code=1)
+    # Never allow --skip-remote-smoke in production; even under ADK_GATE_UNIT_TEST=1 it downgrades the verdict.
+    remote_smoke_skipped = False
+    if args.reasoning_engine:
+        if args.skip_remote_smoke:
+            if os.environ.get("ADK_GATE_UNIT_TEST") != "1":
+                print(
+                    "REFUSED: --skip-remote-smoke requires ADK_GATE_UNIT_TEST=1 and cannot emit live-gcp-verified.",
+                    file=sys.stderr,
+                )
+                return _write_verdict(args, diversity_profile, evals_dir, gates_executed, _remaining_gates(gates_executed), "verifier-blocked", exit_code=1)
+            remote_smoke_skipped = True
+        else:
+            ok_remote, remote_info = run_remote_agent_engine_smoke(
+                reasoning_engine=args.reasoning_engine,
+                access_token=evaluator_tok,
+                quota_project=args.sandbox_project,
+                prompt=args.remote_smoke_prompt,
+            )
+            gates_executed.append("l2:agent-engine-remote-smoke")
+            if not ok_remote:
+                print(f"REMOTE AGENT ENGINE SMOKE FAILED: {remote_info}", file=sys.stderr)
+                return _write_verdict(args, diversity_profile, evals_dir, gates_executed, _remaining_gates(gates_executed), "verifier-failed", exit_code=1)
 
     evalsets = sorted((evals_dir / "synthetic").glob("*.evalset.json")) if (evals_dir / "synthetic").is_dir() else []
     if not evalsets:
@@ -439,13 +450,14 @@ def main(argv: list[str] | None = None) -> int:
     gates_executed.append("l2:adk-eval")
     if total_passed <= 0:
         return _write_verdict(args, diversity_profile, evals_dir, gates_executed, _remaining_gates(gates_executed), "verifier-failed", exit_code=1)
+    final_verdict = "unit-test-verified" if remote_smoke_skipped else "live-gcp-verified"
     return _write_verdict(
         args,
         diversity_profile,
         evals_dir,
         gates_executed,
         _remaining_gates(gates_executed),
-        "live-gcp-verified",
+        final_verdict,
         ge_agent_resource=resolved_ge_agent or None,
         exit_code=0,
     )

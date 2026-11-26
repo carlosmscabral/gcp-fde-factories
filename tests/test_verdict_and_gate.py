@@ -117,7 +117,7 @@ def test_gecx_cross_pack_downgrade_and_adk_forgery_vectors_blocked(tmp_path: pat
             "ephemeral_app_name": "projects/other-proj/locations/us-central1/reasoningEngines/re-1",
             "evaluation_run_ids": [],
             "expected_evaluator_sa": "adk-eval@sbx.iam.gserviceaccount.com",
-            "gates_executed": ["l1:ge-export-bundle", "l2:adk-eval"],
+            "gates_executed": ["l1:ge-export-bundle", "l2:agent-engine-remote-smoke", "l2:adk-eval"],
         },
         "adk-wrong-proj.json",
     )
@@ -141,7 +141,7 @@ def test_gecx_cross_pack_downgrade_and_adk_forgery_vectors_blocked(tmp_path: pat
             "ephemeral_app_name": "projects/sbx/locations/us-central1/reasoningEngines/re-1",
             "evaluation_run_ids": [],
             "expected_evaluator_sa": "adk-eval@sbx.iam.gserviceaccount.com",
-            "gates_executed": ["l1:ge-export-bundle", "l2:adk-eval"],
+            "gates_executed": ["l1:ge-export-bundle", "l2:agent-engine-remote-smoke", "l2:adk-eval"],
         },
         "adk-unbound.json",
     )

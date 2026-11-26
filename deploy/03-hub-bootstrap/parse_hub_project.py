@@ -21,6 +21,25 @@ SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 MODEL_GARDEN_URL = "https://console.cloud.google.com/vertex-ai/publishers/anthropic/model-garden/claude-opus-5-5"
 ZERO_DIGEST = "@sha256:" + ("0" * 64)
 MAX_OVERLAY_SKILL_LINES = 300
+UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def read_scion_project_id(settings_path: pathlib.Path) -> str:
+    """Reads and UUID-validates hub.project_id from a Scion v0.4 .scion/settings.yaml file (costela H4)."""
+    if not settings_path.is_file():
+        return ""
+    raw = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        return ""
+    hub = raw.get("hub")
+    if not isinstance(hub, dict):
+        return ""
+    pid = str(hub.get("project_id") or "").strip()
+    if not pid:
+        return ""
+    if not UUID_RE.fullmatch(pid):
+        raise ValueError(f"Invalid hub.project_id UUID in {settings_path}: '{pid}'.")
+    return pid
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "pack": "",
@@ -309,8 +328,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pin-image", default="")
     parser.add_argument("--check-overlay-skill", type=pathlib.Path)
     parser.add_argument("--pack-skills-json", default="[]")
+    parser.add_argument("--read-scion-project-id", type=pathlib.Path)
     args = parser.parse_args(argv)
     try:
+        if args.read_scion_project_id:
+            print(read_scion_project_id(args.read_scion_project_id))
+            return 0
         if args.check_overlay_skill:
             pack_names = set(json.loads(args.pack_skills_json))
             check_overlay_skill(args.check_overlay_skill, pack_names)

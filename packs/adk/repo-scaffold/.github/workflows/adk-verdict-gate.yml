@@ -43,14 +43,17 @@ jobs:
           HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
           PR_LABELS: "${{ join(github.event.pull_request.labels.*.name, ',') }}"
         run: |
-          CHANGED="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          # Disable rename detection so `git mv evals/... docs/...` cannot hide removed eval files (costela H2).
+          CHANGED="$(git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA")"
           if grep -Eq '(^|.*/)evals/' <<< "$CHANGED"; then
-            if ! grep -qw 'eval-change-approved' <<< "$PR_LABELS"; then
+            if ! tr ',' '\n' <<< "$PR_LABELS" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -qx 'eval-change-approved'; then
               echo "::error::PR edits evals/ without human label 'eval-change-approved'."
               exit 1
             fi
           fi
-          if grep -Eq '(^|.*/)(app/|agent/|Dockerfile$)' <<< "$CHANGED"; then
+          # Fail closed: require live verification unless every changed path is strictly docs or .factory metadata (costela M5).
+          NON_DOCS="$(grep -Ev '^(README\.md|docs/.*|.*\.md|\.factory/.*)$' <<< "$CHANGED" || true)"
+          if [[ -n "$NON_DOCS" ]]; then
             echo "REQUIRE_LIVE=true" >> "$GITHUB_ENV"
           else
             echo "REQUIRE_LIVE=false" >> "$GITHUB_ENV"
@@ -87,7 +90,7 @@ jobs:
             exit 1
           fi
           if [[ ! -f "$VERDICT_FILE" ]]; then
-            if ! grep -qw 'no-verdict-approved' <<< "$PR_LABELS"; then
+            if ! tr ',' '\n' <<< "$PR_LABELS" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -qx 'no-verdict-approved'; then
               echo "::error::Missing required PR Verdict '$VERDICT_FILE' (add label 'no-verdict-approved' for docs-only PRs)."
               exit 1
             fi
@@ -118,9 +121,16 @@ jobs:
           # Bind Verdict commit_sha to the latest non-verdict code commit on the PR branch (HC-03 F6).
           # Any code, test, or eval edit after the Verdict commit changes EXPECTED_CODE_SHA and fails closed.
           export EXPECTED_CODE_SHA="$(git log -n 1 --format=%H "$PR_HEAD_SHA" -- . ':(exclude).factory/verdicts/')"
-          # Derive numeric Sandbox project number from ADK_SANDBOX_PROJECT_NUMBER or WIF_PROVIDER (HC-10 F8).
+          # Derive numeric Sandbox project number from explicit ADK_SANDBOX_PROJECT_NUMBER or WIF_PROVIDER (HC-10 F8, L5).
           if [[ -z "${SANDBOX_PROJECT_NUMBER:-}" && "${WIF_PROVIDER:-}" == projects/* ]]; then
-            export SANDBOX_PROJECT_NUMBER="$(echo "$WIF_PROVIDER" | awk -F/ '{print $2}')"
+            CAND_NUM="$(echo "$WIF_PROVIDER" | awk -F/ '{print $2}')"
+            if [[ "$CAND_NUM" =~ ^[0-9]+$ ]]; then
+              export SANDBOX_PROJECT_NUMBER="$CAND_NUM"
+            fi
+          fi
+          if [[ -n "${SANDBOX_PROJECT_NUMBER:-}" && ! "${SANDBOX_PROJECT_NUMBER}" =~ ^[0-9]+$ ]]; then
+            echo "::error::SANDBOX_PROJECT_NUMBER must be numeric, got '${SANDBOX_PROJECT_NUMBER}'."
+            exit 1
           fi
           mkdir -p dist/ge-export
           docker run --rm --entrypoint "" --user "$(id -u):$(id -g)" \

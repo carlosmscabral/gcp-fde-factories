@@ -66,7 +66,7 @@ def test_hc10_f8_verdict_checker_supports_numeric_project_number_and_workflow_wi
                 "evaluation_run_ids": [],
                 "expected_evaluator_sa": "hc10-eval@sbx-proj.iam.gserviceaccount.com",
                 "evals_tree_sha256": sha256_tree(evals_dir),
-                "gates_executed": ["l1:pytest", "l2:adk-eval"],
+                "gates_executed": ["l1:pytest", "l2:agent-engine-remote-smoke", "l2:adk-eval"],
                 "gates_skipped": [],
                 "not_verifiable_surfaces": [],
                 "verdict": "live-gcp-verified",

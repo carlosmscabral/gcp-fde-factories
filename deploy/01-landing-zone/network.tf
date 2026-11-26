@@ -81,7 +81,21 @@ resource "google_artifact_registry_repository" "scion_images" {
   location      = var.region
   repository_id = "${var.name_prefix}-images"
   format        = "DOCKER"
-  description   = "Digest-pinned Scion harness images and FDE pack layers."
+  description   = "Digest-pinned Scion harness images and FDE pack layers (operator/release_builder write only)."
+
+  depends_on = [google_project_service.enabled]
+}
+
+# Dedicated disposable Sandbox container registry for autonomous PR builds (costela H3).
+# Isolates untrusted PR container pushes inside sandbox_project_id so deployer never writes to Hub AR.
+resource "google_artifact_registry_repository" "sandbox_images" {
+  count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? 1 : 0
+
+  project       = var.sandbox_project_id
+  location      = var.region
+  repository_id = "${var.name_prefix}-sandbox-images"
+  format        = "DOCKER"
+  description   = "Ephemeral PR container images built and deployed strictly inside the disposable Sandbox project."
 
   depends_on = [google_project_service.enabled]
 }

@@ -27,6 +27,10 @@ try:
         register_ge_agent,
         validate_ge_manifest,
     )
+    from packs.adk.scripts.lib.ge_preflight import (
+        classify_ge_registration_error,
+        preflight_ge_registration,
+    )
 except ModuleNotFoundError:
     from lib.ge_payload import (
         default_ge_schema,
@@ -35,6 +39,10 @@ except ModuleNotFoundError:
         patch_ge_agent,
         register_ge_agent,
         validate_ge_manifest,
+    )
+    from lib.ge_preflight import (
+        classify_ge_registration_error,
+        preflight_ge_registration,
     )
 
 
@@ -72,6 +80,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p_patch.add_argument("--quota-project-number", default=os.environ.get("SANDBOX_PROJECT_NUMBER", ""))
     p_patch.add_argument("--schema", type=pathlib.Path, default=schema_default)
 
+    p_pre = sub.add_parser("preflight")
+    p_pre.add_argument("--manifest", type=pathlib.Path, default=None)
+    p_pre.add_argument("--project", default="")
+    p_pre.add_argument("--location", default="global", choices=["global", "us", "eu"])
+    p_pre.add_argument("--endpoint-location", default="", choices=["", "global", "us", "eu"])
+    p_pre.add_argument("--quota-project", default="")
+    p_pre.add_argument("--schema", type=pathlib.Path, default=schema_default)
+
     p_del = sub.add_parser("delete")
     p_del.add_argument("--agent-name", required=True)
     p_del.add_argument("--endpoint-location", default="", choices=["", "global", "us", "eu"])
@@ -81,8 +97,45 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Runs the selected Gemini Enterprise export or registration subcommand."""
+    """Runs the selected Gemini Enterprise export, preflight, or registration subcommand."""
     args = parse_args(argv)
+    if args.cmd == "preflight":
+        token = os.environ.get("ADK_DEPLOYER_OAUTH_TOKEN", "").strip()
+        if not token:
+            print("Missing explicit ADK_DEPLOYER_OAUTH_TOKEN for preflight.", file=sys.stderr)
+            return 1
+        project_id = args.project.strip()
+        location = args.location
+        endpoint_loc = args.endpoint_location
+        quota_proj = args.quota_project.strip()
+        if args.manifest is not None:
+            spec = json.loads(args.manifest.read_text(encoding="utf-8"))
+            ge_cfg = spec.get("gemini_enterprise") or {}
+            project_id = project_id or str(ge_cfg.get("project_id") or "")
+            location = str(ge_cfg.get("location") or location)
+            endpoint_loc = endpoint_loc or str(ge_cfg.get("endpoint_location") or location)
+            quota_proj = quota_proj or project_id
+        if not project_id:
+            print("Provide --manifest or --project for preflight.", file=sys.stderr)
+            return 1
+        try:
+            report = preflight_ge_registration(
+                project_id=project_id,
+                location=location,
+                token=token,
+                quota_project=quota_proj or project_id,
+                endpoint_location=endpoint_loc or location,
+            )
+        except ValueError as exc:
+            print(f"GE PREFLIGHT REFUSED: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(report, indent=2))
+        if report.get("ready"):
+            return 0
+        if report.get("status") in {"NO_PROJECT_LICENSE", "AUTO_REGISTER_DISABLED"}:
+            return 2
+        return 1
+
     if args.cmd == "delete":
         token = os.environ.get("ADK_DEPLOYER_OAUTH_TOKEN", "").strip()
         if not token:
@@ -163,7 +216,10 @@ def main(argv: list[str] | None = None) -> int:
         display_name_override=args.display_name,
         reasoning_engine_override=args.reasoning_engine,
     )
-    print(json.dumps({"status": status, "body": body}, indent=2))
+    out: dict[str, object] = {"status": status, "body": body}
+    if not (200 <= status < 300):
+        out["error_category"] = classify_ge_registration_error(status, body)
+    print(json.dumps(out, indent=2))
     return 0 if 200 <= status < 300 else 1
 
 

@@ -24,10 +24,11 @@ _AGENT_DIR = os.path.dirname(
 def _resolve_agent_engine_location() -> str:
     """Resolves a regional location for VertexAiSessionService and rejects global (HC-10 F9, HC-11 F4).
 
-    Reads non-reserved ADK_AGENT_ENGINE_REGION first because Vertex AI Agent Engine rejects
-    deploymentSpec.env keys starting with the reserved GOOGLE_CLOUD_AGENT_ENGINE prefix.
+    Reads platform-injected GOOGLE_CLOUD_AGENT_ENGINE_LOCATION and non-reserved ADK_AGENT_ENGINE_REGION
+    first because Vertex AI injects the former at runtime while rejecting it in deploymentSpec.env.
     """
     for env_key in (
+        "GOOGLE_CLOUD_AGENT_ENGINE_LOCATION",
         "ADK_AGENT_ENGINE_REGION",
         "AGENT_ENGINE_REGION",
         "CLOUD_RUN_REGION",

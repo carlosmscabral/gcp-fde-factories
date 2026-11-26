@@ -44,6 +44,11 @@ output "artifact_registry_url" {
   value = "${var.region}-docker.pkg.dev/${var.hub_project_id}/${google_artifact_registry_repository.scion_images.repository_id}"
 }
 
+output "sandbox_artifact_registry_url" {
+  description = "Disposable Sandbox Artifact Registry URL for autonomous PR container builds (costela H3)."
+  value       = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? "${var.region}-docker.pkg.dev/${var.sandbox_project_id}/${google_artifact_registry_repository.sandbox_images[0].repository_id}" : null
+}
+
 output "hub_sa_email" {
   value = google_service_account.scion_hub.email
 }
@@ -74,6 +79,11 @@ output "sandbox_janitor_sa_email" {
 
 output "release_builder_sa_email" {
   value = google_service_account.release_builder.email
+}
+
+output "sandbox_builder_sa_email" {
+  description = "Dedicated Sandbox Cloud Build Service Account email isolated from Hub Artifact Registry (costela H3)."
+  value       = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? google_service_account.sandbox_builder[0].email : null
 }
 
 output "gke_node_sa_email" {

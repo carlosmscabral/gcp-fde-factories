@@ -40,8 +40,9 @@ def test_hc11_f2_landing_zone_supports_multi_repo_github_wif() -> None:
 
     assert 'variable "github_repositories"' in vars_tf
     assert "wif_repositories = distinct(compact(concat(" in iam_tf
-    assert "assertion.repository in [" in iam_tf
-    assert "for_each = var.enable_sandbox_project && var.enable_github_wif ? toset(local.wif_repositories) : toset([])" in iam_tf
+    assert "assertion.repository.lowerAscii() in [" in iam_tf
+    assert "wif_evaluator_impersonation_extra" in iam_tf
+    assert "wif_janitor_impersonation_extra" in iam_tf
 
 
 def test_hc11_f3_bootstrap_resolves_project_id_from_scion_settings_yaml(tmp_path: pathlib.Path) -> None:
@@ -57,12 +58,14 @@ def test_hc11_f3_bootstrap_resolves_project_id_from_scion_settings_yaml(tmp_path
 
     script = REPO_ROOT / "deploy/03-hub-bootstrap/bootstrap-hub-project.sh"
     src = script.read_text(encoding="utf-8")
-    fn_start = src.index("resolve_project_id() {")
+    fn_start = src.index("UUID_REGEX=")
     fn_end = src.index("\nwarn_github_token_injection_mode()", fn_start)
     fn_body = src[fn_start:fn_end]
 
     cmd = (
         f"set -euo pipefail\n"
+        f"SCRIPT_DIR={str(REPO_ROOT / 'deploy/03-hub-bootstrap')!r}\n"
+        f"require_cmd() {{ command -v \"$1\" >/dev/null 2>&1; }}\n"
         f"TARGET_REPO={str(repo_dir)!r}\n"
         f"PROJECT_SLUG=''\n"
         f"unset SCION_HUB_PROJECT_ID || true\n"
@@ -74,9 +77,8 @@ def test_hc11_f3_bootstrap_resolves_project_id_from_scion_settings_yaml(tmp_path
 
 
 def test_hc11_f4_f5_agent_engine_avoids_reserved_prefix_and_keeps_global_model_split(monkeypatch) -> None:
-    """Confirms ADK services avoid GOOGLE_CLOUD_AGENT_ENGINE_* reserved vars and keep regional sessions with global LLM."""
+    """Confirms ADK deployer avoids setting GOOGLE_CLOUD_AGENT_ENGINE_* while services reads runtime region."""
     services_src = (REPO_ROOT / "packs/adk/repo-scaffold/app/app_utils/services.py").read_text(encoding="utf-8")
-    assert '"GOOGLE_CLOUD_AGENT_ENGINE_LOCATION"' not in services_src
     assert '"ADK_AGENT_ENGINE_REGION"' in services_src
 
     namespace: dict[str, object] = {"os": __import__("os")}
@@ -85,6 +87,7 @@ def test_hc11_f4_f5_agent_engine_avoids_reserved_prefix_and_keeps_global_model_s
     exec(services_src[fn_start:fn_end], namespace)
     resolve_loc = namespace["_resolve_agent_engine_location"]
 
+    monkeypatch.delenv("GOOGLE_CLOUD_AGENT_ENGINE_LOCATION", raising=False)
     monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "global")
     monkeypatch.setenv("ADK_AGENT_ENGINE_REGION", "southamerica-east1")
     assert resolve_loc() == "southamerica-east1"

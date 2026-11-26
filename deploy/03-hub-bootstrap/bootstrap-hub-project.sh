@@ -170,74 +170,115 @@ do_backup() {
   echo "BACKUP COMPLETE: $dir (templates_backed_up=$pulled)"
 }
 
+UUID_REGEX='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+
+validate_uuid_or_fail() {
+  local val="$1" src="$2"
+  if [[ ! "$val" =~ $UUID_REGEX ]]; then
+    echo "ERROR: Invalid Hub project UUID '${val}' from ${src}." >&2
+    return 1
+  fi
+}
+
 resolve_project_id() {
-  # Resolves the Hub project UUID from SCION_HUB_PROJECT_ID, .scion/settings.yaml (Scion v0.4),
-  # legacy .scion/project-id, or --project <slug> API lookup (HC-10 F3, HC-11 F3).
-  if [[ -n "${SCION_HUB_PROJECT_ID:-}" ]]; then
-    echo "$SCION_HUB_PROJECT_ID"
-    return 0
+  # Resolves and UUID-validates the Hub project UUID with strict precedence and mismatch checks (HC-10 F3, HC-11 F3, costela H4).
+  # If TARGET_REPO is provided, reads only TARGET_REPO/.scion/ (never CWD).
+  # If --project <slug> is provided, verifies the slug resolves to the exact same UUID so writes never split-brain.
+  local env_pid="${SCION_HUB_PROJECT_ID:-}" file_pid="" slug_pid=""
+  if [[ -n "$env_pid" ]]; then
+    echo "WARNING: Inherited SCION_HUB_PROJECT_ID='${env_pid}' from parent shell; validating before use." >&2
+    validate_uuid_or_fail "$env_pid" "SCION_HUB_PROJECT_ID" || return 1
   fi
-  local settings_file yaml_pid
-  for settings_file in "${TARGET_REPO:+${TARGET_REPO}/.scion/settings.yaml}" ".scion/settings.yaml"; do
-    if [[ -n "$settings_file" && -f "$settings_file" ]]; then
-      yaml_pid="$(awk '/^[[:space:]]*project_id:[[:space:]]*/ { gsub(/["'\''[:space:]]/, "", $2); print $2; exit }' "$settings_file")"
-      if [[ -n "$yaml_pid" ]]; then
-        export SCION_HUB_PROJECT_ID="$yaml_pid"
-        echo "$yaml_pid"
-        return 0
-      fi
-    fi
-  done
-  local pid_file=""
-  if [[ -n "$TARGET_REPO" && -f "$TARGET_REPO/.scion/project-id" ]]; then
-    pid_file="$TARGET_REPO/.scion/project-id"
-  elif [[ -f ".scion/project-id" ]]; then
-    pid_file=".scion/project-id"
+
+  local base_dir="."
+  if [[ -n "$TARGET_REPO" ]]; then
+    base_dir="$TARGET_REPO"
   fi
-  if [[ -n "$pid_file" ]]; then
-    local file_pid
-    file_pid="$(tr -d '[:space:]' < "$pid_file")"
-    if [[ -n "$file_pid" ]]; then
-      export SCION_HUB_PROJECT_ID="$file_pid"
-      echo "$file_pid"
-      return 0
-    fi
+  if [[ -f "${base_dir}/.scion/settings.yaml" ]]; then
+    require_cmd python3
+    file_pid="$(python3 "$SCRIPT_DIR/parse_hub_project.py" --read-scion-project-id "${base_dir}/.scion/settings.yaml")"
+  elif [[ -f "${base_dir}/.scion/project-id" ]]; then
+    file_pid="$(tr -d '[:space:]' < "${base_dir}/.scion/project-id")"
   fi
+  if [[ -n "$file_pid" ]]; then
+    validate_uuid_or_fail "$file_pid" "${base_dir}/.scion" || return 1
+  fi
+
   if [[ -n "$PROJECT_SLUG" && -n "${SCION_HUB_TOKEN:-}" ]]; then
-    local resolved
-    resolved="$(curl -sf -H "Authorization: Bearer ${SCION_HUB_TOKEN}" "${HUB_URL%/}/api/v1/projects" \
+    slug_pid="$(curl -sf -H "Authorization: Bearer ${SCION_HUB_TOKEN}" "${HUB_URL%/}/api/v1/projects" \
       | jq -r --arg s "$PROJECT_SLUG" '((if type == "array" then . else (.projects // .items // []) end)[] | select(.slug == $s or .name == $s) | .id) // empty' | head -n 1 || true)"
-    if [[ -n "$resolved" ]]; then
-      export SCION_HUB_PROJECT_ID="$resolved"
-      echo "$resolved"
-      return 0
+    if [[ -n "$slug_pid" ]]; then
+      validate_uuid_or_fail "$slug_pid" "--project ${PROJECT_SLUG}" || return 1
     fi
+  fi
+
+  if [[ -n "$slug_pid" && -n "$env_pid" && "$slug_pid" != "$env_pid" ]]; then
+    echo "ERROR: --project '${PROJECT_SLUG}' (${slug_pid}) conflicts with inherited SCION_HUB_PROJECT_ID (${env_pid})." >&2
+    return 1
+  fi
+  if [[ -n "$slug_pid" && -n "$file_pid" && "$slug_pid" != "$file_pid" ]]; then
+    echo "ERROR: --project '${PROJECT_SLUG}' (${slug_pid}) conflicts with ${base_dir}/.scion (${file_pid})." >&2
+    return 1
+  fi
+
+  local chosen="${slug_pid:-${file_pid:-$env_pid}}"
+  if [[ -n "$chosen" ]]; then
+    export SCION_HUB_PROJECT_ID="$chosen"
+    echo "$chosen"
+    return 0
   fi
   echo ""
 }
 
 warn_github_token_injection_mode() {
-  # Warns when a linked project lacks GITHUB_TOKEN with injectionMode=always (required for private git clones, HC-10 F4).
+  # Warns when a linked project lacks GITHUB_TOKEN with injectionMode=always (required for private git clones, HC-10 F4, L6).
   local proj_id="$1"
   [[ -n "$proj_id" && -n "${SCION_HUB_TOKEN:-}" ]] || return 0
+  validate_uuid_or_fail "$proj_id" "warn_github_token_injection_mode" || return 0
   local sec_json mode
   sec_json="$(curl -sf -H "Authorization: Bearer ${SCION_HUB_TOKEN}" "${HUB_URL%/}/api/v1/secrets?scope=project&scopeId=${proj_id}" 2>/dev/null || true)"
   [[ -n "$sec_json" ]] || return 0
-  mode="$(jq -r '((.secrets // .)[]? | select(.key == "GITHUB_TOKEN") | .injectionMode) // empty' <<< "$sec_json" | head -n 1 || true)"
+  mode="$(jq -r '((.secrets // .)[]? | select(.key == "GITHUB_TOKEN") | (.injectionMode // .injection_mode)) // empty' <<< "$sec_json" | head -n 1 || true)"
   if [[ "$mode" != "always" ]]; then
     echo "WARNING: Project secret GITHUB_TOKEN has injectionMode='${mode:-missing}' (expected 'always' for private GitHub repo clones)." >&2
-    echo "  Run: scion hub secret set --project GITHUB_TOKEN \"<TOKEN>\" --hub \"$HUB_URL\"" >&2
+    echo "  Run: scion hub secret set --project GITHUB_TOKEN \"\$(gh auth token)\" --hub \"$HUB_URL\"" >&2
     echo "  Run: scion hub secret update --project GITHUB_TOKEN --injection-mode always --hub \"$HUB_URL\"" >&2
   fi
 }
 
+warn_adk_ge_license_preflight() {
+  # Checks Discovery Engine project licenseConfigs on ADK sandboxes before waves start (HC-12 GE preflight).
+  # Uses operator gcloud credentials best-effort; never fails offline tests or blocks Agent Engine deploys.
+  local pack_name="$1"
+  [[ "$pack_name" == "adk" && -n "$LANDING_ZONE_JSON" && -f "$LANDING_ZONE_JSON" ]] || return 0
+  command -v gcloud >/dev/null 2>&1 || return 0
+  command -v curl >/dev/null 2>&1 || return 0
+  local sbx_p sbx_num token lc_json active_cnt
+  sbx_p="$(jq -r '.sandbox_project_id.value // empty' "$LANDING_ZONE_JSON")"
+  sbx_num="$(jq -r '.sandbox_project_number.value // empty' "$LANDING_ZONE_JSON")"
+  [[ -n "$sbx_p" ]] || return 0
+  token="$(gcloud auth print-access-token 2>/dev/null || true)"
+  [[ -n "$token" ]] || return 0
+  lc_json="$(curl -sf -H "Authorization: Bearer ${token}" -H "x-goog-user-project: ${sbx_p}" \
+    "https://discoveryengine.googleapis.com/v1alpha/projects/${sbx_num:-$sbx_p}/locations/global/licenseConfigs" 2>/dev/null || true)"
+  [[ -n "$lc_json" ]] || return 0
+  active_cnt="$(jq -r '[(.licenseConfigs // [])[] | select((.state // "") == "ACTIVE")] | length' <<< "$lc_json" 2>/dev/null || echo "")"
+  if [[ "$active_cnt" == "0" ]]; then
+    echo "WARNING: Sandbox project '${sbx_p}' (${sbx_num:-unknown}) has 0 ACTIVE Gemini Enterprise licenseConfigs." >&2
+    echo "  Vertex AI Agent Engine deploys and ge_export.py export will succeed, but live GE App agents:create will return HTTP 400 (licensing, not IAM)." >&2
+    echo "  Distribute an active billingAccountLicenseConfig (or request free Argolis GE Plus project seats) before expecting live GE App registration." >&2
+  fi
+  return 0
+}
+
 print_github_ci_variables() {
-  # Prints copy-ready GitHub Actions variable commands matching the pack's Verdict Gate workflow (HC-10 F5).
+  # Prints copy-ready GitHub Actions variable commands matching the pack's Verdict Gate workflow (HC-10 F5, L5).
   local pack_name="$1"
   [[ -n "$LANDING_ZONE_JSON" && -f "$LANDING_ZONE_JSON" ]] || return 0
-  local wif_prov sbx_p eval_sa jan_sa rt_img var_prefix
+  local wif_prov sbx_p sbx_num eval_sa jan_sa rt_img var_prefix
   wif_prov="$(jq -r '.github_wif_provider_name.value // empty' "$LANDING_ZONE_JSON")"
   sbx_p="$(jq -r '.sandbox_project_id.value // empty' "$LANDING_ZONE_JSON")"
+  sbx_num="$(jq -r '.sandbox_project_number.value // empty' "$LANDING_ZONE_JSON")"
   eval_sa="$(jq -r '.sandbox_evaluator_sa_email.value // empty' "$LANDING_ZONE_JSON")"
   jan_sa="$(jq -r '.sandbox_janitor_sa_email.value // empty' "$LANDING_ZONE_JSON")"
   rt_img="$(jq -r --arg k "${pack_name}-runtime" '.images[$k] // empty' "$KIT_DIR/manifest.json")"
@@ -248,6 +289,7 @@ print_github_ci_variables() {
   esac
   echo "=== NEXT STEP: GitHub Actions Verdict Gate Repository Variables (${pack_name}) ==="
   if [[ -n "$sbx_p" ]]; then echo "  gh variable set ${var_prefix}_SANDBOX_PROJECT_ID --body \"${sbx_p}\""; fi
+  if [[ -n "$sbx_num" ]]; then echo "  gh variable set ${var_prefix}_SANDBOX_PROJECT_NUMBER --body \"${sbx_num}\""; fi
   if [[ -n "$eval_sa" ]]; then echo "  gh variable set ${var_prefix}_EVALUATOR_SA_EMAIL --body \"${eval_sa}\""; fi
   if [[ -n "$jan_sa" ]]; then echo "  gh variable set ${var_prefix}_JANITOR_SA_EMAIL --body \"${jan_sa}\""; fi
   if [[ -n "$rt_img" ]]; then echo "  gh variable set ${var_prefix}_RUNTIME_IMAGE_DIGEST --body \"${rt_img}\""; fi
@@ -625,6 +667,7 @@ do_apply() {
     do_overlay_sync
   fi
   ensure_coordinator_started "$pack_prefix" "$default_harness" "$repo_cfg" "${coord_sa:-$worker_sa}"
+  warn_adk_ge_license_preflight "$pack_name"
   print_github_ci_variables "$pack_name"
   echo "APPLY COMPLETE."
 }

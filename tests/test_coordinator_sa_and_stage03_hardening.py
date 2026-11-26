@@ -134,7 +134,8 @@ def test_adk_verdict_gate_matches_both_root_and_monorepo_subagent_paths() -> Non
     """Confirms adk-verdict-gate.yml protects evals/ and triggers REQUIRE_LIVE for both root and agents/<slug>/ layouts."""
     wf = (REPO_ROOT / "packs/adk/repo-scaffold/.github/workflows/adk-verdict-gate.yml").read_text(encoding="utf-8")
     assert "(^|.*/)evals/" in wf
-    assert "(^|.*/)(app/|agent/|Dockerfile$)" in wf
+    assert "git diff --no-renames --name-only" in wf
+    assert "grep -Ev '^(README\\.md|docs/.*|.*\\.md|\\.factory/.*)$'" in wf
 
     eval_pat = re.compile(r"(^|.*/)evals/")
     live_pat = re.compile(r"(^|.*/)(app/|agent/|Dockerfile$)")

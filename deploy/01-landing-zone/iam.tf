@@ -112,16 +112,24 @@ locals {
     }
   ]...)
 
-  # Deduplicated GitHub repositories authorized for keyless WIF on single- or multi-pack Hubs (HC-11 F2).
+  # Deduplicated, lowercase-normalized GitHub repositories authorized for keyless WIF (HC-11 F2, costela M3/M4).
+  # Keeps primary github_repository on count=[0] bindings so v0.6.0 upgrades never suffer count->for_each address moves.
+  wif_primary_repository = lower(trimspace(var.github_repository))
+
   wif_repositories = distinct(compact(concat(
-    var.github_repository != "" ? [var.github_repository] : [],
-    var.github_repositories,
+    local.wif_primary_repository != "" ? [local.wif_primary_repository] : [],
+    [for repo in var.github_repositories : lower(trimspace(repo))],
   )))
+
+  wif_extra_repositories = [
+    for repo in local.wif_repositories : repo
+    if repo != local.wif_primary_repository
+  ]
 
   wif_attribute_condition = (
     length(local.wif_repositories) == 1
-    ? "assertion.repository == '${local.wif_repositories[0]}'"
-    : "assertion.repository in [${join(", ", [for repo in local.wif_repositories : "'${repo}'"])}]"
+    ? "assertion.repository.lowerAscii() == '${local.wif_repositories[0]}'"
+    : "assertion.repository.lowerAscii() in [${join(", ", [for repo in local.wif_repositories : "'${repo}'"])}]"
   )
 }
 
@@ -257,10 +265,58 @@ resource "google_service_account" "release_builder" {
   display_name = "Factory Release Kit Cloud Build SA (Rebuild Mode)"
 }
 
-resource "google_project_iam_member" "builder_ar_writer" {
-  project = var.hub_project_id
-  role    = "roles/artifactregistry.writer"
-  member  = "serviceAccount:${google_service_account.release_builder.email}"
+resource "google_artifact_registry_repository_iam_member" "builder_ar_writer" {
+  project    = var.hub_project_id
+  location   = var.region
+  repository = google_artifact_registry_repository.scion_images.repository_id
+  role       = "roles/artifactregistry.writer"
+  member     = "serviceAccount:${google_service_account.release_builder.email}"
+}
+
+# Dedicated Sandbox Cloud Build SA isolated inside sandbox_project_id (costela H3).
+# Prevents autonomous coordinator -> deployer chains from writing into hub_project_id Artifact Registry.
+resource "google_service_account" "sandbox_builder" {
+  count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? 1 : 0
+
+  project      = var.sandbox_project_id
+  account_id   = "${var.name_prefix}-sbx-builder"
+  display_name = "Factory Sandbox Ephemeral PR Cloud Build SA"
+}
+
+resource "google_artifact_registry_repository_iam_member" "sandbox_builder_ar_writer" {
+  count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? 1 : 0
+
+  project    = var.sandbox_project_id
+  location   = var.region
+  repository = google_artifact_registry_repository.sandbox_images[0].repository_id
+  role       = "roles/artifactregistry.writer"
+  member     = "serviceAccount:${google_service_account.sandbox_builder[0].email}"
+}
+
+resource "google_project_iam_member" "sandbox_builder_logging" {
+  count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.sandbox_builder[0].email}"
+}
+
+resource "google_project_iam_member" "sandbox_builder_usage" {
+  count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = "roles/serviceusage.serviceUsageConsumer"
+  member  = "serviceAccount:${google_service_account.sandbox_builder[0].email}"
+}
+
+resource "google_artifact_registry_repository_iam_member" "deployer_sandbox_ar_reader" {
+  count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? 1 : 0
+
+  project    = var.sandbox_project_id
+  location   = var.region
+  repository = google_artifact_registry_repository.sandbox_images[0].repository_id
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
 resource "google_project_iam_member" "builder_logging" {
@@ -435,10 +491,10 @@ resource "google_project_iam_member" "sandbox_aiplatform_ar_reader" {
   depends_on = [google_project_service_identity.sandbox_aiplatform_agent]
 }
 
-# Materialize the Discovery Engine service identity so immediate GE App creation succeeds on new projects (HC-10 F6).
+# Materialize the Discovery Engine service identity so immediate GE App creation succeeds on new projects (HC-10 F6, L10).
 resource "google_project_service_identity" "sandbox_discoveryengine_agent" {
   provider = google-beta
-  count    = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
+  count    = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_gecx_sandbox_roles) ? 1 : 0
 
   project = var.sandbox_project_id
   service = "discoveryengine.googleapis.com"
@@ -657,6 +713,8 @@ resource "google_project_iam_custom_role" "adk_sandbox_deployer" {
     "discoveryengine.agents.list",
     "discoveryengine.agents.manage",
     "discoveryengine.agents.update",
+    "discoveryengine.licenseConfigs.list",
+    "discoveryengine.userStores.get",
     "logging.logEntries.list",
     "run.operations.get",
     "run.revisions.get",
@@ -723,14 +781,22 @@ resource "google_project_iam_member" "deployer_adk_custom_role" {
   member  = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
-# Allow ADK Sandbox Deployer to submit Dockerfile builds with the dedicated builder SA
-# and attach the predict-only worker SA to ephemeral Sandbox Cloud Run services (HC-01 F29).
+# Allow ADK/Generic Sandbox Deployer to submit PR Dockerfile builds strictly inside sandbox_project_id
+# via sandbox_builder (zero write rights in hub_project_id, costela H3) and attach runtime SAs (HC-01 F29).
 resource "google_service_account_iam_member" "deployer_builder_act_as" {
   count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? 1 : 0
 
-  service_account_id = google_service_account.release_builder.name
+  service_account_id = google_service_account.sandbox_builder[0].name
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
+}
+
+resource "google_project_iam_member" "deployer_sandbox_cloudbuild_editor" {
+  count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = "roles/cloudbuild.builds.editor"
+  member  = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
 resource "google_service_account_iam_member" "deployer_worker_act_as" {
@@ -743,7 +809,7 @@ resource "google_service_account_iam_member" "deployer_worker_act_as" {
 
 # Same-project Sandbox ADK Runtime SA for Cloud Run and Agent Engine workloads (HC-02 F10).
 # Avoids cross-project SA attachment rejections under constraints/iam.disableCrossProjectServiceAccountUsage
-# while holding predict-only rights on inference_project_id and zero write rights on sandbox_project_id.
+# while holding predict-only rights on inference_project_id and session/telemetry-only rights (zero engine lifecycle or IAM mutations) on sandbox_project_id.
 resource "google_service_account" "adk_runtime" {
   count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
 
@@ -811,16 +877,13 @@ resource "google_project_iam_custom_role" "adk_sandbox_runtime" {
   description = "Allows deployed ADK containers to persist VertexAiSessionService sessions, Memory Bank entries, and OTEL telemetry without engine lifecycle or IAM mutations."
   permissions = [
     "aiplatform.memories.create",
-    "aiplatform.memories.delete",
     "aiplatform.memories.generate",
     "aiplatform.memories.get",
     "aiplatform.memories.list",
     "aiplatform.memories.retrieve",
-    "aiplatform.memories.update",
     "aiplatform.sessionEvents.append",
     "aiplatform.sessionEvents.list",
     "aiplatform.sessions.create",
-    "aiplatform.sessions.delete",
     "aiplatform.sessions.get",
     "aiplatform.sessions.list",
     "aiplatform.sessions.run",
@@ -839,22 +902,6 @@ resource "google_project_iam_member" "adk_runtime_sandbox_sessions" {
   project = var.sandbox_project_id
   role    = google_project_iam_custom_role.adk_sandbox_runtime[0].id
   member  = "serviceAccount:${google_service_account.adk_runtime[0].email}"
-}
-
-resource "google_project_iam_member" "deployer_hub_cloudbuild_editor" {
-  count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) && var.hub_project_id != var.sandbox_project_id ? 1 : 0
-
-  project = var.hub_project_id
-  role    = "roles/cloudbuild.builds.editor"
-  member  = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
-}
-
-resource "google_project_iam_member" "deployer_hub_service_usage" {
-  count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) && var.hub_project_id != var.sandbox_project_id ? 1 : 0
-
-  project = var.hub_project_id
-  role    = "roles/serviceusage.serviceUsageConsumer"
-  member  = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
 resource "google_project_iam_member" "evaluator_adk_custom_role" {
@@ -962,7 +1009,7 @@ resource "google_iam_workload_identity_pool_provider" "github_oidc" {
   display_name                       = "GitHub Actions OIDC Provider"
   attribute_mapping = {
     "google.subject"       = "assertion.sub"
-    "attribute.repository" = "assertion.repository"
+    "attribute.repository" = "assertion.repository.lowerAscii()"
     "attribute.actor"      = "assertion.actor"
   }
   attribute_condition = local.wif_attribute_condition
@@ -972,16 +1019,33 @@ resource "google_iam_workload_identity_pool_provider" "github_oidc" {
   }
 }
 
+# Preserve count=[0] resource addresses for primary github_repository so v0.6.0 upgrades need zero state moves (costela M4).
 resource "google_service_account_iam_member" "wif_evaluator_impersonation" {
-  for_each = var.enable_sandbox_project && var.enable_github_wif ? toset(local.wif_repositories) : toset([])
+  count = var.enable_sandbox_project && var.enable_github_wif && local.wif_primary_repository != "" ? 1 : 0
+
+  service_account_id = google_service_account.sandbox_evaluator[0].name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_actions[0].name}/attribute.repository/${local.wif_primary_repository}"
+}
+
+resource "google_service_account_iam_member" "wif_janitor_impersonation" {
+  count = var.enable_sandbox_project && var.enable_github_wif && local.wif_primary_repository != "" ? 1 : 0
+
+  service_account_id = google_service_account.sandbox_janitor[0].name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_actions[0].name}/attribute.repository/${local.wif_primary_repository}"
+}
+
+resource "google_service_account_iam_member" "wif_evaluator_impersonation_extra" {
+  for_each = var.enable_sandbox_project && var.enable_github_wif ? toset(local.wif_extra_repositories) : toset([])
 
   service_account_id = google_service_account.sandbox_evaluator[0].name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_actions[0].name}/attribute.repository/${each.value}"
 }
 
-resource "google_service_account_iam_member" "wif_janitor_impersonation" {
-  for_each = var.enable_sandbox_project && var.enable_github_wif ? toset(local.wif_repositories) : toset([])
+resource "google_service_account_iam_member" "wif_janitor_impersonation_extra" {
+  for_each = var.enable_sandbox_project && var.enable_github_wif ? toset(local.wif_extra_repositories) : toset([])
 
   service_account_id = google_service_account.sandbox_janitor[0].name
   role               = "roles/iam.workloadIdentityUser"

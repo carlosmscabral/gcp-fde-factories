@@ -241,7 +241,7 @@ def test_adk_sandbox_gate_level1_honesty_and_dual_janitor(tmp_path: pathlib.Path
             "evaluation_run_ids": [],
             "expected_evaluator_sa": "adk-eval@sbx.iam.gserviceaccount.com",
             "evals_tree_sha256": sha256_tree(repo / "evals"),
-            "gates_executed": ["l1:ge-export-bundle", "l2:adk-eval", "l2:ge-sandbox-register"],
+            "gates_executed": ["l1:ge-export-bundle", "l2:agent-engine-remote-smoke", "l2:adk-eval", "l2:ge-sandbox-register"],
             "gates_skipped": [],
             "not_verifiable_surfaces": [],
             "verdict": "live-gcp-verified",

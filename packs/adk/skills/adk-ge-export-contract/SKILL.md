@@ -18,8 +18,9 @@ description: Deterministic Gemini Enterprise (GE App) export and registration co
 - Never embed client secrets, OAuth tokens, or real user PII in `ge_manifest.json` or exported bundles.
 - source: https://google.github.io/adk-docs/a2a/
 
-## 3. Sandbox Registration Quota and Production Promotion Boundary
+## 3. Sandbox Registration Quota, License Preflight, and Production Promotion Boundary
+- Run `python3 /opt/adk-factory/ge_export.py preflight --manifest ge_manifest.json` before calling `register` or `patch`. If the Sandbox project has zero active `licenseConfigs` or disabled `default_user_store` auto-registration (exit code `2`), deliver `dist/ge-export/` cleanly without retrying `agents:create`.
 - Prefer `ge_export.py patch --agent-name <sandbox-agent>` over per-PR `POST` creation to avoid Gemini Enterprise daily agent-creation `HTTP 429` quotas.
 - Allow `adk-deployer` to register or patch `[CI]` agents strictly inside the disposable Sandbox project (`project_id == --sandbox-project`).
-- Promote DEV, HML, and PRD Gemini Enterprise registrations exclusively via customer CI/CD with WIF after human PR approval.
+- Promote DEV, HML, and PRD Gemini Enterprise registrations exclusively via customer CI/CD with WIF (using a licensed principal or dedicated seated SA) after human PR approval.
 - source: https://cloud.google.com/agentspace/docs/register-agents

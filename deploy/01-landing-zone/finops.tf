@@ -117,6 +117,22 @@ resource "google_storage_bucket_iam_member" "builder_staging_bucket_view" {
   member = "serviceAccount:${google_service_account.release_builder.email}"
 }
 
+resource "google_storage_bucket_iam_member" "sandbox_builder_staging_rw" {
+  count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? 1 : 0
+
+  bucket = google_storage_bucket.sandbox_staging.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.sandbox_builder[0].email}"
+}
+
+resource "google_storage_bucket_iam_member" "sandbox_builder_staging_bucket_view" {
+  count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? 1 : 0
+
+  bucket = google_storage_bucket.sandbox_staging.name
+  role   = "roles/storage.bucketViewer"
+  member = "serviceAccount:${google_service_account.sandbox_builder[0].email}"
+}
+
 # Explicitly materialize the CES Service Agent on brand-new projects before binding staging IAM (HC-01 F3).
 resource "google_project_service_identity" "ces_service_agent" {
   provider = google-beta

@@ -8,12 +8,15 @@ adk eval runs cannot detect.
 """
 from __future__ import annotations
 
+import http.client
 import json
+import re
 import urllib.error
 import urllib.request
 from typing import Any, Callable
 
 PostFn = Callable[[str, dict[str, str], dict[str, Any]], tuple[int, str]]
+LOCATION_RE = re.compile(r"^[a-z0-9-]+$")
 
 
 def default_http_post(url: str, headers: dict[str, str], body: dict[str, Any]) -> tuple[int, str]:
@@ -29,7 +32,7 @@ def default_http_post(url: str, headers: dict[str, str], body: dict[str, Any]) -
             return resp.status, resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read().decode("utf-8", errors="replace")
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException, ValueError) as exc:
         return 0, str(exc)
 
 
@@ -49,28 +52,70 @@ def _extract_session_id(raw_body: str) -> str:
     return ""
 
 
+def _classify_stream_event(obj: Any) -> str:
+    """Classifies one parsed stream JSON object as error, content, or ignore."""
+    if isinstance(obj, list):
+        has_content = False
+        for item in obj:
+            state = _classify_stream_event(item)
+            if state == "error":
+                return "error"
+            if state == "content":
+                has_content = True
+        return "content" if has_content else "ignore"
+    if not isinstance(obj, dict):
+        return "ignore"
+    if obj.get("error") or obj.get("error_code") or obj.get("error_message"):
+        return "error"
+    if ("code" in obj or "status" in obj) and "message" in obj and "content" not in obj:
+        return "error"
+    content = obj.get("content")
+    if isinstance(content, dict):
+        role = str(content.get("role") or "").strip().lower()
+        if role == "user":
+            return "ignore"
+        parts = content.get("parts")
+        if isinstance(parts, list):
+            for part in parts:
+                if not isinstance(part, dict):
+                    continue
+                if isinstance(part.get("text"), str) and part["text"].strip():
+                    return "content"
+                if any(part.get(k) for k in ("function_call", "functionCall", "function_response", "functionResponse")):
+                    return "content"
+    return "ignore"
+
+
 def _stream_has_non_empty_content(raw_stream: str) -> bool:
-    """Checks that an Agent Engine SSE or JSON response contains model or tool output without any error event."""
+    """Checks that an Agent Engine SSE or JSON stream contains valid model/tool content and zero error events."""
     stripped = raw_stream.strip()
     if not stripped:
         return False
+    # Support single pretty-printed JSON objects or top-level JSON arrays directly.
+    if stripped[0] in ("{", "["):
+        try:
+            whole = json.loads(stripped)
+            return _classify_stream_event(whole) == "content"
+        except json.JSONDecodeError:
+            pass
+
     has_content = False
     for line in stripped.splitlines():
-        payload = line[5:].strip() if line.startswith("data:") else line.strip()
+        raw_line = line.strip()
+        if not raw_line or raw_line.startswith((":", "event:", "id:", "retry:")):
+            continue
+        payload = raw_line[5:].strip() if raw_line.startswith("data:") else raw_line
         if not payload:
             continue
         try:
             event = json.loads(payload)
         except json.JSONDecodeError:
-            continue
-        if isinstance(event, dict):
-            if event.get("error") or event.get("error_code") or event.get("error_message"):
-                return False
-            content = event.get("content")
-            if isinstance(content, dict) and content.get("parts"):
-                has_content = True
-            elif event.get("output") or event.get("text"):
-                has_content = True
+            return False
+        state = _classify_stream_event(event)
+        if state == "error":
+            return False
+        if state == "content":
+            has_content = True
     return has_content
 
 
@@ -85,11 +130,14 @@ def run_remote_agent_engine_smoke(
     """Executes a live two-step session and streamQuery check against reasoning_engine.
 
     Returns (True, session_id) on verified non-empty response or (False, error_detail) on failure.
+    Deletes the temporary smoke session on a best-effort basis after completion.
     """
     if "/locations/" not in reasoning_engine or "/reasoningEngines/" not in reasoning_engine:
         return False, f"Invalid ReasoningEngine resource path: '{reasoning_engine}'."
 
     loc = reasoning_engine.split("/locations/", 1)[1].split("/", 1)[0]
+    if not LOCATION_RE.fullmatch(loc):
+        return False, f"Invalid ReasoningEngine location segment: '{loc}'."
     base_url = f"https://{loc}-aiplatform.googleapis.com/v1beta1/{reasoning_engine}"
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -109,14 +157,26 @@ def run_remote_agent_engine_smoke(
     if not session_id:
         return False, f"Remote async_create_session returned HTTP 200 without session id: {body_sess[:200]}"
 
-    st_stream, body_stream = post_fn(
-        f"{base_url}:streamQuery?alt=sse",
-        headers,
-        {
-            "class_method": "async_stream_query",
-            "input": {"user_id": user_id, "session_id": session_id, "message": prompt},
-        },
-    )
+    try:
+        st_stream, body_stream = post_fn(
+            f"{base_url}:streamQuery?alt=sse",
+            headers,
+            {
+                "class_method": "async_stream_query",
+                "input": {"user_id": user_id, "session_id": session_id, "message": prompt},
+            },
+        )
+    finally:
+        # Best-effort cleanup of the ephemeral smoke session (never fails the smoke result).
+        try:
+            post_fn(
+                f"{base_url}:query",
+                headers,
+                {"class_method": "async_delete_session", "input": {"user_id": user_id, "session_id": session_id}},
+            )
+        except Exception:
+            pass
+
     if st_stream != 200:
         return False, f"Remote async_stream_query returned HTTP {st_stream}: {body_stream[:240]}"
     if not _stream_has_non_empty_content(body_stream):

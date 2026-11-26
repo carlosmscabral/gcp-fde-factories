@@ -164,9 +164,10 @@ def test_adr015_validate_dockerfile_advisory_default_vs_strict_and_nx_custom_cli
         assert "report-only" not in sa_delta.lower()
         assert "advisory" not in sa_delta.lower()
 
-    # 5. ADR-014 ADK Verdict Gate requires live verification on root and multi-agent app/, agent/, and Dockerfile changes.
+    # 5. ADR-014 ADK Verdict Gate requires live verification on any non-docs runtime or dependency change (costela M5).
     wf = (REPO_ROOT / "packs/adk/repo-scaffold/.github/workflows/adk-verdict-gate.yml").read_text(encoding="utf-8")
-    assert "(^|.*/)(app/|agent/|Dockerfile$)" in wf
+    assert "git diff --no-renames --name-only" in wf
+    assert "grep -Ev '^(README\\.md|docs/.*|.*\\.md|\\.factory/.*)$'" in wf
 
 
 def test_hc07_f1_github_wif_pool_depends_on_project_services() -> None:
