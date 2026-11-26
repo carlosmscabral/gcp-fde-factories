@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from packs.adk.scripts.lib.ge_payload import HttpRequestFn, default_http_request
+from .ge_payload import HttpRequestFn, default_http_request
 
 PROJECT_SEG_RE = re.compile(r"^[a-z0-9-]+$")
 VALID_GE_LOCATIONS = ("global", "us", "eu")

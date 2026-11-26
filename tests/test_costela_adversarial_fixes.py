@@ -331,3 +331,24 @@ def test_ge_license_preflight_classifies_states_and_keeps_zero_pii_iam(
     assert '"discoveryengine.userStores.get"' in dep_block
     assert '"discoveryengine.userStores.listUserLicenses"' not in iam_tf
 
+    # 7. Standalone container layout guard (HC12-F1): ge_export.py must run from /opt/adk-factory without 'packs' on sys.path.
+    import shutil
+    import subprocess
+    import sys
+
+    iso = tmp_path / "opt_adk_factory"
+    shutil.copytree(REPO_ROOT / "packs/adk/scripts", iso)
+    gcp_fde = tmp_path / "opt_gcp_fde"
+    shutil.copytree(REPO_ROOT / "scripts", gcp_fde / "scripts")
+    proc = subprocess.run(
+        [sys.executable, str(iso / "ge_export.py"), "preflight", "--help"],
+        cwd=str(tmp_path),
+        env={"PATH": "/usr/bin:/bin", "PYTHONPATH": str(gcp_fde)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, f"Standalone container import failed: {proc.stderr}"
+    assert "--project" in proc.stdout
+
+
