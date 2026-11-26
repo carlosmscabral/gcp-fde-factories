@@ -36,6 +36,7 @@ from scripts.lib.io_utils import sha256_tree
 from scripts.lib.schema_validator import validate_against_schema
 
 try:
+    from packs.adk.scripts.lib.agent_engine_smoke import run_remote_agent_engine_smoke
     from packs.adk.scripts.lib.ge_payload import (
         default_ge_schema,
         export_ge_bundle,
@@ -43,6 +44,7 @@ try:
         register_ge_agent,
     )
 except ModuleNotFoundError:
+    from lib.agent_engine_smoke import run_remote_agent_engine_smoke
     from lib.ge_payload import (
         default_ge_schema,
         export_ge_bundle,
@@ -60,6 +62,7 @@ ALL_GATES = (
     "l1:dockerfile-contract",
     "l1:ge-export-bundle",
     "l2:ge-sandbox-register",
+    "l2:agent-engine-remote-smoke",
     "l2:adk-eval",
 )
 
@@ -183,6 +186,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--sandbox-ge-agent", default="", help="Existing Sandbox GE agent resource to PATCH instead of POST.")
     p.add_argument("--ge-agent-state-file", type=pathlib.Path, default=None, help="JSON handoff file from deploy to evaluate phase.")
     p.add_argument("--expected-evaluator-sa", default="")
+    p.add_argument("--remote-smoke-prompt", default="Hello, run a quick health status check.")
+    p.add_argument("--skip-remote-smoke", action="store_true", help="Skips remote ReasoningEngine session smoke (unit tests only).")
     p.add_argument("--verdict-out", required=True, type=pathlib.Path)
     p.add_argument("--ge-schema", type=pathlib.Path, default=default_ge_schema(REPO_ROOT))
     p.add_argument("--verdict-schema", type=pathlib.Path, default=_default_verdict_schema())
@@ -378,6 +383,19 @@ def main(argv: list[str] | None = None) -> int:
         return _write_verdict(args, diversity_profile, evals_dir, gates_executed, _remaining_gates(gates_executed), "verifier-blocked", exit_code=1)
     if not (args.reasoning_engine or resolved_ge_agent):
         return _write_verdict(args, diversity_profile, evals_dir, gates_executed, _remaining_gates(gates_executed, ["l2:missing-sandbox-target"]), "verifier-blocked", exit_code=1)
+
+    # Verify the deployed Vertex AI Agent Engine handles real session creation and streamed replies remotely (HC-11).
+    if args.reasoning_engine and not args.skip_remote_smoke:
+        ok_remote, remote_info = run_remote_agent_engine_smoke(
+            reasoning_engine=args.reasoning_engine,
+            access_token=evaluator_tok,
+            quota_project=args.sandbox_project,
+            prompt=args.remote_smoke_prompt,
+        )
+        gates_executed.append("l2:agent-engine-remote-smoke")
+        if not ok_remote:
+            print(f"REMOTE AGENT ENGINE SMOKE FAILED: {remote_info}", file=sys.stderr)
+            return _write_verdict(args, diversity_profile, evals_dir, gates_executed, _remaining_gates(gates_executed), "verifier-failed", exit_code=1)
 
     evalsets = sorted((evals_dir / "synthetic").glob("*.evalset.json")) if (evals_dir / "synthetic").is_dir() else []
     if not evalsets:

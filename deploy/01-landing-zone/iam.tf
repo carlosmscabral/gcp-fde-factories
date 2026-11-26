@@ -645,6 +645,7 @@ resource "google_project_iam_custom_role" "adk_sandbox_deployer" {
     "discoveryengine.agents.list",
     "discoveryengine.agents.manage",
     "discoveryengine.agents.update",
+    "logging.logEntries.list",
     "run.operations.get",
     "run.revisions.get",
     "run.revisions.list",
@@ -784,6 +785,47 @@ resource "google_project_iam_member" "adk_runtime_hub_ar_reader" {
 
   project = var.hub_project_id
   role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.adk_runtime[0].email}"
+}
+
+# Least-privilege Vertex AI Agent Engine session, memory, and OTEL telemetry role for adk_runtime (HC-11 F1).
+# Grants session/memory CRUD and telemetry writes inside sandbox_project_id without reasoningEngines create/delete or IAM rights.
+resource "google_project_iam_custom_role" "adk_sandbox_runtime" {
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
+
+  project     = var.sandbox_project_id
+  role_id     = "adkSandboxRuntime"
+  title       = "ADK Sandbox Container Runtime (Sessions, Memory, Telemetry)"
+  description = "Allows deployed ADK containers to persist VertexAiSessionService sessions, Memory Bank entries, and OTEL telemetry without engine lifecycle or IAM mutations."
+  permissions = [
+    "aiplatform.memories.create",
+    "aiplatform.memories.delete",
+    "aiplatform.memories.generate",
+    "aiplatform.memories.get",
+    "aiplatform.memories.list",
+    "aiplatform.memories.retrieve",
+    "aiplatform.memories.update",
+    "aiplatform.sessionEvents.append",
+    "aiplatform.sessionEvents.list",
+    "aiplatform.sessions.create",
+    "aiplatform.sessions.delete",
+    "aiplatform.sessions.get",
+    "aiplatform.sessions.list",
+    "aiplatform.sessions.run",
+    "aiplatform.sessions.update",
+    "cloudtrace.traces.patch",
+    "logging.logEntries.create",
+    "monitoring.timeSeries.create",
+  ]
+
+  depends_on = [google_project_service.enabled]
+}
+
+resource "google_project_iam_member" "adk_runtime_sandbox_sessions" {
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = google_project_iam_custom_role.adk_sandbox_runtime[0].id
   member  = "serviceAccount:${google_service_account.adk_runtime[0].email}"
 }
 

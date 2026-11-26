@@ -183,3 +183,66 @@ def test_hc10_f10_kaizen_allows_lite_vm_bridge_host_and_blocks_external_http() -
     assert _is_safe_hub_url("http://scion-hub.internal:8080/api/v1/metrics")
     assert not _is_safe_hub_url("http://10.44.0.2:8080/api/v1/metrics")
     assert not _is_safe_hub_url("http://evil.example.com/api/v1/metrics")
+
+
+def test_adk_sandbox_runtime_role_grants_sessions_without_engine_or_iam_writes() -> None:
+    """Confirms adkSandboxRuntime grants VertexAiSessionService and telemetry rights with zero engine or IAM mutations."""
+    iam_tf = (REPO_ROOT / "deploy/01-landing-zone/iam.tf").read_text(encoding="utf-8")
+    start = iam_tf.index('resource "google_project_iam_custom_role" "adk_sandbox_runtime"')
+    end = iam_tf.index('resource "google_project_iam_member" "adk_runtime_sandbox_sessions"', start)
+    role_block = iam_tf[start:end]
+
+    for required in (
+        "aiplatform.sessions.create",
+        "aiplatform.sessions.get",
+        "aiplatform.sessions.list",
+        "aiplatform.sessionEvents.append",
+        "aiplatform.sessionEvents.list",
+        "logging.logEntries.create",
+    ):
+        assert f'"{required}"' in role_block
+
+    for forbidden in (
+        "aiplatform.reasoningEngines.create",
+        "aiplatform.reasoningEngines.delete",
+        "resourcemanager.projects.setIamPolicy",
+        "iam.roles.update",
+        "iam.serviceAccounts.getAccessToken",
+    ):
+        assert forbidden not in role_block
+
+    dep_start = iam_tf.index('resource "google_project_iam_custom_role" "adk_sandbox_deployer"')
+    dep_end = iam_tf.index('resource "google_project_iam_custom_role" "adk_sandbox_evaluator"', dep_start)
+    assert '"logging.logEntries.list"' in iam_tf[dep_start:dep_end]
+
+
+def test_remote_agent_engine_smoke_catches_session_403_and_empty_stream() -> None:
+    """Confirms remote Agent Engine smoke fails closed on session errors or empty SSE streams and passes on real output."""
+    from packs.adk.scripts.lib.agent_engine_smoke import run_remote_agent_engine_smoke
+
+    re_name = "projects/427709713022/locations/us-central1/reasoningEngines/1948074295041196032"
+
+    def ok_post(url: str, headers: dict[str, str], body: dict[str, object]) -> tuple[int, str]:
+        if url.endswith(":query"):
+            return 200, json.dumps({"output": {"id": "sess-123"}})
+        return 200, json.dumps({"content": {"parts": [{"text": "Status is operational."}]}})
+
+    ok, info = run_remote_agent_engine_smoke(re_name, "tok", "sbx-proj", post_fn=ok_post)
+    assert ok is True
+    assert info == "sess-123"
+
+    def session_403_post(url: str, headers: dict[str, str], body: dict[str, object]) -> tuple[int, str]:
+        return 403, '{"error":{"code":403,"message":"Permission aiplatform.sessions.create denied"}}'
+
+    ok_403, err_403 = run_remote_agent_engine_smoke(re_name, "tok", "sbx-proj", post_fn=session_403_post)
+    assert ok_403 is False
+    assert "403" in err_403
+
+    def empty_stream_post(url: str, headers: dict[str, str], body: dict[str, object]) -> tuple[int, str]:
+        if url.endswith(":query"):
+            return 200, json.dumps({"output": {"id": "sess-456"}})
+        return 200, ""
+
+    ok_empty, err_empty = run_remote_agent_engine_smoke(re_name, "tok", "sbx-proj", post_fn=empty_stream_post)
+    assert ok_empty is False
+    assert "empty" in err_empty.lower()

@@ -188,6 +188,12 @@ Each gate uses a binary first-pass check (`first_pass: true` or `false`) and an 
 | **M10.4** | Live Agent Engine + GE + WIF Verdict Gate + Janitor | Autonomous `adk-deployer` deploys `[CI]` ReasoningEngine from root `Dockerfile`, `adk-eval-tester` emits `live-gcp-verified`, GitHub Actions WIF passes GREEN, and `always()` Janitor sweeps to 0 residual engines | `PASS (WIF GREEN + 0 residual)` |
 | **M10.5** | Coordinator `8h/200/400` limits & 0-token Tier-B Kaizen | Container env verifies `SCION_MAX_DURATION=8h`, `SCION_MAX_TURNS=200`, `SCION_MAX_MODEL_CALLS=400`, and `adk-kaizen-analyst` collects live Tier-B Cloud Monitoring/Logging telemetry with 0 LLM tokens | `PASS (limits + Tier-B ok)` |
 
+## Mandatory Live Invocation Rule (`HC-11+`, No Metadata-Only Proof)
+
+Starting with `HC-11`, a `GET 200` metadata readback on a deployed runtime does not satisfy Level 4 qualification.
+Every qualified deployment target (`Cloud Run`, `Vertex AI Agent Engine`, `CES`, or `Gemini Enterprise`) must pass an authenticated remote conversational turn executed by the real Evaluator SA.
+For Vertex AI Agent Engine, `adk_sandbox_gate.py` enforces `l2:agent-engine-remote-smoke` (`async_create_session` plus `async_stream_query` returning non-empty model or tool output) so missing runtime session IAM (`adkSandboxRuntime`) or regional session misconfigurations fail closed before emitting `live-gcp-verified`.
+
 ## Wave 2 Preview (Deferred Until Wave 1 = 100%)
 
 Once `core_v1` and active Wave 1 additive blocks reach `100%` with zero Showstoppers, Wave 2 introduces efficiency metrics:
