@@ -45,6 +45,30 @@ def _extract_project(resource_name: str) -> str:
     return ""
 
 
+def _project_matches(actual_project: str, sandbox_project: str, sandbox_project_number: str = "") -> bool:
+    """Checks whether actual_project matches sandbox_project ID or explicit numeric sandbox_project_number (HC-10 F8)."""
+    allowed = {p for p in (sandbox_project.strip(), sandbox_project_number.strip()) if p}
+    return bool(actual_project and actual_project in allowed)
+
+
+def _resource_name_matches(
+    returned_name: str,
+    expected_name: str,
+    sandbox_project: str,
+    sandbox_project_number: str = "",
+) -> bool:
+    """Verifies an API resource name matches expected_name across project ID and numeric project number forms."""
+    if not returned_name:
+        return False
+    if returned_name == expected_name:
+        return True
+    ret_parts = returned_name.split("/", 2)
+    exp_parts = expected_name.split("/", 2)
+    if len(ret_parts) == 3 and len(exp_parts) == 3 and ret_parts[0] == "projects" and exp_parts[0] == "projects":
+        return ret_parts[2] == exp_parts[2] and _project_matches(ret_parts[1], sandbox_project, sandbox_project_number)
+    return False
+
+
 def _list_ces_runs_paginated(
     base_url: str, access_token: str, sandbox_project: str, fetch_fn: FetchFn
 ) -> tuple[bool, list[dict[str, Any]], str]:
@@ -126,6 +150,7 @@ def _verify_adk_live(
     expected_evaluator_sa: str,
     access_token: str,
     fetch_fn: FetchFn,
+    sandbox_project_number: str = "",
 ) -> list[str]:
     """Verifies ADK Sandbox ReasoningEngine and Gemini Enterprise provenance bound to PR and commit."""
     errors: list[str] = []
@@ -143,13 +168,15 @@ def _verify_adk_live(
     ge_agent = str(verdict.get("ge_agent_resource") or "")
 
     if app_name:
-        if _extract_project(app_name) != sandbox_project:
+        if not _project_matches(_extract_project(app_name), sandbox_project, sandbox_project_number):
             errors.append(f"Ephemeral ADK runtime project '{_extract_project(app_name)}' != sandbox_project '{sandbox_project}'.")
         elif "/services/" in app_name:
             # Verify authenticated Cloud Run A2A service provenance bound to PR and commit labels (HC-03 F5).
             url = f"https://run.googleapis.com/v2/{app_name}"
             status, body = fetch_fn(url, access_token, sandbox_project)
-            if status != 200 or body.get("name") != app_name:
+            if status != 200 or not _resource_name_matches(
+                str(body.get("name") or ""), app_name, sandbox_project, sandbox_project_number
+            ):
                 errors.append(f"Cloud Run GET {url} failed verification (HTTP {status}).")
             else:
                 labels = body.get("labels") or {}
@@ -164,7 +191,9 @@ def _verify_adk_live(
             loc = app_name.split("/locations/", 1)[1].split("/", 1)[0]
             url = f"https://{loc}-aiplatform.googleapis.com/v1beta1/{app_name}"
             status, body = fetch_fn(url, access_token, sandbox_project)
-            if status != 200 or body.get("name") != app_name:
+            if status != 200 or not _resource_name_matches(
+                str(body.get("name") or ""), app_name, sandbox_project, sandbox_project_number
+            ):
                 errors.append(f"Vertex AI Agent Engine GET {url} failed verification (HTTP {status}).")
             else:
                 disp = str(body.get("displayName") or "")
@@ -172,14 +201,16 @@ def _verify_adk_live(
                     errors.append(f"ReasoningEngine displayName '{disp}' is not bound to {pr_tag} and commit {sha7}.")
 
     if ge_agent:
-        if _extract_project(ge_agent) != sandbox_project:
+        if not _project_matches(_extract_project(ge_agent), sandbox_project, sandbox_project_number):
             errors.append(f"Gemini Enterprise agent project '{_extract_project(ge_agent)}' != sandbox_project '{sandbox_project}'.")
         else:
             loc = ge_agent.split("/locations/", 1)[1].split("/", 1)[0]
             prefix = "" if loc == "global" else f"{loc}-"
             url = f"https://{prefix}discoveryengine.googleapis.com/v1alpha/{ge_agent}"
             status, body = fetch_fn(url, access_token, sandbox_project)
-            if status != 200 or body.get("name") != ge_agent:
+            if status != 200 or not _resource_name_matches(
+                str(body.get("name") or ""), ge_agent, sandbox_project, sandbox_project_number
+            ):
                 errors.append(f"Gemini Enterprise GET {url} failed verification (HTTP {status}).")
             else:
                 disp = str(body.get("displayName") or "")
@@ -203,6 +234,7 @@ def verify_verdict(
     expected_pr_number: int | None = None,
     allowed_surfaces: set[str] | None = None,
     require_live: bool = False,
+    sandbox_project_number: str = "",
 ) -> list[str]:
     """Verifies a Verdict file against schema, local git/evals integrity, policy, and live Sandbox APIs."""
     verdict = load_json(verdict_path)
@@ -248,7 +280,16 @@ def verify_verdict(
         if verdict_pack == "gecx":
             errors.extend(_verify_ces_runs(verdict, sandbox_project, expected_evaluator_sa, access_token, fetch_fn))
         elif verdict_pack == "adk":
-            errors.extend(_verify_adk_live(verdict, sandbox_project, expected_evaluator_sa, access_token, fetch_fn))
+            errors.extend(
+                _verify_adk_live(
+                    verdict,
+                    sandbox_project,
+                    expected_evaluator_sa,
+                    access_token,
+                    fetch_fn,
+                    sandbox_project_number=sandbox_project_number,
+                )
+            )
         else:
             errors.append(f"Unsupported pack '{verdict_pack}' for live verification.")
 

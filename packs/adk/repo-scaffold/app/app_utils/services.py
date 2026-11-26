@@ -21,6 +21,24 @@ _AGENT_DIR = os.path.dirname(
 )
 
 
+def _resolve_agent_engine_location() -> str:
+    """Resolves a regional location for VertexAiSessionService and rejects global (HC-10 F9).
+
+    Vertex AI Agent Engine sessions require a regional endpoint even when Gemini model calls target global.
+    """
+    for env_key in (
+        "GOOGLE_CLOUD_AGENT_ENGINE_LOCATION",
+        "GOOGLE_CLOUD_LOCATION",
+        "GOOGLE_CLOUD_REGION",
+        "CLOUD_RUN_REGION",
+        "ADK_AGENT_ENGINE_REGION",
+    ):
+        val = (os.environ.get(env_key) or "").strip()
+        if val and val.lower() != "global":
+            return val
+    return "us-central1"
+
+
 @functools.cache
 def get_session_service() -> Any:
     """Returns the process-wide session service for the current runtime target."""
@@ -33,9 +51,7 @@ def get_session_service() -> Any:
 
         return VertexAiSessionService(
             project=os.environ.get("GOOGLE_CLOUD_PROJECT"),
-            # Prefer the regional Agent Engine location over global Gemini model routing.
-            location=os.environ.get("GOOGLE_CLOUD_AGENT_ENGINE_LOCATION")
-            or os.environ.get("GOOGLE_CLOUD_LOCATION"),
+            location=_resolve_agent_engine_location(),
             agent_engine_id=agent_engine_id,
         )
     from google.adk.sessions.in_memory_session_service import InMemorySessionService

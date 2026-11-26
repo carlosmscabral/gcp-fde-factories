@@ -35,6 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-commit", required=True)
     parser.add_argument("--evals-dir", required=True, type=pathlib.Path)
     parser.add_argument("--sandbox-project", default="")
+    parser.add_argument("--sandbox-project-number", default=os.environ.get("SANDBOX_PROJECT_NUMBER", ""))
     parser.add_argument("--expected-evaluator-sa", default="")
     parser.add_argument("--expected-pack", default="")
     parser.add_argument("--expected-pr-number", type=int, default=None)
@@ -56,6 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         expected_pr_number=args.expected_pr_number,
         allowed_surfaces=allowed,
         require_live=args.require_live,
+        sandbox_project_number=args.sandbox_project_number,
     )
     if errors:
         for err in errors:

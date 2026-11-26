@@ -265,12 +265,15 @@ register_and_verify_sa() {
 }
 
 ensure_kaizen_schedule() {
-  local pack_prefix="$1" kz_enabled="$2" kz_cron="$3" kz_tz="$4" kz_coord="$5"
+  local pack_prefix="$1" kz_enabled="$2" kz_cron="$3" kz_tz="$4" kz_coord="$5" kz_gcp_obs="${6:-false}"
   if [[ "$kz_enabled" != "true" ]]; then
     echo "KAIZEN SCHEDULE: explicitly disabled via .factory/hub-project.yaml (kaizen.enabled=false)."
     return 0
   fi
-  local sched_json existing_sched
+  local sched_json existing_sched kz_sa_hint="worker SA"
+  if [[ "$kz_gcp_obs" == "true" ]]; then
+    kz_sa_hint="kaizen-viewer SA"
+  fi
   sched_json="$(scion --format json schedule list --show recurring "${PROJ_FLAGS[@]}" --hub "$HUB_URL")"
   existing_sched="$(jq -r '((if type == "array" then . elif (.schedules | type) == "object" then (.schedules.schedules // []) elif (.schedules | type) == "array" then .schedules else (.items // []) end)[] | select(.name == "weekly-kaizen") | .id) // empty' <<< "$sched_json" | head -n 1)"
   if [[ -n "$existing_sched" ]]; then
@@ -284,7 +287,7 @@ ensure_kaizen_schedule() {
     --type message \
     --agent "$kz_coord" \
     --wake \
-    --message "Run weekly closed-loop Kaizen cycle: spawn ${pack_prefix}-kaizen-analyst (--role baseline, worker SA), collect 0-token telemetry, publish report and Artifact, then retire it." \
+    --message "Run weekly closed-loop Kaizen cycle: spawn ${pack_prefix}-kaizen-analyst (--role baseline, ${kz_sa_hint}), collect 0-token telemetry, publish report and Artifact, then retire it." \
     "${PROJ_FLAGS[@]}" \
     --hub "$HUB_URL"
   echo "SCHEDULED KAIZEN: weekly-kaizen (${kz_cron} ${kz_tz} -> ${kz_coord} --wake)"
@@ -604,7 +607,8 @@ do_apply() {
     "$(jq -re '.kaizen.enabled | tostring' <<< "$repo_cfg")" \
     "$(jq -re '.kaizen.schedule_cron' <<< "$repo_cfg")" \
     "$(jq -re '.kaizen.time_zone' <<< "$repo_cfg")" \
-    "$(jq -re '.kaizen.coordinator_agent' <<< "$repo_cfg")"
+    "$(jq -re '.kaizen.coordinator_agent' <<< "$repo_cfg")" \
+    "$(jq -r '(.kaizen.enable_gcp_obs // false) | tostring' <<< "$repo_cfg")"
 
   if [[ -n "$TARGET_REPO" ]]; then
     do_overlay_sync

@@ -27,11 +27,11 @@ HttpGetFn = Callable[[str, dict[str, str]], tuple[int, dict[str, Any]]]
 
 
 def _is_safe_hub_url(hub_url: str) -> bool:
-    """Allows HTTPS URLs and loopback HTTP endpoints only."""
+    """Allows HTTPS URLs, loopback HTTP endpoints, and the Lite VM Docker bridge host alias (HC-10 F10)."""
     parsed = urllib.parse.urlparse(hub_url)
     if parsed.scheme == "https" and parsed.netloc:
         return True
-    if parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost", "::1"):
+    if parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost", "::1", "scion-hub.internal"):
         return True
     return False
 

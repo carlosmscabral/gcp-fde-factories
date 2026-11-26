@@ -19,6 +19,7 @@ jobs:
     env:
       VERDICT_FILE: ".factory/verdicts/pr-${{ github.event.pull_request.number }}.json"
       SANDBOX_PROJECT: "${{ vars.ADK_SANDBOX_PROJECT_ID }}"
+      SANDBOX_PROJECT_NUMBER: "${{ vars.ADK_SANDBOX_PROJECT_NUMBER }}"
       EVALUATOR_SA: "${{ vars.ADK_EVALUATOR_SA_EMAIL }}"
       JANITOR_SA: "${{ vars.ADK_JANITOR_SA_EMAIL }}"
       WIF_PROVIDER: "${{ vars.GCP_WIF_PROVIDER }}"
@@ -117,11 +118,15 @@ jobs:
           # Bind Verdict commit_sha to the latest non-verdict code commit on the PR branch (HC-03 F6).
           # Any code, test, or eval edit after the Verdict commit changes EXPECTED_CODE_SHA and fails closed.
           export EXPECTED_CODE_SHA="$(git log -n 1 --format=%H "$PR_HEAD_SHA" -- . ':(exclude).factory/verdicts/')"
+          # Derive numeric Sandbox project number from ADK_SANDBOX_PROJECT_NUMBER or WIF_PROVIDER (HC-10 F8).
+          if [[ -z "${SANDBOX_PROJECT_NUMBER:-}" && "${WIF_PROVIDER:-}" == projects/* ]]; then
+            export SANDBOX_PROJECT_NUMBER="$(echo "$WIF_PROVIDER" | awk -F/ '{print $2}')"
+          fi
           mkdir -p dist/ge-export
           docker run --rm --entrypoint "" --user "$(id -u):$(id -g)" \
             -v "$PWD:/workspace" -w /workspace \
             -e EVAL_ACCESS_TOKEN -e EXPECTED_CODE_SHA -e PR_NUM \
-            -e VERDICT_FILE -e SANDBOX_PROJECT -e EVALUATOR_SA \
+            -e VERDICT_FILE -e SANDBOX_PROJECT -e SANDBOX_PROJECT_NUMBER -e EVALUATOR_SA \
             -e SKIP_VERDICT -e REQUIRE_LIVE \
             "$ADK_RUNTIME_IMAGE" bash -euo pipefail -c '
               python3 /opt/adk-factory/ge_export.py validate --manifest ge_manifest.json
@@ -130,6 +135,9 @@ jobs:
                 EXTRA_ARGS=()
                 if [[ "$REQUIRE_LIVE" == "true" ]]; then
                   EXTRA_ARGS+=(--require-live)
+                fi
+                if [[ -n "${SANDBOX_PROJECT_NUMBER:-}" ]]; then
+                  EXTRA_ARGS+=(--sandbox-project-number "$SANDBOX_PROJECT_NUMBER")
                 fi
                 python3 /opt/gcp-fde/verify-verdict.py \
                   --schema /opt/gcp-fde/schemas/verdict.schema.json \

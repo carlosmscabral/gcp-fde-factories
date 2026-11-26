@@ -133,8 +133,19 @@ def validate_dockerfile_contract(dockerfile: pathlib.Path) -> list[str]:
 
 
 def run_cli(cmd: list[str], env: dict[str, str], cwd: pathlib.Path, timeout: int = 180) -> subprocess.CompletedProcess[str]:
-    """Runs an isolated subprocess command with a hard timeout."""
-    return subprocess.run(cmd, env=env, cwd=str(cwd), text=True, capture_output=True, timeout=timeout)
+    """Runs an isolated subprocess command with DEVNULL stdin and a hard timeout.
+
+    Detaching stdin stops ADK CLI interactive telemetry prompts from blocking under fresh HOME directories (HC-10 F7).
+    """
+    return subprocess.run(
+        cmd,
+        env=env,
+        cwd=str(cwd),
+        stdin=subprocess.DEVNULL,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+    )
 
 
 def parse_adk_eval_output(stdout: str, stderr: str) -> tuple[bool, int, int]:

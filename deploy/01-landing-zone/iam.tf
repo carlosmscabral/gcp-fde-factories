@@ -423,6 +423,17 @@ resource "google_project_iam_member" "sandbox_aiplatform_ar_reader" {
   depends_on = [google_project_service_identity.sandbox_aiplatform_agent]
 }
 
+# Materialize the Discovery Engine service identity so immediate GE App creation succeeds on new projects (HC-10 F6).
+resource "google_project_service_identity" "sandbox_discoveryengine_agent" {
+  provider = google-beta
+  count    = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
+
+  project = var.sandbox_project_id
+  service = "discoveryengine.googleapis.com"
+
+  depends_on = [google_project_service.enabled]
+}
+
 # Optional binding for the Vertex AI Agent Engine dedicated Reasoning Engine service agent
 # (gcp-sa-aiplatform-re), materialized after the first ReasoningEngine API call in sandbox_project_id.
 resource "google_project_iam_member" "sandbox_agent_engine_re_ar_reader" {
