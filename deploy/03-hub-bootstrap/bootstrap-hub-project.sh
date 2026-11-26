@@ -171,12 +171,23 @@ do_backup() {
 }
 
 resolve_project_id() {
-  # Resolves the Hub project UUID from SCION_HUB_PROJECT_ID, local .scion/project-id, or --project <slug>.
-  # Reading .scion/project-id guarantees Vertex AI project env injection even when --project is omitted (HC-10 F3).
+  # Resolves the Hub project UUID from SCION_HUB_PROJECT_ID, .scion/settings.yaml (Scion v0.4),
+  # legacy .scion/project-id, or --project <slug> API lookup (HC-10 F3, HC-11 F3).
   if [[ -n "${SCION_HUB_PROJECT_ID:-}" ]]; then
     echo "$SCION_HUB_PROJECT_ID"
     return 0
   fi
+  local settings_file yaml_pid
+  for settings_file in "${TARGET_REPO:+${TARGET_REPO}/.scion/settings.yaml}" ".scion/settings.yaml"; do
+    if [[ -n "$settings_file" && -f "$settings_file" ]]; then
+      yaml_pid="$(awk '/^[[:space:]]*project_id:[[:space:]]*/ { gsub(/["'\''[:space:]]/, "", $2); print $2; exit }' "$settings_file")"
+      if [[ -n "$yaml_pid" ]]; then
+        export SCION_HUB_PROJECT_ID="$yaml_pid"
+        echo "$yaml_pid"
+        return 0
+      fi
+    fi
+  done
   local pid_file=""
   if [[ -n "$TARGET_REPO" && -f "$TARGET_REPO/.scion/project-id" ]]; then
     pid_file="$TARGET_REPO/.scion/project-id"

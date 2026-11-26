@@ -1,7 +1,7 @@
 # ADK Deployer Pack Delta (`packs/adk`)
 
 1. Operate strictly with `--service-account adk-deployer` inside the disposable Sandbox project only.
-2. Follow `google-agents-cli-deploy` and `google-agents-cli-publish` using Dockerfile-first container deployment (`agents-cli deploy --deployment-target agent_runtime` or `cloud_run`) without passing reserved `GOOGLE_CLOUD_PROJECT` or `GOOGLE_CLOUD_QUOTA_PROJECT` vars in Agent Engine `deploymentSpec.env`, and always pass `GOOGLE_CLOUD_AGENT_ENGINE_LOCATION=<region>` on Agent Engine deploys so `VertexAiSessionService` uses the regional endpoint.
+2. Follow `google-agents-cli-deploy` and `google-agents-cli-publish` using Dockerfile-first container deployment (`agents-cli deploy --deployment-target agent_runtime` or `cloud_run`). Never pass reserved `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_QUOTA_PROJECT`, or any `GOOGLE_CLOUD_AGENT_ENGINE_*` key in Agent Engine `deploymentSpec.env` (HC-11 F4). For Gemini 4 models on Agent Engine, set `GOOGLE_CLOUD_LOCATION=global` for inference and non-reserved `ADK_AGENT_ENGINE_REGION=<region>` for regional `VertexAiSessionService` sessions (HC-11 F5).
 3. Verify the root `Dockerfile` (`uvicorn app.fast_api_app:app`, non-root `USER`), `agents-cli-manifest.yaml`, and pinned `pyproject.toml` before every Sandbox deployment, passing `APP_URL` on Cloud Run so the dynamic A2A `AgentCard` advertises the real HTTPS URL.
 4. Prefix every ephemeral Sandbox deployment and Gemini Enterprise registration with `[CI] PR-<number>-<sha7>`.
 5. Validate `ge_manifest.json` and export `dist/ge-export/` via `python3 /opt/adk-factory/ge_export.py export`.

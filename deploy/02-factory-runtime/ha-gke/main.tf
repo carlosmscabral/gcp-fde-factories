@@ -29,9 +29,13 @@ locals {
     agent_namespace             = "scion"
     required_k8s_rbac           = ["serviceaccounts:get,list,watch"]
     workload_identity_ksas = [
+      "factory-coordinator",
       "factory-worker",
       "pack-deployer",
       "pack-evaluator",
+    ]
+    optional_workload_identity_ksas = [
+      "kaizen-viewer",
     ]
     forbidden_workload_identity_ksas = [
       "sandbox-janitor",

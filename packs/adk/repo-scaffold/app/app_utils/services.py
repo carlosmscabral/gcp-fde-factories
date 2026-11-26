@@ -22,16 +22,17 @@ _AGENT_DIR = os.path.dirname(
 
 
 def _resolve_agent_engine_location() -> str:
-    """Resolves a regional location for VertexAiSessionService and rejects global (HC-10 F9).
+    """Resolves a regional location for VertexAiSessionService and rejects global (HC-10 F9, HC-11 F4).
 
-    Vertex AI Agent Engine sessions require a regional endpoint even when Gemini model calls target global.
+    Reads non-reserved ADK_AGENT_ENGINE_REGION first because Vertex AI Agent Engine rejects
+    deploymentSpec.env keys starting with the reserved GOOGLE_CLOUD_AGENT_ENGINE prefix.
     """
     for env_key in (
-        "GOOGLE_CLOUD_AGENT_ENGINE_LOCATION",
-        "GOOGLE_CLOUD_LOCATION",
-        "GOOGLE_CLOUD_REGION",
-        "CLOUD_RUN_REGION",
         "ADK_AGENT_ENGINE_REGION",
+        "AGENT_ENGINE_REGION",
+        "CLOUD_RUN_REGION",
+        "GOOGLE_CLOUD_REGION",
+        "GOOGLE_CLOUD_LOCATION",
     ):
         val = (os.environ.get(env_key) or "").strip()
         if val and val.lower() != "global":

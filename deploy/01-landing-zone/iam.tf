@@ -111,6 +111,18 @@ locals {
       "${slot}/${member}" => { sa_name = sa_name, member = member }
     }
   ]...)
+
+  # Deduplicated GitHub repositories authorized for keyless WIF on single- or multi-pack Hubs (HC-11 F2).
+  wif_repositories = distinct(compact(concat(
+    var.github_repository != "" ? [var.github_repository] : [],
+    var.github_repositories,
+  )))
+
+  wif_attribute_condition = (
+    length(local.wif_repositories) == 1
+    ? "assertion.repository == '${local.wif_repositories[0]}'"
+    : "assertion.repository in [${join(", ", [for repo in local.wif_repositories : "'${repo}'"])}]"
+  )
 }
 
 # --- Custom IAM Roles on Sandbox Project ---
@@ -929,7 +941,14 @@ resource "google_iam_workload_identity_pool" "github_actions" {
   project                   = var.sandbox_project_id
   workload_identity_pool_id = "${var.name_prefix}-gh-pool"
   display_name              = "GitHub Actions Verdict Gate Pool"
-  description               = "Keyless OIDC federation strictly scoped to the customer repository for PR Verdict verification."
+  description               = "Keyless OIDC federation strictly scoped to authorized customer repositories for PR Verdict verification."
+
+  lifecycle {
+    precondition {
+      condition     = length(local.wif_repositories) > 0
+      error_message = "Set github_repository or github_repositories with at least one 'owner/repo' slug when enable_github_wif is true."
+    }
+  }
 
   depends_on = [google_project_service.enabled]
 }
@@ -946,7 +965,7 @@ resource "google_iam_workload_identity_pool_provider" "github_oidc" {
     "attribute.repository" = "assertion.repository"
     "attribute.actor"      = "assertion.actor"
   }
-  attribute_condition = "assertion.repository == '${var.github_repository}'"
+  attribute_condition = local.wif_attribute_condition
 
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"
@@ -954,17 +973,17 @@ resource "google_iam_workload_identity_pool_provider" "github_oidc" {
 }
 
 resource "google_service_account_iam_member" "wif_evaluator_impersonation" {
-  count = var.enable_sandbox_project && var.enable_github_wif ? 1 : 0
+  for_each = var.enable_sandbox_project && var.enable_github_wif ? toset(local.wif_repositories) : toset([])
 
   service_account_id = google_service_account.sandbox_evaluator[0].name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_actions[0].name}/attribute.repository/${var.github_repository}"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_actions[0].name}/attribute.repository/${each.value}"
 }
 
 resource "google_service_account_iam_member" "wif_janitor_impersonation" {
-  count = var.enable_sandbox_project && var.enable_github_wif ? 1 : 0
+  for_each = var.enable_sandbox_project && var.enable_github_wif ? toset(local.wif_repositories) : toset([])
 
   service_account_id = google_service_account.sandbox_janitor[0].name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_actions[0].name}/attribute.repository/${var.github_repository}"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_actions[0].name}/attribute.repository/${each.value}"
 }

@@ -50,10 +50,11 @@ def _extract_session_id(raw_body: str) -> str:
 
 
 def _stream_has_non_empty_content(raw_stream: str) -> bool:
-    """Checks that an Agent Engine SSE or JSON response contains model or tool output without top-level errors."""
+    """Checks that an Agent Engine SSE or JSON response contains model or tool output without any error event."""
     stripped = raw_stream.strip()
     if not stripped:
         return False
+    has_content = False
     for line in stripped.splitlines():
         payload = line[5:].strip() if line.startswith("data:") else line.strip()
         if not payload:
@@ -63,14 +64,14 @@ def _stream_has_non_empty_content(raw_stream: str) -> bool:
         except json.JSONDecodeError:
             continue
         if isinstance(event, dict):
-            if event.get("error"):
+            if event.get("error") or event.get("error_code") or event.get("error_message"):
                 return False
             content = event.get("content")
             if isinstance(content, dict) and content.get("parts"):
-                return True
-            if event.get("output") or event.get("text"):
-                return True
-    return False
+                has_content = True
+            elif event.get("output") or event.get("text"):
+                has_content = True
+    return has_content
 
 
 def run_remote_agent_engine_smoke(

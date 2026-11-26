@@ -153,17 +153,17 @@ def test_hc10_f9_services_rejects_global_location_and_eval_config_pins_judge_mod
     resolve_loc = namespace["_resolve_agent_engine_location"]
 
     for key in (
-        "GOOGLE_CLOUD_AGENT_ENGINE_LOCATION",
-        "GOOGLE_CLOUD_LOCATION",
-        "GOOGLE_CLOUD_REGION",
-        "CLOUD_RUN_REGION",
         "ADK_AGENT_ENGINE_REGION",
+        "AGENT_ENGINE_REGION",
+        "CLOUD_RUN_REGION",
+        "GOOGLE_CLOUD_REGION",
+        "GOOGLE_CLOUD_LOCATION",
     ):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "global")
     assert resolve_loc() == "us-central1"
 
-    monkeypatch.setenv("GOOGLE_CLOUD_AGENT_ENGINE_LOCATION", "europe-west4")
+    monkeypatch.setenv("ADK_AGENT_ENGINE_REGION", "europe-west4")
     assert resolve_loc() == "europe-west4"
 
     eval_cfg = json.loads((REPO_ROOT / "packs/adk/repo-scaffold/evals/eval_config.json").read_text(encoding="utf-8"))
@@ -172,7 +172,8 @@ def test_hc10_f9_services_rejects_global_location_and_eval_config_pins_judge_mod
     assert match_v2["judgeModelOptions"]["judgeModel"] == "gemini-4-neon"
 
     deployer_delta = (REPO_ROOT / "packs/adk/templates/adk-deployer/delta.md").read_text(encoding="utf-8")
-    assert "GOOGLE_CLOUD_AGENT_ENGINE_LOCATION" in deployer_delta
+    assert "ADK_AGENT_ENGINE_REGION" in deployer_delta
+    assert "GOOGLE_CLOUD_LOCATION=global" in deployer_delta
 
 
 def test_hc10_f10_kaizen_allows_lite_vm_bridge_host_and_blocks_external_http() -> None:
