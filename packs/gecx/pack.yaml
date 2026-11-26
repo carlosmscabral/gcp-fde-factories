@@ -21,7 +21,7 @@ specialist_templates:
     base_role: "coordinator"
     delta_dir: "templates/coordinator"
     hub_role: "full"
-    sandbox_sa_slot: "worker"
+    sandbox_sa_slot: "coordinator"
     role_skills:
       - "software-engineering-process"
       - "agent-state-continuity"

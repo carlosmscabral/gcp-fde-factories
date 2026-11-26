@@ -52,6 +52,10 @@ output "iap_proxy_sa_email" {
   value = google_service_account.iap_proxy.email
 }
 
+output "coordinator_sa_email" {
+  value = google_service_account.coordinator.email
+}
+
 output "worker_sa_email" {
   value = google_service_account.worker.email
 }

@@ -269,6 +269,7 @@ def render_harness_config(
     elif harness == "antigravity":
         env["GOOGLE_GENAI_USE_VERTEXAI"] = "true"
         env["GOOGLE_CLOUD_LOCATION"] = gemini_location
+        env["AGY_ADC_AUTH"] = "true"
         if inference_project:
             # Antigravity CLI 1.5.14 in AGY_ADC_AUTH mode routes Vertex AI through ADC quotaProject (HC-02 F8).
             env["GOOGLE_CLOUD_PROJECT"] = inference_project

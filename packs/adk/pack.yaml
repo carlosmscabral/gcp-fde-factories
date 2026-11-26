@@ -24,7 +24,7 @@ specialist_templates:
   - name: coordinator
     base_role: coordinator
     hub_role: full
-    sandbox_sa_slot: worker
+    sandbox_sa_slot: coordinator
     delta_dir: templates/coordinator
     strip_hardcoded_model: true
     role_skills:

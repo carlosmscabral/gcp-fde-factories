@@ -155,7 +155,7 @@ class TestHC03FactoryOpsRegressions(unittest.TestCase):
             self.assertIn('--entrypoint ""', wf)
 
         self.assertIn("https://run.googleapis.com/v2/${RE_RES}", adk_wf)
-        self.assertIn("grep -Eq '^evals/'", adk_wf)
+        self.assertIn("grep -Eq '(^|.*/)evals/'", adk_wf)
         self.assertNotIn("grep -Eq '^(evals|tests)/'", adk_wf)
 
 

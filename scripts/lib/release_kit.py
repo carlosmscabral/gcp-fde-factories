@@ -102,6 +102,11 @@ def compose_specialist_template(
         "system_prompt": "system-prompt.md",
         "skills": [{"uri": f"skill://scion/global/{skill_name}"} for skill_name in role_skills],
     }
+    # Coordinators orchestrate multi-PR Depth-3 SEP waves that exceed the 2h leaf-worker Hub default (HC-10 F2).
+    if base_role == "coordinator":
+        agent_yaml["max_duration"] = "8h"
+        agent_yaml["max_turns"] = 200
+        agent_yaml["max_model_calls"] = 400
     header = (
         f"# Composed offline Scion v0.4 template for {full_name}.\n"
         f"# Base upstream role: {base_role} @ {agent_team_commit}.\n"

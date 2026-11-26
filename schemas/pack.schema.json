@@ -62,7 +62,7 @@
           },
           "delta_dir": { "type": "string", "minLength": 1 },
           "hub_role": { "type": "string", "enum": ["baseline", "full"] },
-          "sandbox_sa_slot": { "type": "string", "enum": ["worker", "deployer", "evaluator", "none"] },
+          "sandbox_sa_slot": { "type": "string", "enum": ["coordinator", "worker", "deployer", "evaluator", "none"] },
           "role_skills": {
             "type": "array",
             "items": { "type": "string", "pattern": "^[a-z0-9-]+$" }

@@ -171,12 +171,26 @@ do_backup() {
 }
 
 resolve_project_id() {
-  # Resolves --project <slug> to a Hub project UUID and exports SCION_HUB_PROJECT_ID.
-  # Works around Scion v0.4.0-preview.3 where `scion service-accounts --project <slug>`
-  # treats <slug> as a local grove directory name and clears hub.project_id (HC-02 F5).
+  # Resolves the Hub project UUID from SCION_HUB_PROJECT_ID, local .scion/project-id, or --project <slug>.
+  # Reading .scion/project-id guarantees Vertex AI project env injection even when --project is omitted (HC-10 F3).
   if [[ -n "${SCION_HUB_PROJECT_ID:-}" ]]; then
     echo "$SCION_HUB_PROJECT_ID"
     return 0
+  fi
+  local pid_file=""
+  if [[ -n "$TARGET_REPO" && -f "$TARGET_REPO/.scion/project-id" ]]; then
+    pid_file="$TARGET_REPO/.scion/project-id"
+  elif [[ -f ".scion/project-id" ]]; then
+    pid_file=".scion/project-id"
+  fi
+  if [[ -n "$pid_file" ]]; then
+    local file_pid
+    file_pid="$(tr -d '[:space:]' < "$pid_file")"
+    if [[ -n "$file_pid" ]]; then
+      export SCION_HUB_PROJECT_ID="$file_pid"
+      echo "$file_pid"
+      return 0
+    fi
   fi
   if [[ -n "$PROJECT_SLUG" && -n "${SCION_HUB_TOKEN:-}" ]]; then
     local resolved
@@ -189,6 +203,45 @@ resolve_project_id() {
     fi
   fi
   echo ""
+}
+
+warn_github_token_injection_mode() {
+  # Warns when a linked project lacks GITHUB_TOKEN with injectionMode=always (required for private git clones, HC-10 F4).
+  local proj_id="$1"
+  [[ -n "$proj_id" && -n "${SCION_HUB_TOKEN:-}" ]] || return 0
+  local sec_json mode
+  sec_json="$(curl -sf -H "Authorization: Bearer ${SCION_HUB_TOKEN}" "${HUB_URL%/}/api/v1/secrets?scope=project&scopeId=${proj_id}" 2>/dev/null || true)"
+  [[ -n "$sec_json" ]] || return 0
+  mode="$(jq -r '((.secrets // .)[]? | select(.key == "GITHUB_TOKEN") | .injectionMode) // empty' <<< "$sec_json" | head -n 1 || true)"
+  if [[ "$mode" != "always" ]]; then
+    echo "WARNING: Project secret GITHUB_TOKEN has injectionMode='${mode:-missing}' (expected 'always' for private GitHub repo clones)." >&2
+    echo "  Run: scion hub secret set --project GITHUB_TOKEN \"<TOKEN>\" --hub \"$HUB_URL\"" >&2
+    echo "  Run: scion hub secret update --project GITHUB_TOKEN --injection-mode always --hub \"$HUB_URL\"" >&2
+  fi
+}
+
+print_github_ci_variables() {
+  # Prints copy-ready GitHub Actions variable commands matching the pack's Verdict Gate workflow (HC-10 F5).
+  local pack_name="$1"
+  [[ -n "$LANDING_ZONE_JSON" && -f "$LANDING_ZONE_JSON" ]] || return 0
+  local wif_prov sbx_p eval_sa jan_sa rt_img var_prefix
+  wif_prov="$(jq -r '.github_wif_provider_name.value // empty' "$LANDING_ZONE_JSON")"
+  sbx_p="$(jq -r '.sandbox_project_id.value // empty' "$LANDING_ZONE_JSON")"
+  eval_sa="$(jq -r '.sandbox_evaluator_sa_email.value // empty' "$LANDING_ZONE_JSON")"
+  jan_sa="$(jq -r '.sandbox_janitor_sa_email.value // empty' "$LANDING_ZONE_JSON")"
+  rt_img="$(jq -r --arg k "${pack_name}-runtime" '.images[$k] // empty' "$KIT_DIR/manifest.json")"
+  case "$pack_name" in
+    adk) var_prefix="ADK" ;;
+    gecx) var_prefix="GECX" ;;
+    *) return 0 ;;
+  esac
+  echo "=== NEXT STEP: GitHub Actions Verdict Gate Repository Variables (${pack_name}) ==="
+  if [[ -n "$sbx_p" ]]; then echo "  gh variable set ${var_prefix}_SANDBOX_PROJECT_ID --body \"${sbx_p}\""; fi
+  if [[ -n "$eval_sa" ]]; then echo "  gh variable set ${var_prefix}_EVALUATOR_SA_EMAIL --body \"${eval_sa}\""; fi
+  if [[ -n "$jan_sa" ]]; then echo "  gh variable set ${var_prefix}_JANITOR_SA_EMAIL --body \"${jan_sa}\""; fi
+  if [[ -n "$rt_img" ]]; then echo "  gh variable set ${var_prefix}_RUNTIME_IMAGE_DIGEST --body \"${rt_img}\""; fi
+  if [[ -n "$wif_prov" ]]; then echo "  gh variable set GCP_WIF_PROVIDER --body \"${wif_prov}\""; fi
+  return 0
 }
 
 register_and_verify_sa() {
@@ -459,7 +512,7 @@ do_apply() {
   done
 
   # 4. Register and verify factory SAs idempotently (never register sandbox_janitor on the Hub).
-  local resolved_proj_id worker_sa="" deploy_target
+  local resolved_proj_id coord_sa="" worker_sa="" deploy_target
   deploy_target="$(jq -r '.deploy_target // ""' <<< "$repo_cfg")"
   resolved_proj_id="$(resolve_project_id)"
   if [[ -n "$resolved_proj_id" ]]; then
@@ -469,6 +522,7 @@ do_apply() {
     local inf_p sbx_p dep_sa eval_sa
     inf_p="$(jq -re '.inference_project_id.value' "$LANDING_ZONE_JSON")"
     sbx_p="$(jq -r '.sandbox_project_id.value // empty' "$LANDING_ZONE_JSON")"
+    coord_sa="$(jq -r '.coordinator_sa_email.value // empty' "$LANDING_ZONE_JSON")"
     worker_sa="$(jq -re '.worker_sa_email.value' "$LANDING_ZONE_JSON")"
     dep_sa="$(jq -r '.sandbox_deployer_sa_email.value // empty' "$LANDING_ZONE_JSON")"
     eval_sa="$(jq -r '.sandbox_evaluator_sa_email.value // empty' "$LANDING_ZONE_JSON")"
@@ -476,6 +530,9 @@ do_apply() {
     local id_proj_flags=("${PROJ_FLAGS[@]}")
     if [[ -n "${SCION_HUB_PROJECT_ID:-}" ]]; then
       id_proj_flags=()
+    fi
+    if [[ -n "$coord_sa" ]]; then
+      register_and_verify_sa "$coord_sa" "$inf_p" "factory-coordinator"
     fi
     register_and_verify_sa "$worker_sa" "$inf_p" "factory-worker"
     scion project identity default set "$worker_sa" "${id_proj_flags[@]}" --hub "$HUB_URL"
@@ -528,7 +585,7 @@ do_apply() {
     fi
     if [[ -n "$proj_id" ]]; then
       local kv k v
-      for kv in "GOOGLE_CLOUD_PROJECT=${inf_proj}" "GOOGLE_CLOUD_QUOTA_PROJECT=${inf_proj}" "GOOGLE_CLOUD_LOCATION=${gemini_loc}" "GOOGLE_GENAI_USE_VERTEXAI=true"; do
+      for kv in "GOOGLE_CLOUD_PROJECT=${inf_proj}" "GOOGLE_CLOUD_QUOTA_PROJECT=${inf_proj}" "GOOGLE_CLOUD_LOCATION=${gemini_loc}" "GOOGLE_GENAI_USE_VERTEXAI=true" "AGY_ADC_AUTH=true"; do
         k="${kv%%=*}"; v="${kv#*=}"
         curl -sf -X PUT \
           -H "Authorization: Bearer ${SCION_HUB_TOKEN}" \
@@ -537,6 +594,7 @@ do_apply() {
           -d "{\"value\":\"${v}\",\"injectionMode\":\"always\"}" >/dev/null \
           && echo "SET PROJECT ENV: ${k}=${v}" || true
       done
+      warn_github_token_injection_mode "$proj_id"
     fi
   fi
 
@@ -551,7 +609,8 @@ do_apply() {
   if [[ -n "$TARGET_REPO" ]]; then
     do_overlay_sync
   fi
-  ensure_coordinator_started "$pack_prefix" "$default_harness" "$repo_cfg" "$worker_sa"
+  ensure_coordinator_started "$pack_prefix" "$default_harness" "$repo_cfg" "${coord_sa:-$worker_sa}"
+  print_github_ci_variables "$pack_name"
   echo "APPLY COMPLETE."
 }
 

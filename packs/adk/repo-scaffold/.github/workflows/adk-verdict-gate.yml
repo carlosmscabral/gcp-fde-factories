@@ -43,13 +43,13 @@ jobs:
           PR_LABELS: "${{ join(github.event.pull_request.labels.*.name, ',') }}"
         run: |
           CHANGED="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
-          if grep -Eq '^evals/' <<< "$CHANGED"; then
+          if grep -Eq '(^|.*/)evals/' <<< "$CHANGED"; then
             if ! grep -qw 'eval-change-approved' <<< "$PR_LABELS"; then
               echo "::error::PR edits evals/ without human label 'eval-change-approved'."
               exit 1
             fi
           fi
-          if grep -Eq '^(app/|agent/|Dockerfile$)' <<< "$CHANGED"; then
+          if grep -Eq '(^|.*/)(app/|agent/|Dockerfile$)' <<< "$CHANGED"; then
             echo "REQUIRE_LIVE=true" >> "$GITHUB_ENV"
           else
             echo "REQUIRE_LIVE=false" >> "$GITHUB_ENV"

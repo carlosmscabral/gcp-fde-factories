@@ -95,7 +95,8 @@ locals {
   # Assignable agent SAs eligible for human operator actAs grants under gcp_iam_check_mode=enforce.
   assignable_sa_map = merge(
     {
-      worker = google_service_account.worker.name
+      coordinator = google_service_account.coordinator.name
+      worker      = google_service_account.worker.name
     },
     var.enable_sandbox_project ? {
       deployer  = google_service_account.sandbox_deployer[0].name
@@ -202,6 +203,12 @@ resource "google_service_account" "iap_proxy" {
   display_name = "Scion Cloud Run IAP Proxy (Zero Project Roles)"
 }
 
+resource "google_service_account" "coordinator" {
+  project      = var.inference_project_id
+  account_id   = "${var.name_prefix}-coordinator"
+  display_name = "Scion Factory Coordinator (Predict and Child-SA Assign Only)"
+}
+
 resource "google_service_account" "worker" {
   project      = var.inference_project_id
   account_id   = "${var.name_prefix}-worker"
@@ -305,6 +312,12 @@ resource "google_project_iam_member" "hub_logging" {
 }
 
 # Grant token minting strictly on the assignable agent SAs (never on sandbox_janitor).
+resource "google_service_account_iam_member" "hub_mint_coordinator" {
+  service_account_id = google_service_account.coordinator.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_service_account.scion_hub.email}"
+}
+
 resource "google_service_account_iam_member" "hub_mint_worker" {
   service_account_id = google_service_account.worker.name
   role               = "roles/iam.serviceAccountTokenCreator"
@@ -418,6 +431,66 @@ resource "google_project_iam_member" "sandbox_agent_engine_re_ar_reader" {
   project = var.hub_project_id
   role    = "roles/artifactregistry.reader"
   member  = "serviceAccount:service-${data.google_project.sandbox[0].number}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
+}
+
+# --- Coordinator Least-Privilege Orchestration IAM (HC-10: Autonomous Split-SA Spawn) ---
+# Scion Hub enforces Policy Troubleshooter actAs checks on the calling agent's assigned SA
+# when a coordinator spawns child agents under a different SA (deployer, evaluator, kaizen).
+# Keeping coordinator separate from worker preserves ADR-003: leaf workers hold zero actAs grants.
+# Coordinator receives roles/iam.serviceAccountUser (actAs only, never TokenCreator, never janitor).
+
+resource "google_project_iam_member" "coordinator_vertex_predict" {
+  project = var.inference_project_id
+  role    = google_project_iam_custom_role.inference_vertex_predict.id
+  member  = "serviceAccount:${google_service_account.coordinator.email}"
+}
+
+resource "google_project_iam_member" "coordinator_service_usage" {
+  project = var.inference_project_id
+  role    = "roles/serviceusage.serviceUsageConsumer"
+  member  = "serviceAccount:${google_service_account.coordinator.email}"
+}
+
+resource "google_project_iam_member" "coordinator_logging" {
+  project = var.inference_project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.coordinator.email}"
+}
+
+resource "google_project_iam_member" "coordinator_monitoring" {
+  project = var.inference_project_id
+  role    = "roles/monitoring.metricWriter"
+  member  = "serviceAccount:${google_service_account.coordinator.email}"
+}
+
+resource "google_service_account_iam_member" "coordinator_act_as_worker" {
+  service_account_id = google_service_account.worker.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.coordinator.email}"
+}
+
+resource "google_service_account_iam_member" "coordinator_act_as_deployer" {
+  count = var.enable_sandbox_project ? 1 : 0
+
+  service_account_id = google_service_account.sandbox_deployer[0].name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.coordinator.email}"
+}
+
+resource "google_service_account_iam_member" "coordinator_act_as_evaluator" {
+  count = var.enable_sandbox_project ? 1 : 0
+
+  service_account_id = google_service_account.sandbox_evaluator[0].name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.coordinator.email}"
+}
+
+resource "google_service_account_iam_member" "coordinator_act_as_kaizen" {
+  count = var.enable_kaizen_gcp_obs ? 1 : 0
+
+  service_account_id = google_service_account.kaizen_viewer[0].name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.coordinator.email}"
 }
 
 # --- Inference Project Least-Privilege Predict-Only IAM (Worker, Deployer, Evaluator — HC-01 F26/F27) ---
