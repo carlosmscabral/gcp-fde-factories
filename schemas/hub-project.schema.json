@@ -92,6 +92,35 @@
         "tester_image_dockerfile": { "type": ["string", "null"] },
         "profile_path": { "type": "string", "default": ".factory/factory-profile.yaml" }
       }
+    },
+    "deploy_target": {
+      "type": "string",
+      "enum": ["cloud-run", "gke", "agent-engine", "ces", "custom", "none"]
+    },
+    "monorepo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "subdir": { "type": "string", "pattern": "^[^\\r\\n`]{0,160}$", "default": "" },
+        "agent_prefix": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,15}$" }
+      }
+    },
+    "roster": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled_roles": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z0-9-]+$" }
+        },
+        "disabled_roles": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z0-9-]+$" }
+        },
+        "max_wip": { "type": "integer", "minimum": 1, "maximum": 20, "default": 3 },
+        "reviewer_replicas": { "type": "integer", "minimum": 1, "maximum": 5, "default": 1 }
+      }
     }
   }
 }

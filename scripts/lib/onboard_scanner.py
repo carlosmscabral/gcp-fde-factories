@@ -1,7 +1,8 @@
-"""Zero-token static repository scanner and Day-2 drift detector (v0.4.0).
+"""Zero-token static repository scanner, role proposer, and Day-2 drift detector (v0.6.0).
 
-Orchestrates structured manifest parsers from onboard_parsers to produce discovery reports
-and computes Day-2 drift relative to .factory/factory-profile.yaml.
+Orchestrates manifest parsers (onboard_parsers) and extended stack/monorepo detectors
+(onboard_stack_detectors) to produce discovery facts, pack recommendations, evidence-based
+SEP role proposals, and dynamic 6-pillar /grill-me questions.
 """
 from __future__ import annotations
 
@@ -17,6 +18,9 @@ from scripts.lib.onboard_parsers import (
     detect_knowledge_sources,
     detect_modernization_gaps,
 )
+from scripts.lib.onboard_questions import select_grill_questions
+from scripts.lib.onboard_roles import propose_roles, recommend_pack
+from scripts.lib.onboard_stack_detectors import detect_extended_signals
 
 AI_FILE_CANDIDATES = (
     "AGENTS.md",
@@ -39,10 +43,23 @@ def _truncate_note(text: str, limit: int = 200) -> str:
 def scan_repository_facts(
     repo_dir: pathlib.Path,
     toolchain_manifest_path: pathlib.Path | None = None,
+    pack: str | None = None,
+    track: str = "complete",
 ) -> dict[str, Any]:
-    """Scans repo_dir statically and computes the toolchain delta against the target pack."""
+    """Scans repo_dir statically and computes toolchain delta, pack advice, roles, and /grill-me bank."""
     repo = repo_dir.resolve()
     binaries, commands, stacks, versions = detect_binaries_and_commands(repo)
+    ext = detect_extended_signals(repo)
+
+    merged_binaries = sorted(set(binaries) | set(ext["extra_binaries"]))
+    merged_stacks = sorted(set(stacks) | set(ext["extra_stacks"]))
+    merged_commands = dict(commands)
+    for key, val in ext["extra_commands"].items():
+        if not merged_commands.get(key) or "configure lint command" in str(merged_commands.get(key)):
+            merged_commands[key] = val
+    if not merged_commands.get("test") and ("python" in merged_stacks or (not merged_stacks and (pack in ("adk", "gecx") or (toolchain_manifest_path and toolchain_manifest_path.parent.name in ("adk", "gecx"))))):
+        merged_commands["test"] = "pytest -q"
+
     git_ci = detect_git_and_ci(repo)
     knowledge = detect_knowledge_sources(repo)
     untrusted_hooks, ai_divergence, advisory_findings = detect_hooks_and_ai_divergence(repo)
@@ -59,7 +76,7 @@ def scan_repository_facts(
         baked = set(manifest.get("baked_binaries", {}).keys())
         heavy_candidates.update(manifest.get("heavy_test_candidates", []))
 
-    missing_all = sorted(b for b in binaries if b not in baked)
+    missing_all = sorted(b for b in merged_binaries if b not in baked)
     installable_missing = [b for b in missing_all if b in SUPPORTED_RECIPE_BINARIES]
     unsupported_missing = [b for b in missing_all if b not in SUPPORTED_RECIPE_BINARIES]
     heavy_missing = sorted(b for b in installable_missing if b in heavy_candidates)
@@ -76,15 +93,19 @@ def scan_repository_facts(
             "benefit": f"Provides pinned container support for '{binary}' outside the standard recipe allowlist.",
         })
 
-    return {
+    facts: dict[str, Any] = {
         "repo_path": str(repo),
-        "stacks": stacks,
+        "stacks": merged_stacks,
         "runtime_versions": versions,
-        "detected_binaries": binaries,
+        "detected_binaries": merged_binaries,
         "missing_binaries": core_missing,
         "heavy_test_binaries": heavy_missing,
         "unsupported_binaries": unsupported_missing,
-        "commands": commands,
+        "commands": merged_commands,
+        "frontend_frameworks": ext["frontend_frameworks"],
+        "monorepo": ext["monorepo"],
+        "deploy_signals": ext["deploy_signals"],
+        "suggested_deploy_target": ext["suggested_deploy_target"],
         "ai_files_detected": ai_files,
         "untrusted_hooks_detected": untrusted_hooks,
         "ai_file_divergence": ai_divergence,
@@ -93,6 +114,14 @@ def scan_repository_facts(
         "knowledge_sources": knowledge,
         "modernization_gaps": gaps,
     }
+
+    pack_rec = recommend_pack(facts)
+    chosen_pack = pack or pack_rec["pack"]
+    facts["recommended_pack"] = pack_rec
+    facts["selected_pack"] = chosen_pack
+    facts["proposed_roles"] = propose_roles(facts, pack=chosen_pack, track=track)
+    facts["grill_questions"] = select_grill_questions(pack=chosen_pack, track=track, scan_facts=facts)
+    return facts
 
 
 def detect_repo_drift(

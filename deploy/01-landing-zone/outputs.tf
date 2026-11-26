@@ -9,11 +9,11 @@ output "inference_project_id" {
 }
 
 output "sandbox_project_id" {
-  value = var.sandbox_project_id
+  value = var.enable_sandbox_project ? var.sandbox_project_id : null
 }
 
 output "sandbox_project_number" {
-  value = data.google_project.sandbox.number
+  value = var.enable_sandbox_project ? data.google_project.sandbox[0].number : null
 }
 
 output "region" {
@@ -57,15 +57,15 @@ output "worker_sa_email" {
 }
 
 output "sandbox_deployer_sa_email" {
-  value = google_service_account.sandbox_deployer.email
+  value = var.enable_sandbox_project ? google_service_account.sandbox_deployer[0].email : null
 }
 
 output "sandbox_evaluator_sa_email" {
-  value = google_service_account.sandbox_evaluator.email
+  value = var.enable_sandbox_project ? google_service_account.sandbox_evaluator[0].email : null
 }
 
 output "sandbox_janitor_sa_email" {
-  value = google_service_account.sandbox_janitor.email
+  value = var.enable_sandbox_project ? google_service_account.sandbox_janitor[0].email : null
 }
 
 output "release_builder_sa_email" {
@@ -77,7 +77,7 @@ output "gke_node_sa_email" {
 }
 
 output "adk_runtime_sa_email" {
-  value = var.enable_adk_sandbox_roles ? google_service_account.adk_runtime[0].email : null
+  value = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? google_service_account.adk_runtime[0].email : null
 }
 
 output "budget_pubsub_topic" {
@@ -94,5 +94,5 @@ output "kaizen_viewer_sa_email" {
 
 output "github_wif_provider_name" {
   description = "Full Workload Identity Provider resource name for GitHub Actions GCP_WIF_PROVIDER variable."
-  value       = var.enable_github_wif ? google_iam_workload_identity_pool_provider.github_oidc[0].name : null
+  value       = var.enable_sandbox_project && var.enable_github_wif ? google_iam_workload_identity_pool_provider.github_oidc[0].name : null
 }

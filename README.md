@@ -2,7 +2,7 @@
 
 **Reusable Autonomous Software Factories for Google Cloud Forward Deployed Engineers (FDEs)** — built on **Google Cloud Scion (`v0.4.0-preview.3`)**, **`scion-frontiers/agent-team` (SEP)**, **Vertex AI-first generic model tiers**, **split-SA Sandbox verification**, **closed-loop Kaizen**, and **zero-overwrite Brownfield onboarding**.
 
-> **Release `bife` (`v0.5.0`):** Self-contained offline Release Kits, 3-project cross-project isolation (`hub` + `inf` + `sbx`), keyless GitHub Actions WIF Verdict Gates, native `google-agents-cli` (`adk_python`) single-container Cloud Run A2A + Playground (`ADR-014`), cognitive Day-0 brownfield onboarding with advisory validators (`ADR-015`), closed-loop Tier A + Tier B Kaizen, cross-vendor Claude Opus 5.5 review, and 12h Lite Single-VM endurance qualification ([Enterprise GCP Prerequisites Checklist](deploy/ENTERPRISE_PREREQUISITES.md) | [Hillclimbing Qualification Ledger](docs/HILLCLIMBING_CHARTER.md)).
+> **Release `contrafile` (`v0.6.0`):** Adds the lean **`packs/generic`** (`sw-*`) software factory pack for arbitrary brownfield/greenfield repositories, declarative 6-pillar `/grill-me` onboarding with `--emit-draft`, evidence-based SEP role curation, zero-clobber Knowledge Plane (`.factory/knowledge/*`, `.factory/waves/wave-1.yaml`, `kp-check`), monorepo scoping, and idempotent PO-gated standby Coordinator launch in Stage 03 (`ADR-016`), building on `bife` (`v0.5.0`) 3-project cross-project isolation, keyless WIF, native `agents-cli` ADK (`ADR-014`), cognitive brownfield adaptation (`ADR-015`), and closed-loop Kaizen ([Enterprise GCP Prerequisites Checklist](deploy/ENTERPRISE_PREREQUISITES.md) | [Hillclimbing Qualification Ledger](docs/HILLCLIMBING_CHARTER.md)).
 
 ---
 
@@ -26,25 +26,28 @@ flowchart TB
     subgraph L2["Layer 2 — Domain Factory Packs (packs/)"]
         GECX["packs/gecx (v0.5.0)<br/>16 templates • 11 skills<br/>CX Agent Studio + Audio"]
         ADK["packs/adk (v0.5.0)<br/>16 templates • 18 skills<br/>ADK 2.15 + Dockerfile + GE App"]
+        GEN["packs/generic (v0.6.0)<br/>15 templates (sw-*) • 10 skills<br/>Any Software / Monorepo / CLI"]
         TPL["packs/_template-pack<br/>Starter Skeleton"]
     end
 
     subgraph L3["Layer 3 — Customer Repo Overlay (.factory/)"]
-        OV["hub-project.yaml • factory-profile.yaml<br/>knowledge-index.yaml • modernization-backlog.yaml<br/>Conditional Dockerfile.customer"]
+        OV["hub-project.yaml • factory-profile.yaml<br/>knowledge-index.yaml • knowledge/* • waves/wave-1.yaml<br/>Conditional Dockerfile.customer"]
     end
 
     subgraph DELIV["3-Stage Customer GCP Delivery (deploy/)"]
         S1["Stage 01: Landing Zone<br/>VPC, AR, 7-8 SAs, Custom Roles, WIF"]
         S2["Stage 02: Factory Runtime<br/>lite-vm (Shielded) or ha-gke (Preview)"]
-        S3["Stage 03: Hub Bootstrap<br/>stage-release-kit -> bootstrap-hub-project"]
+        S3["Stage 03: Hub Bootstrap<br/>stage-release-kit -> bootstrap-hub-project -> Standby Coordinator"]
     end
 
     SEP --> CORE_SK
     AGCLI --> CORE_TOOLS
     CORE_SK --> GECX
     CORE_TOOLS --> ADK
+    CORE_SK --> GEN
     GECX -->|"./build.sh --release-kit"| S3
     ADK -->|"./build.sh --release-kit"| S3
+    GEN -->|"./build.sh --release-kit"| S3
     S1 -->|"landing-zone-outputs.json"| S2
     S2 -->|"Healthy Hub via IAP"| S3
     OV -->|"--repo (Adopt-First)"| S3
@@ -54,15 +57,15 @@ flowchart TB
 
 ## 2. Active Domain Packs Matrix
 
-| Dimension | [`packs/gecx`](packs/gecx/README.md) (`v0.5.0`) | [`packs/adk`](packs/adk/README.md) (`v0.5.0`) | `packs/_template-pack` | `packs/agent-platform` |
+| Dimension | [`packs/gecx`](packs/gecx/README.md) (`v0.5.0`) | [`packs/adk`](packs/adk/README.md) (`v0.5.0`) | [`packs/generic`](packs/generic/README.md) (`v0.6.0`) | `packs/_template-pack` |
 | :--- | :--- | :--- | :--- | :--- |
-| **Status** | Active (`v0.5.0` `bife`) | Active (`v0.5.0` `bife`) | Validated Starter Skeleton | Frozen (Future Release) |
-| **Target GCP Platform** | CX Agent Studio (CES text + synthetic `BidiRunSession` audio) | ADK `2.15.0` (Dockerfile-first) + Gemini Enterprise (`GE App`) | Template for new domains | Reserved |
-| **Offline Templates** | **16** (`gecx-*`, `<= 1,800` lines/role) | **16** (`adk-*`, `<= 1,800` lines/role) | **1** (`example-coordinator`) | — |
-| **Hub Skill Bank** | **11** skills (5 project + 6 role-scoped) | **18** skills (5 project + 13 role-scoped incl. 7 `agents-cli`) | `0` | — |
-| **Pinned Toolchain** | `cxas-scrapi==1.11.0` + `/opt/gecx-foundry` | `google-adk[eval,a2a]==2.15.0` + `google-agents-cli==1.15.0` | `core-gcp-fde-base` | — |
-| **Live Sandbox Proof** | CES `GET /v1beta/<app>/evaluationRuns` | Vertex AI `reasoningEngines` + Discovery Engine `v1alpha` `agents` | Custom runner | — |
-| **CI PR Gate** | `gecx-verdict-gate.yml` (fail-closed) | `adk-verdict-gate.yml` (fail-closed) | — | — |
+| **Status** | Active | Active | Active (`v0.6.0` `contrafile`) | Validated Starter Skeleton |
+| **Target Platform** | CX Agent Studio (CES text + synthetic `BidiRunSession` audio) | ADK `2.15.0` (Dockerfile-first) + Gemini Enterprise (`GE App`) | Any software (Go, Node/TS, Python, Java, Rust, Web, CLI, Monorepo) | Template for new domains |
+| **Offline Templates** | **16** (`gecx-*`, `<= 1,800` lines/role) | **16** (`adk-*`, `<= 1,800` lines/role) | **15** (`sw-*`, `<= 1,800` lines/role, filtered by `roster`) | **1** (`example-coordinator`) |
+| **Hub Skill Bank** | **11** skills (5 project + 6 role-scoped) | **18** skills (5 project + 13 role-scoped incl. 7 `agents-cli`) | **10** skills (4 project + 6 role-scoped SEP/Kaizen) | `0` |
+| **Pinned Toolchain** | `cxas-scrapi==1.11.0` + `/opt/gecx-foundry` | `google-adk[eval,a2a]==2.15.0` + `google-agents-cli==1.15.0` | Lean `core-gcp-fde-base` + `.factory/Dockerfile.customer` | `core-gcp-fde-base` |
+| **Verification & Janitor** | CES `evaluationRuns` + `sandbox_janitor.py` | Vertex AI `reasoningEngines` + Discovery Engine `v1alpha` + `sandbox_janitor.py` | Profile-driven `generic_sandbox_gate.py` L1/L2 (`--base-ref`) + Cloud Run `sandbox_janitor.py` | Custom runner |
+| **CI PR Gate & Tracker** | `gecx-verdict-gate.yml` (GitHub Issues/PRs) | `adk-verdict-gate.yml` (GitHub Issues/PRs) | `generic_sandbox_gate.py` + `kp-check` (GitHub Issues or `.factory/waves/wave-1.yaml` seed for ADO/GitLab/Git) | — |
 
 ---
 
@@ -107,19 +110,21 @@ uv pip install --python .venv/bin/python -e ".[dev]"
 # 2. Run static contract, SHA-40 lockfile, context budget, 90d TTL, and clean-room checks
 ./build.sh --check packs/gecx
 ./build.sh --check packs/adk
+./build.sh --check packs/generic
 ./build.sh --check packs/_template-pack
 
 # 3. Run the complete offline unit test suite
 ./build.sh --test
 
 # 4. Build self-contained offline Release Kits (zero external URIs)
-./build.sh --release-kit packs/gecx --out /tmp/gecx-kit
-./build.sh --release-kit packs/adk  --out /tmp/adk-kit
+./build.sh --release-kit packs/gecx    --out /tmp/gecx-kit
+./build.sh --release-kit packs/adk     --out /tmp/adk-kit
+./build.sh --release-kit packs/generic --out /tmp/generic-kit
 
-# 5. Scan an existing customer repository before onboarding (0 tokens)
+# 5. Scan an existing customer repository and emit a pre-filled draft profile (0 tokens)
 .venv/bin/python core-gcp-fde/scripts/factory_onboard.py scan \
   --repo /path/to/customer-repo \
-  --toolchain-manifest packs/adk/toolchain-manifest.json --json
+  --pack generic --track complete --emit-draft /tmp/profile-draft.yaml --json
 ```
 
 ---
@@ -128,9 +133,10 @@ uv pip install --python .venv/bin/python -e ".[dev]"
 
 | Area | Guide / Sub-README | What You Will Find |
 | :--- | :--- | :--- |
-| **Core Layer (Layer 1)** | [`core-gcp-fde/README.md`](core-gcp-fde/README.md) | 5 core skills, Vertex AI harness configs, closed-loop Kaizen collector/verifier, Brownfield scanner & emitter |
+| **Core Layer (Layer 1)** | [`core-gcp-fde/README.md`](core-gcp-fde/README.md) | 5 core skills, 6-pillar `/grill-me` bank, Vertex AI harness configs, Kaizen collector/verifier, Brownfield scanner & emitter |
 | **GECX Pack (Layer 2)** | [`packs/gecx/README.md`](packs/gecx/README.md) | 16 `gecx-*` templates, 11 skills, `cxas 1.11.0`, split-SA CES Sandbox sequence, audio `BidiRunSession` |
 | **ADK Pack (Layer 2)** | [`packs/adk/README.md`](packs/adk/README.md) | 16 `adk-*` templates, 18 skills (`agents-cli`), Dockerfile-first deploy, dual `GE App` export (`agent_engine` & `a2a`) |
+| **Generic Pack (Layer 2)** | [`packs/generic/README.md`](packs/generic/README.md) | 15 `sw-*` SEP templates, 10 skills, lean `core-gcp-fde-base` image, profile-driven `generic_sandbox_gate.py`, non-GitHub `wave-1.yaml` queue |
 | **3-Stage Deployment** | [`deploy/README.md`](deploy/README.md) | Stage 01 Terraform Landing Zone, Stage 02 `lite-vm` / `ha-gke` (Preview), Stage 03 image rebuild vs. mirror & Hub bootstrap |
 | **JSON Contracts** | [`schemas/README.md`](schemas/README.md) | Producer-to-consumer contract map across all 8 JSON Schemas (`Draft 2020-12`) |
 | **Drift Canaries** | [`canaries/README.md`](canaries/README.md) | Upstream CLI/API snapshot guards for `scion`, `cxas-scrapi`, and Discovery Engine `v1alpha` |

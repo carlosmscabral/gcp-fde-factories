@@ -24,6 +24,7 @@ If a change breaks an invariant, fix the code or update the linked ADR before me
 | INV-14 | Pinned Scion release and fail-closed Hub IAM | [ADR-010](adr/ADR-010-scion-hardening-and-pinned-supply-chain.md) | `compat.yaml`, `deploy/02-factory-runtime/lite-vm/cloud-init.tftpl` | `tests/test_schemas_and_lock.py`, `tests/test_terraform_and_scaffold_parity.py` |
 | INV-15 | Public clean-room sanitization and secret denylist | [ADR-011](adr/ADR-011-public-clean-room-and-runtime-denylist.md) | `scripts/sanitize-public-check.py`, `scripts/lib/sanitizer.py` | `tests/test_sanitizer.py` |
 | INV-16 | Functional E2E qualification and verified teardown | [ADR-012](adr/ADR-012-functional-hillclimbing-e2e-qualification.md) | `docs/HILLCLIMBING_CHARTER.md` | Live E2E Hillclimbing Scorecard |
+| INV-17 | Generic pack, zero-clobber Knowledge Plane, and safe Coordinator bootstrap | [ADR-016](adr/ADR-016-structured-onboarding-knowledge-plane-and-generic-pack.md) | `scripts/lib/onboard_kp.py`, `packs/generic/`, `deploy/03-hub-bootstrap/bootstrap-hub-project.sh` | `tests/test_v060_onboarding_and_generic_pack.py` |
 
 ## Detailed Invariant Specifications
 
@@ -106,5 +107,11 @@ No customer names, personal project IDs, billing IDs, corporate email domains, o
 
 ### INV-16: Functional E2E Qualification and Clean Teardown
 
-Every major factory runtime profile (Lite VM and GKE) and pack (`gecx` and `adk`) must qualify against live Google Cloud projects using [HILLCLIMBING_CHARTER.md](HILLCLIMBING_CHARTER.md).
+Every major factory runtime profile (Lite VM and GKE) and pack (`gecx`, `adk`, and `generic`) must qualify against live Google Cloud projects using [HILLCLIMBING_CHARTER.md](HILLCLIMBING_CHARTER.md).
 Every qualification run must delete all ephemeral projects, containers, and test repositories after collecting evidence.
+
+### INV-17: Generic Pack, Knowledge Plane, and Safe Coordinator Bootstrap
+
+`packs/generic` (`sw-*`) must reuse the `pack.schema.json` contract, `release_kit.py` builder, and `scion-frontiers/agent-team` (SEP) roles on top of `core-gcp-fde-base` without duplicating the pack engine.
+`scripts/lib/onboard_emitter.py` and `scripts/lib/onboard_kp.py` must refuse symlink escapes before writing any file, preserve custom `.factory/Dockerfile.customer*` and existing `.factory/knowledge/*` or `.factory/waves/wave-1.yaml` files on re-emit unless `--force-knowledge` is passed, and fail closed in `factory_onboard.py kp-check` on broken links, duplicate task IDs, or orphan `REQ-NNN` references.
+`deploy/03-hub-bootstrap/bootstrap-hub-project.sh apply` must filter synced templates by `roster.disabled_roles`, skip Deployer and Evaluator SAs when `deploy_target` is `none`, omit `-w` on Coordinator start, verify idempotency fail-closed via `scion --format json list`, and start the lead Coordinator in PO-gated standby mode only for repositories carrying `.factory/coordinator-bootstrap-brief.md` (or `--start-coordinator`) unless `--no-start-coordinator` is passed.

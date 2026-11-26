@@ -1,0 +1,69 @@
+schema_version: "1"
+pack: generic
+pack_version: "0.6.0"
+mode: sandbox-direct
+deploy_target: cloud-run
+diversity_profile: cross-model
+limits:
+  default_max_duration: "2h"
+  default_max_turns: 60
+  default_max_model_calls: 150
+  auto_suspend_idle: true
+harnesses:
+  default: antigravity-vertex
+  claude_model_garden_enabled: false
+  vertex_gemini_location: global
+  vertex_claude_region: global
+model_routing:
+  coordinator:
+    harness: antigravity-vertex
+    model: extra-large
+    thinking_level: 75
+  eng-manager:
+    harness: antigravity-vertex
+    model: extra-large
+    thinking_level: 75
+  architect:
+    harness: antigravity-vertex
+    model: extra-large
+    thinking_level: 100
+  developer:
+    harness: antigravity-vertex
+    model: extra-large
+    thinking_level: 75
+  code-reviewer:
+    harness: antigravity-vertex
+    model: large
+    thinking_level: 75
+  security-auditor:
+    harness: antigravity-vertex
+    model: large
+    thinking_level: 100
+exclude_skills: []
+overlay_skills: []
+kaizen:
+  enabled: true
+  schedule_cron: "0 17 * * 5"
+  time_zone: "America/Sao_Paulo"
+  coordinator_agent: "sw-coordinator"
+  enable_gcp_obs: false
+roster:
+  enabled_roles:
+    - coordinator
+    - eng-manager
+    - architect
+    - investigator
+    - developer
+    - code-reviewer
+    - test-engineer
+    - security-auditor
+    - generic-deployer
+    - qa-tester
+    - doc-writer
+    - researcher
+    - release-notes
+    - kaizen-analyst
+  disabled_roles:
+    - web-builder
+  max_wip: 3
+  reviewer_replicas: 1

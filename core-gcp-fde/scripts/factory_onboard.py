@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Thin CLI composition root for Day-0 brownfield onboarding and Day-2 drift detection (v0.4.0).
+"""Thin CLI composition root for Day-0 onboarding, Knowledge Plane validation, and Day-2 drift (v0.6.0).
 
-Inspired by scion-defaults: owns deterministic repository scanning, Readiness Gate validation,
-and atomic non-destructive Layer 3 overlay emission. Always emits JSON and returns exit 1 on errors.
+Owns deterministic 0-token scanning with 6-pillar /grill-me selection, pre-filled draft YAML
+generation, Readiness Gate validation, atomic zero-clobber Layer 3 + Knowledge Plane emission,
+Dockerfile contract checking, and kp-check link verification.
 """
 from __future__ import annotations
 
@@ -21,17 +22,37 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.lib.dockerfile_recipes import validate_customer_dockerfile
 from scripts.lib.io_utils import load_yaml
 from scripts.lib.onboard_emitter import check_readiness, emit_layer3_overlay
+from scripts.lib.onboard_kp import check_knowledge_plane
+from scripts.lib.onboard_questions import build_draft_profile
 from scripts.lib.onboard_scanner import detect_repo_drift, scan_repository_facts
 
 
+def _resolve_toolchain_manifest(explicit: pathlib.Path | None, pack: str | None) -> pathlib.Path | None:
+    """Resolves toolchain-manifest.json from explicit path or packs/<pack>/ when available."""
+    if explicit is not None:
+        return explicit
+    if not pack:
+        return None
+    for cand in (
+        REPO_ROOT / "packs" / pack / "toolchain-manifest.json",
+        pathlib.Path(f"/opt/gcp-fde/{pack}-toolchain-manifest.json"),
+    ):
+        if cand.is_file():
+            return cand
+    return None
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parses scan, check, and emit subcommands (including --json for spec compatibility)."""
-    parser = argparse.ArgumentParser(description="Static scanner, Readiness Gate, and Layer 3 overlay emitter.")
+    """Parses scan, check, emit, kp-check, and validate-dockerfile subcommands."""
+    parser = argparse.ArgumentParser(description="Static scanner, Readiness Gate, Layer 3 emitter, and KP validator.")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_scan = sub.add_parser("scan")
     p_scan.add_argument("--repo", type=pathlib.Path, required=True)
     p_scan.add_argument("--toolchain-manifest", type=pathlib.Path, default=None)
+    p_scan.add_argument("--pack", choices=("adk", "gecx", "generic"), default=None)
+    p_scan.add_argument("--track", choices=("express", "complete"), default="complete")
+    p_scan.add_argument("--emit-draft", type=pathlib.Path, default=None)
     p_scan.add_argument("--drift", action="store_true")
     p_scan.add_argument("--json", action="store_true", help="Emit JSON output (default behavior).")
     p_scan.add_argument("--out", type=pathlib.Path, default=None)
@@ -39,22 +60,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p_check = sub.add_parser("check")
     p_check.add_argument("--profile", type=pathlib.Path, required=True)
     p_check.add_argument("--json", action="store_true", help="Emit JSON output (default behavior).")
-    p_check.add_argument(
-        "--schema",
-        type=pathlib.Path,
-        default=REPO_ROOT / "schemas" / "factory-profile.schema.json",
-    )
+    p_check.add_argument("--schema", type=pathlib.Path, default=REPO_ROOT / "schemas" / "factory-profile.schema.json")
 
     p_emit = sub.add_parser("emit")
     p_emit.add_argument("--repo", type=pathlib.Path, required=True)
     p_emit.add_argument("--profile", type=pathlib.Path, required=True)
     p_emit.add_argument("--pack-image", required=True)
+    p_emit.add_argument("--force-knowledge", action="store_true", help="Overwrite existing .factory/knowledge/* files.")
     p_emit.add_argument("--json", action="store_true", help="Emit JSON output (default behavior).")
-    p_emit.add_argument(
-        "--schema",
-        type=pathlib.Path,
-        default=REPO_ROOT / "schemas" / "factory-profile.schema.json",
-    )
+    p_emit.add_argument("--schema", type=pathlib.Path, default=REPO_ROOT / "schemas" / "factory-profile.schema.json")
+
+    p_kp = sub.add_parser("kp-check")
+    p_kp.add_argument("--repo", type=pathlib.Path, required=True)
+    p_kp.add_argument("--json", action="store_true", help="Emit JSON output (default behavior).")
+
     p_val = sub.add_parser("validate-dockerfile")
     p_val.add_argument("--dockerfile", type=pathlib.Path, required=True)
     p_val.add_argument("--strict", action="store_true", help="Fail closed on advisory security findings.")
@@ -63,7 +82,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Dispatches scan, Readiness Gate check, emit, or Dockerfile contract validation."""
+    """Dispatches scan, check, emit, kp-check, or validate-dockerfile subcommands."""
     args = parse_args(argv)
     try:
         if args.cmd == "validate-dockerfile":
@@ -71,14 +90,27 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(report, indent=2))
             return 0 if report["ok"] else 1
 
+        if args.cmd == "kp-check":
+            if not args.repo.is_dir():
+                raise ValueError(f"Repository directory does not exist: {args.repo}")
+            report = check_knowledge_plane(args.repo)
+            print(json.dumps(report, indent=2))
+            return 0 if report["ok"] else 1
+
         if args.cmd == "scan":
             if not args.repo.is_dir():
                 raise ValueError(f"Repository directory does not exist: {args.repo}")
+            tc_manifest = _resolve_toolchain_manifest(args.toolchain_manifest, args.pack)
             payload = (
-                detect_repo_drift(args.repo, args.toolchain_manifest)
+                detect_repo_drift(args.repo, tc_manifest)
                 if args.drift
-                else scan_repository_facts(args.repo, args.toolchain_manifest)
+                else scan_repository_facts(args.repo, tc_manifest, pack=args.pack, track=args.track)
             )
+            if args.emit_draft and not args.drift:
+                draft = build_draft_profile(payload, pack=args.pack, track=args.track)
+                args.emit_draft.parent.mkdir(parents=True, exist_ok=True)
+                args.emit_draft.write_text(yaml.safe_dump(draft, sort_keys=False), encoding="utf-8")
+                payload["draft_profile_path"] = str(args.emit_draft)
             encoded = json.dumps(payload, indent=2) + "\n"
             if args.out:
                 args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -96,7 +128,13 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(report, indent=2))
             return 0 if report["ready"] else 1
 
-        result = emit_layer3_overlay(args.repo, profile, args.pack_image, args.schema)
+        result = emit_layer3_overlay(
+            args.repo,
+            profile,
+            args.pack_image,
+            args.schema,
+            force_knowledge=args.force_knowledge,
+        )
         print(json.dumps(result, indent=2))
         return 0
     except (OSError, ValueError, yaml.YAMLError) as exc:

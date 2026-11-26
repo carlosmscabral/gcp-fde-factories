@@ -230,6 +230,8 @@ def _copy_build_and_deploy_assets(
     )
     if (repo_root / "core-gcp-fde" / "scripts").is_dir():
         shutil.copytree(repo_root / "core-gcp-fde" / "scripts", out_dir / "core-gcp-fde" / "scripts", ignore=ignore_cache)
+    if (repo_root / "core-gcp-fde" / "data").is_dir():
+        shutil.copytree(repo_root / "core-gcp-fde" / "data", out_dir / "core-gcp-fde" / "data", ignore=ignore_cache)
     if (repo_root / "core-gcp-fde" / "skills" / "factory-onboard").is_dir():
         shutil.copytree(
             repo_root / "core-gcp-fde" / "skills" / "factory-onboard",
@@ -322,6 +324,7 @@ def build_release_kit(repo_root: pathlib.Path, pack_dir: pathlib.Path, out_dir: 
 
     manifest: dict[str, Any] = {
         "schema_version": "1",
+        "core_version": "0.6.0",
         "pack": pack_name,
         "pack_prefix": prefix,
         "pack_version": pack_cfg["pack"]["version"],

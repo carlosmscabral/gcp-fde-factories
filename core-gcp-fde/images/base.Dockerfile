@@ -36,14 +36,16 @@ RUN mkdir -p "${GCP_FDE_DIR}" \
     && uv pip install --python "${VIRTUAL_ENV}/bin/python" --no-cache \
        PyYAML==6.0.2 jsonschema==4.23.0 pytest==9.2.0
 
-# Package reusable Layer 1 0-token tools (Kaizen collector, brownfield scanner, verifier, workarounds, schemas).
+# Package reusable Layer 1 0-token tools (Kaizen collector, brownfield scanner, interview bank, verifier, schemas).
 COPY core-gcp-fde/scripts/ "${GCP_FDE_DIR}/"
+COPY core-gcp-fde/data/ "${GCP_FDE_DIR}/data/"
 COPY scripts/lib/ "${GCP_FDE_DIR}/scripts/lib/"
 COPY scripts/verify-verdict.py "${GCP_FDE_DIR}/verify-verdict.py"
 COPY schemas/ "${GCP_FDE_DIR}/schemas/"
 COPY WORKAROUNDS.yaml "${GCP_FDE_DIR}/WORKAROUNDS.yaml"
-RUN chmod +x "${GCP_FDE_DIR}/kaizen_collect.py" "${GCP_FDE_DIR}/factory_onboard.py" "${GCP_FDE_DIR}/verify-verdict.py" \
-    && chown -R scion:scion "${GCP_FDE_DIR}" \
+RUN chmod 0555 "${GCP_FDE_DIR}/kaizen_collect.py" "${GCP_FDE_DIR}/factory_onboard.py" "${GCP_FDE_DIR}/verify-verdict.py" \
+    && chown -R root:root "${GCP_FDE_DIR}" \
+    && chmod -R a+rX,go-w "${GCP_FDE_DIR}" \
     && su -s /bin/sh scion -c 'PATH="/opt/gcp-fde/.venv/bin:$PATH" python3 /opt/gcp-fde/kaizen_collect.py --help >/dev/null && PATH="/opt/gcp-fde/.venv/bin:$PATH" python3 /opt/gcp-fde/factory_onboard.py --help >/dev/null'
 
 USER ${FINAL_USER}

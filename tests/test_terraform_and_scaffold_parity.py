@@ -50,7 +50,7 @@ def test_stage01_iam_and_stage02_cloud_init_security_guards() -> None:
 
     # ADK-03: sandbox_evaluator must use custom sandboxEvaluatorPredict role, NEVER roles/aiplatform.user.
     all_iam_blocks = re.findall(r'resource "google_project_iam_member" "[^"]+" \{[^}]+\}', code_only)
-    eval_blocks = [blk for blk in all_iam_blocks if "sandbox_evaluator.email" in blk]
+    eval_blocks = [blk for blk in all_iam_blocks if "sandbox_evaluator" in blk]
     assert eval_blocks
     assert all("roles/aiplatform.user" not in blk for blk in eval_blocks)
     assert "sandboxEvaluatorPredict" in code_only

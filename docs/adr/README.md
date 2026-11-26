@@ -23,10 +23,12 @@ flowchart TB
   ADR013["ADR-013<br/>Cross-Project Quota & ADK SA"]
   ADR014["ADR-014<br/>Native agents-cli ADK Layout"]
   ADR015["ADR-015<br/>Cognitive Brownfield & Validators"]
+  ADR016["ADR-016<br/>6-Pillar Onboard, KP & Generic Pack"]
 
   ADR001 --> ADR004
   ADR001 --> ADR008
   ADR001 --> ADR009
+  ADR001 --> ADR016
   ADR002 --> ADR003
   ADR002 --> ADR010
   ADR002 --> ADR013
@@ -44,6 +46,7 @@ flowchart TB
   ADR012 --> ADR014
   ADR008 --> ADR015
   ADR012 --> ADR015
+  ADR015 --> ADR016
 ```
 
 ## Decision Index
@@ -65,6 +68,7 @@ flowchart TB
 | [ADR-013](ADR-013-cross-project-adc-quota-and-sandbox-runtime-sa.md) | Cross-Project ADC Quota Routing and Same-Project ADK Runtime SA | Accepted | INV-02, INV-03, INV-09, INV-13 | `deploy/01-landing-zone/iam.tf`, `parse_hub_project.py`, `ge_payload.py` |
 | [ADR-014](ADR-014-agents-cli-native-adk-scaffold.md) | Native `google-agents-cli` (`adk_python`) Layout for `packs/adk` | Accepted | INV-12, INV-13 | `packs/adk/repo-scaffold/app/`, `agents-cli-manifest.yaml`, `pyproject.toml`, `Dockerfile` |
 | [ADR-015](ADR-015-cognitive-brownfield-adaptation-and-contract-validators.md) | Cognitive Brownfield Adaptation and Advisory Day-0 Contract Validators | Accepted | INV-12 | `core-gcp-fde/skills/factory-onboard/SKILL.md`, `factory_onboard.py`, `dockerfile_recipes.py`, `onboard_scanner.py` |
+| [ADR-016](ADR-016-structured-onboarding-knowledge-plane-and-generic-pack.md) | Structured 6-Pillar Onboarding, Knowledge Plane, and Generic Software Pack | Accepted | INV-12, INV-17 | `packs/generic/`, `core-gcp-fde/data/grill-questions.yaml`, `scripts/lib/onboard_kp.py`, `bootstrap-hub-project.sh` |
 
 ## Lifecycle Rules
 

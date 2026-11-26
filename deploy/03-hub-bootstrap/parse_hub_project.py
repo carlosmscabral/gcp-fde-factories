@@ -48,6 +48,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "vertex_claude_region": "global",
     },
     "model_routing": {},
+    "deploy_target": "",
+    "monorepo": {"enabled": False, "subdir": "", "agent_prefix": ""},
+    "roster": {"enabled_roles": [], "disabled_roles": [], "max_wip": 3, "reviewer_replicas": 1},
 }
 
 
@@ -163,9 +166,32 @@ def parse_hub_project(repo_dir: pathlib.Path, expected_pack: str = "") -> dict[s
             "(Antigravity extra-large + large)."
         )
 
+    raw_mono = raw.get("monorepo") if isinstance(raw.get("monorepo"), dict) else {}
+    mono_subdir = str(raw_mono.get("subdir") or "").strip()
+    if mono_subdir:
+        resolved_sub = (repo / mono_subdir).resolve()
+        try:
+            resolved_sub.relative_to(repo)
+        except ValueError as exc:
+            raise ValueError(f"monorepo.subdir escapes repository root: '{mono_subdir}'") from exc
+    monorepo = {
+        "enabled": bool(raw_mono.get("enabled", False)),
+        "subdir": mono_subdir,
+        "agent_prefix": str(raw_mono.get("agent_prefix") or ""),
+    }
+
+    raw_roster = raw.get("roster") if isinstance(raw.get("roster"), dict) else {}
+    roster = {
+        "enabled_roles": [str(r) for r in (raw_roster.get("enabled_roles") or [])],
+        "disabled_roles": [str(r) for r in (raw_roster.get("disabled_roles") or [])],
+        "max_wip": int(raw_roster.get("max_wip") or 3),
+        "reviewer_replicas": int(raw_roster.get("reviewer_replicas") or 1),
+    }
+
     return {
         "pack": pack,
         "mode": mode,
+        "deploy_target": str(raw.get("deploy_target") or ""),
         "diversity_profile": diversity,
         "limits": limits,
         "exclude_skills": [str(s) for s in (raw.get("exclude_skills") or [])],
@@ -173,6 +199,8 @@ def parse_hub_project(repo_dir: pathlib.Path, expected_pack: str = "") -> dict[s
         "kaizen": kaizen,
         "harnesses": harnesses,
         "model_routing": raw_routing,
+        "monorepo": monorepo,
+        "roster": roster,
     }
 
 

@@ -1,0 +1,196 @@
+# Declarative 6-pillar /grill-me interview bank for factory-onboard (ADR-016).
+# Loaded by scripts/lib/onboard_questions.py and shipped inside Release Kits and core-gcp-fde-base.
+schema_version: "1"
+
+questions:
+  - id: hub_topology
+    pillar: "1. Pack, Scope, and Monorepo"
+    field_path: existing_hub
+    applies_to_packs: ["all"]
+    applies_to_tracks: ["express", "complete"]
+    required_for_generic_express: true
+    prompt: "Does this repository target a New Scion Hub (Stages 01, 02, and 03) or an Existing Scion Hub (Stage 03 only)?"
+    why_we_ask: "Determines whether Stage 01 Terraform Landing Zone and Stage 02 Hub Runtime must be provisioned first."
+    challenge_prompt: "Confirm the exact Hub URL or confirm that Stage 01 and Stage 02 outputs do not exist yet."
+
+  - id: pack_selection
+    pillar: "1. Pack, Scope, and Monorepo"
+    field_path: pack
+    applies_to_packs: ["all"]
+    applies_to_tracks: ["express", "complete"]
+    required_for_generic_express: true
+    prompt: "Confirm the Factory Pack style for this repository: adk, gecx, or generic (sw-* for arbitrary software)."
+    why_we_ask: "Selects the runtime base image, specialist SEP templates, and verification gate without runtime bloat."
+    challenge_prompt: "If the repository is neither Google ADK nor CES/GECX, confirm generic so no unused agent SDKs are baked in."
+
+  - id: interview_track
+    pillar: "1. Pack, Scope, and Monorepo"
+    field_path: track
+    applies_to_packs: ["all"]
+    applies_to_tracks: ["express", "complete"]
+    required_for_generic_express: true
+    prompt: "Select the onboarding track: express (stack, governance, and roster in ~10 min) or complete (adds REQ-NNN, invariants, eval pyramid, and Wave-1 in ~25 min)."
+    why_we_ask: "Balances Day-0 onboarding speed against formal specification depth in the Knowledge Plane."
+    challenge_prompt: "For brownfield generic software repositories, confirm whether the team wants complete so agents start with explicit invariants and Wave-1 tasks."
+
+  - id: monorepo_scope
+    pillar: "1. Pack, Scope, and Monorepo"
+    field_path: monorepo
+    applies_to_packs: ["generic", "adk", "gecx"]
+    applies_to_tracks: ["express", "complete"]
+    required_for_generic_express: true
+    only_when_monorepo: true
+    prompt: "Monorepo signals were detected. Should this factory own the full repository root or one subdirectory (monorepo.subdir + monorepo.agent_prefix)?"
+    why_we_ask: "Prevents multiple factories in one monorepo from colliding on agent names, builds, or ownership boundaries."
+    challenge_prompt: "Provide the exact relative subdirectory path and a short lowercase agent_prefix (2-16 chars) if scoping to one service."
+
+  - id: mission_and_non_goals
+    pillar: "2. Mission, Requirements, and Invariants"
+    field_path: mission
+    applies_to_packs: ["all"]
+    applies_to_tracks: ["complete"]
+    required_for_generic_express: false
+    prompt: "State the repository mission in one sentence and list at least one explicit non-goal that agents must never implement."
+    why_we_ask: "Anchors architectural scoping in .factory/knowledge/ so agents reject scope creep during SEP decomposition."
+    challenge_prompt: "Replace broad verbs like improve or modernize with a concrete user outcome and a hard out-of-scope boundary."
+
+  - id: requirements_req_nnn
+    pillar: "2. Mission, Requirements, and Invariants"
+    field_path: requirements
+    applies_to_packs: ["all"]
+    applies_to_tracks: ["complete"]
+    required_for_generic_express: false
+    prompt: "Define the top functional requirements (REQ-001, REQ-002...) with concrete acceptance criteria."
+    why_we_ask: "Seeds .factory/knowledge/requirements.md and links every Wave-1 task to a verifiable requirement ID."
+    challenge_prompt: "Challenge every vague criterion until a diff, HTTP response, or command exit code can prove pass or fail."
+
+  - id: verifiable_invariants
+    pillar: "2. Mission, Requirements, and Invariants"
+    field_path: invariants
+    applies_to_packs: ["all"]
+    applies_to_tracks: ["complete"]
+    required_for_generic_express: false
+    prompt: "List hard invariants that no PR may break (security, API backwards compatibility, zero PII, latency ceilings, or data boundaries)."
+    why_we_ask: "Code reviewers and security auditors enforce these invariants on every PR in .factory/knowledge/invariants.md."
+    challenge_prompt: "Rewrite subjective rules like be fast or be secure into measurable checks enforceable by tests or code review."
+
+  - id: initial_decisions_glossary
+    pillar: "2. Mission, Requirements, and Invariants"
+    field_path: decisions
+    applies_to_packs: ["all"]
+    applies_to_tracks: ["complete"]
+    required_for_generic_express: false
+    prompt: "List key pre-existing architecture decisions (ADR-001...) or domain glossary terms agents must respect."
+    why_we_ask: "Prevents agents from re-litigating settled technology choices or misnaming domain concepts."
+    challenge_prompt: "Link existing ADRs in-place instead of duplicating prose, and capture only unwritten tribal decisions."
+
+  - id: canonical_commands
+    pillar: "3. Stack, Toolchain, and Container"
+    field_path: commands
+    applies_to_packs: ["all"]
+    applies_to_tracks: ["express", "complete"]
+    required_for_generic_express: true
+    prompt: "Confirm the exact canonical commands for build, lint, test, and e2e (detected values are pre-filled)."
+    why_we_ask: "Developers, test engineers, and generic-sandbox-gate execute these exact commands as the Level 1 verification contract."
+    challenge_prompt: "Replace any placeholder echo command with a real command that returns non-zero on failure."
+
+  - id: absorbed_ai_conventions
+    pillar: "3. Stack, Toolchain, and Container"
+    field_path: absorbed_conventions
+    applies_to_packs: ["all"]
+    applies_to_tracks: ["express", "complete"]
+    required_for_generic_express: true
+    prompt: "Confirm the repository conventions synthesized from pre-existing AI files, CI workflows, and any advisory hook or divergence findings."
+    why_we_ask: "Consolidates team rules into skills/<slug>-repo-conventions/SKILL.md without deleting or overwriting customer AI files."
+    challenge_prompt: "Confirm whether flagged workspace hooks are safe and resolve any conflicting rule between AGENTS.md, CLAUDE.md, and GEMINI.md."
+
+  - id: custom_container_toolchain
+    pillar: "3. Stack, Toolchain, and Container"
+    field_path: missing_binaries
+    applies_to_packs: ["generic", "adk", "gecx"]
+    applies_to_tracks: ["express", "complete"]
+    required_for_generic_express: true
+    only_when_missing_toolchain: true
+    prompt: "Confirm missing or custom runtimes needed in .factory/Dockerfile.customer (and heavy test tools in .factory/Dockerfile.customer-tester)."
+    why_we_ask: "Ensures every agent container runs the exact build, lint, and test toolchain offline with digest-pinned base images."
+    challenge_prompt: "For binaries outside built-in recipes (such as nx, cargo, or internal CLIs), confirm pinned versions for cognitive Dockerfile authoring."
+
+  - id: execution_mode
+    pillar: "4. Deploy Target and Cloud Boundary"
+    field_path: mode
+    applies_to_packs: ["all"]
+    applies_to_tracks: ["express", "complete"]
+    required_for_generic_express: true
+    prompt: "Choose execution mode: sandbox-direct (agents deploy and test in disposable Sandbox GCP project) or ci-only (CI pipeline owns all cloud deploys)."
+    why_we_ask: "Controls whether Stage 03 registers Sandbox Deployer and Evaluator Service Accounts on the Scion Hub."
+    challenge_prompt: "If compliance forbids agent containers from calling deploy APIs directly, select ci-only."
+
+  - id: deploy_target_and_gcp_services
+    pillar: "4. Deploy Target and Cloud Boundary"
+    field_path: deploy_target
+    applies_to_packs: ["generic"]
+    applies_to_tracks: ["express", "complete"]
+    required_for_generic_express: true
+    prompt: "Select the target runtime for this software: cloud-run, gke, custom, or none (library, CLI, or static package without cloud deploy)."
+    why_we_ask: "Adapts sw-generic-deployer, Level 2 sandbox verification, and Stage 03 SA registration to the real deployment topology."
+    challenge_prompt: "If deploy_target is none, confirm that sw-generic-deployer should be disabled and Sandbox Deployer SA skipped."
+
+  - id: vertex_diversity_and_harnesses
+    pillar: "5. SEP Team, Capacity, and Models"
+    field_path: diversity_profile
+    applies_to_packs: ["all"]
+    applies_to_tracks: ["express", "complete"]
+    required_for_generic_express: true
+    prompt: "Was Anthropic Claude manually enabled in Vertex AI Model Garden on inference_project_id? Choose cross-vendor (Antigravity + Claude) or cross-model (1P Gemini tiers)."
+    why_we_ask: "Enforces independent author and reviewer model diversity while failing closed when Claude Model Garden is not enabled."
+    challenge_prompt: "Never set cross-vendor unless Claude Model Garden is already enabled in the target inference project."
+
+  - id: sep_role_curation
+    pillar: "5. SEP Team, Capacity, and Models"
+    field_path: roster
+    applies_to_packs: ["all"]
+    applies_to_tracks: ["express", "complete"]
+    required_for_generic_express: true
+    prompt: "Review the evidence-based SEP role proposal (proposed_roles) and confirm which optional specialists (web-builder, qa-tester, test-engineer, deployer, doc-writer) to enable or disable."
+    why_we_ask: "Keeps the Scion Hub template roster clean by syncing only roles that add value for this repository."
+    challenge_prompt: "Record an explicit reason for every disabled role so future operators understand the topology decision."
+
+  - id: wip_limits_and_autonomy
+    pillar: "5. SEP Team, Capacity, and Models"
+    field_path: autonomy
+    applies_to_packs: ["all"]
+    applies_to_tracks: ["express", "complete"]
+    required_for_generic_express: true
+    prompt: "Confirm autonomy (supervised or standard), max_wip, reviewer_replicas (2 recommended when max_wip >= 4), and per-agent FinOps limits."
+    why_we_ask: "Prevents code-review bottlenecks at high concurrency and caps runaway turn or model-call spend."
+    challenge_prompt: "If max_wip is 4 or higher, confirm reviewer_replicas: 2 so PR review does not stall developers."
+
+  - id: evaluation_pyramid_and_blindspots
+    pillar: "6. Evaluation Pyramid, Wave-1, and Kaizen"
+    field_path: evaluation_pyramid
+    applies_to_packs: ["all"]
+    applies_to_tracks: ["complete"]
+    required_for_generic_express: false
+    prompt: "Confirm Level 1 offline checks, Level 2 sandbox checks (when deployed), and explicit not_verifiable_in_sandbox blind spots requiring human review."
+    why_we_ask: "Prevents false confidence by declaring upfront what sandbox agents can verify versus what humans must verify."
+    challenge_prompt: "List external dependencies unavailable in Sandbox (such as private VPNs, legacy ERPs, or production IdPs)."
+
+  - id: wave1_initial_backlog
+    pillar: "6. Evaluation Pyramid, Wave-1, and Kaizen"
+    field_path: waves
+    applies_to_packs: ["all"]
+    applies_to_tracks: ["complete"]
+    required_for_generic_express: false
+    prompt: "Define 1 to 5 initial Wave-1 tasks linked to REQ-NNN IDs with SEP size (small, chunky, or large) and acceptance criteria."
+    why_we_ask: "Gives the lead Coordinator a concrete, PO-approved starting queue in .factory/waves/wave-1.yaml upon startup."
+    challenge_prompt: "Start Wave-1 with at least one small end-to-end vertical slice so the factory validates its full PR and review loop early."
+
+  - id: kaizen_schedule
+    pillar: "6. Evaluation Pyramid, Wave-1, and Kaizen"
+    field_path: kaizen_schedule_cron
+    applies_to_packs: ["all"]
+    applies_to_tracks: ["express", "complete"]
+    required_for_generic_express: false
+    prompt: "Confirm the weekly 0-token Kaizen schedule (default: Fridays 17:00 America/Sao_Paulo, cron '0 17 * * 5')."
+    why_we_ask: "Runs closed-loop telemetry analysis every week so the Coordinator surfaces process and toolchain improvements."
+    challenge_prompt: "Disable Kaizen only if the team already runs an external continuous telemetry audit."

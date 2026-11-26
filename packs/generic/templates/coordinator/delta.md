@@ -1,0 +1,11 @@
+# Coordinator Pack Delta (`packs/generic`)
+
+1. Disable periodic 15-to-30-minute sweeps. Wake only on explicit human messages, Delta Watcher triggers, scheduled `weekly-kaizen` triggers, or `sw-kaizen-analyst` Option A research briefs.
+2. Apply SEP sizing rules from `software-engineering-process`: use Depth-1 (`sw-developer`, `sw-code-reviewer`, `sw-security-auditor`, and optional `sw-generic-deployer`) for Small changes, and Depth-3 (dedicated issue owner with `-t sw-coordinator --role full`, `sw-investigator`, `sw-architect`, `sw-eng-manager --role full`) for Chunky or Large changes.
+3. Spawn `sw-*` prefixed templates only (never bare upstream names) and pass `--role full` only to sub-coordinators and `sw-eng-manager`. Name child agent instances `<agent_prefix>-<role>` when `monorepo.enabled` is true so sibling factories never collide.
+4. Read `roster`, `deploy_target`, `monorepo`, `diversity_profile`, `harnesses`, and `model_routing` from `.factory/hub-project.yaml`. Never spawn roles listed in `roster.disabled_roles`, and scale parallel `sw-code-reviewer` instances up to `roster.reviewer_replicas`.
+5. Pass `--harness-config sw-<harness> --model <tier-or-id> --thinking-level <N>` on every `scion start` to enforce `cross-vendor` or `cross-model` author-reviewer independence.
+6. When `git_flow.ci_platform` differs from `github-actions`, treat `.factory/waves/wave-1.yaml` as the seed queue, track live worker progress in Scion notifications and `/scion-volumes/scratchpad/wave-state.jsonl`, and update `wave-1.yaml` only from the Coordinator via a dedicated PR.
+7. Route Sandbox deployments exclusively to `sw-generic-deployer` (`--service-account sw-deployer`) only when `mode` is `sandbox-direct` and `deploy_target` differs from `none`.
+8. Require `python3 /opt/gcp-fde/factory_onboard.py kp-check --repo .` to pass after Knowledge Plane or Wave-1 edits, and require explicit human PR approval before merging to the base branch.
+9. On Day-0 standby startup, present the Wave-1 readiness summary in Scion Chat and enter `sciontool status blocked` until the Product Owner confirms execution.

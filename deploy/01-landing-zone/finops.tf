@@ -1,12 +1,18 @@
-# FinOps budget alerts targeting the Inference Project and Sandbox ephemeral staging bucket.
+# FinOps budget alerts targeting the Inference Project and ephemeral staging bucket.
 # Budget thresholds fire at 70% (alert) and 90% (IAM revocation kill-switch trigger).
-# Grants roles/storage.objectUser to the CES Service Agent on the staging bucket (Spike fix).
+# Places the staging bucket on sandbox_project_id by default, or on hub_project_id when enable_sandbox_project=false.
+
+locals {
+  staging_project_id = var.enable_sandbox_project ? var.sandbox_project_id : var.hub_project_id
+}
 
 data "google_project" "inference" {
   project_id = var.inference_project_id
 }
 
 data "google_project" "sandbox" {
+  count = var.enable_sandbox_project ? 1 : 0
+
   project_id = var.sandbox_project_id
 }
 
@@ -55,13 +61,13 @@ resource "google_billing_budget" "inference_budget" {
 }
 
 resource "google_storage_bucket" "sandbox_staging" {
-  project                     = var.sandbox_project_id
-  name                        = "${var.sandbox_project_id}-${var.name_prefix}-staging"
+  project                     = local.staging_project_id
+  name                        = "${local.staging_project_id}-${var.name_prefix}-staging"
   location                    = "US"
   uniform_bucket_level_access = true
   force_destroy               = true
 
-  # Remove ephemeral export, import, and audio evaluation files automatically after 1 day.
+  # Remove ephemeral export, import, and Cloud Build source staging files automatically after 1 day.
   lifecycle_rule {
     action {
       type = "Delete"
@@ -75,24 +81,30 @@ resource "google_storage_bucket" "sandbox_staging" {
 }
 
 resource "google_storage_bucket_iam_member" "deployer_staging_rw" {
+  count = var.enable_sandbox_project ? 1 : 0
+
   bucket = google_storage_bucket.sandbox_staging.name
   role   = "roles/storage.objectAdmin"
-  member = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+  member = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
 resource "google_storage_bucket_iam_member" "deployer_staging_bucket_view" {
+  count = var.enable_sandbox_project ? 1 : 0
+
   bucket = google_storage_bucket.sandbox_staging.name
   role   = "roles/storage.bucketViewer"
-  member = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+  member = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
 resource "google_storage_bucket_iam_member" "evaluator_staging_ro" {
+  count = var.enable_sandbox_project ? 1 : 0
+
   bucket = google_storage_bucket.sandbox_staging.name
   role   = "roles/storage.objectViewer"
-  member = "serviceAccount:${google_service_account.sandbox_evaluator.email}"
+  member = "serviceAccount:${google_service_account.sandbox_evaluator[0].email}"
 }
 
-# Cloud Build SA needs staging read/write access when --gcs-source-staging-dir and --gcs-log-dir target this bucket.
+# Cloud Build SA needs staging read/write access when --gcs-source-staging-dir targets this bucket.
 resource "google_storage_bucket_iam_member" "builder_staging_rw" {
   bucket = google_storage_bucket.sandbox_staging.name
   role   = "roles/storage.objectAdmin"
@@ -108,7 +120,7 @@ resource "google_storage_bucket_iam_member" "builder_staging_bucket_view" {
 # Explicitly materialize the CES Service Agent on brand-new projects before binding staging IAM (HC-01 F3).
 resource "google_project_service_identity" "ces_service_agent" {
   provider = google-beta
-  count    = var.enable_gecx_sandbox_roles ? 1 : 0
+  count    = var.enable_sandbox_project && var.enable_gecx_sandbox_roles ? 1 : 0
 
   project = var.sandbox_project_id
   service = "ces.googleapis.com"
@@ -117,7 +129,7 @@ resource "google_project_service_identity" "ces_service_agent" {
 }
 
 resource "google_storage_bucket_iam_member" "ces_service_agent_staging" {
-  count = var.enable_gecx_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_gecx_sandbox_roles ? 1 : 0
 
   bucket = google_storage_bucket.sandbox_staging.name
   role   = "roles/storage.objectUser"

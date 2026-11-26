@@ -11,9 +11,21 @@ variable "inference_project_id" {
   type        = string
 }
 
+variable "enable_sandbox_project" {
+  description = "If true (recommended default), provisions disposable Sandbox project SAs, IAM roles, and staging bindings. Set false for exceptional CI-only or deploy_target=none topologies without a Sandbox project."
+  type        = bool
+  default     = true
+}
+
 variable "sandbox_project_id" {
-  description = "Disposable Google Cloud project ID hosting ephemeral GECX apps and evaluations."
+  description = "Disposable Google Cloud project ID hosting ephemeral Sandbox deployments and evaluations. Optional only when enable_sandbox_project is false."
   type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.enable_sandbox_project || length(trimspace(var.sandbox_project_id)) > 0
+    error_message = "Set sandbox_project_id when enable_sandbox_project is true."
+  }
 }
 
 variable "region" {
@@ -88,6 +100,12 @@ variable "enable_gecx_sandbox_roles" {
 
 variable "enable_adk_sandbox_roles" {
   description = "If true, enables Discovery Engine and Cloud Run APIs and adds explicit non-wildcard ADK Agent Engine, Cloud Run, and Gemini Enterprise Sandbox custom roles."
+  type        = bool
+  default     = false
+}
+
+variable "enable_generic_sandbox_roles" {
+  description = "If true (with enable_sandbox_project=true), enables narrow non-wildcard Cloud Run and Cloud Build Sandbox custom roles for packs/generic without ADK or CES permissions."
   type        = bool
   default     = false
 }

@@ -10,7 +10,7 @@ GCLOUD_CONFIG=""
 BASE_IMAGE="python:3.12-slim-bookworm"
 ANTIGRAVITY_BASE_IMAGE=""
 CLAUDE_BASE_IMAGE=""
-CORE_VERSION="0.5.0"
+CORE_VERSION=""
 DRY_RUN="false"
 
 usage() {
@@ -48,6 +48,9 @@ REGION="$(jq -re '.region.value' "$LANDING_ZONE_JSON")"
 PACK_NAME="$(jq -re '.pack' "$KIT_DIR/manifest.json")"
 PACK_PREFIX="$(jq -re '.pack_prefix // .pack' "$KIT_DIR/manifest.json")"
 PACK_VERSION="$(jq -re '.pack_version' "$KIT_DIR/manifest.json")"
+if [[ -z "$CORE_VERSION" ]]; then
+  CORE_VERSION="$(jq -r '.core_version // "0.6.0"' "$KIT_DIR/manifest.json")"
+fi
 PACK_DOCKERFILE="packs/${PACK_NAME}/Dockerfile"
 if [[ ! -f "$KIT_DIR/$PACK_DOCKERFILE" ]]; then
   PACK_DOCKERFILE="$(cd "$KIT_DIR" && find packs -maxdepth 2 -name Dockerfile | head -n 1)"
@@ -107,13 +110,43 @@ submit_and_stamp() {
       --gcs-source-staging-dir="gs://${staging_bkt}/release-kit-src/${PACK_NAME}-${target_img_name}"
     )
   fi
-  run_or_echo gcloud "${GCLOUD_ARGS[@]}" builds submit "$KIT_DIR" \
-    --project="$HUB_PROJECT" \
-    --region="$REGION" \
-    "${sa_args[@]}" \
-    "${staging_args[@]}" \
-    --config="$SCRIPT_DIR/cloudbuild.yaml" \
-    --substitutions="_AR_URL=${AR_URL},_BASE_IMAGE=${base_img},_CORE_VERSION=${CORE_VERSION},_PACK_VERSION=${PACK_VERSION},_CORE_IMAGE_NAME=${core_img_name},_IMAGE_NAME=${target_img_name},_DOCKERFILE=${PACK_DOCKERFILE},_FINAL_USER=${final_user}"
+  # Retry bounded transient Service Usage / IAM propagation errors on brand-new projects (HC-08 F1).
+  if [[ "$DRY_RUN" == "true" ]]; then
+    run_or_echo gcloud "${GCLOUD_ARGS[@]}" builds submit "$KIT_DIR" \
+      --project="$HUB_PROJECT" \
+      --region="$REGION" \
+      "${sa_args[@]}" \
+      "${staging_args[@]}" \
+      --config="$SCRIPT_DIR/cloudbuild.yaml" \
+      --substitutions="_AR_URL=${AR_URL},_BASE_IMAGE=${base_img},_CORE_VERSION=${CORE_VERSION},_PACK_VERSION=${PACK_VERSION},_CORE_IMAGE_NAME=${core_img_name},_IMAGE_NAME=${target_img_name},_DOCKERFILE=${PACK_DOCKERFILE},_FINAL_USER=${final_user}"
+  else
+    local attempt=1 max_attempts=3 rc=0 out_file
+    out_file="$(mktemp)"
+    while true; do
+      rc=0
+      gcloud "${GCLOUD_ARGS[@]}" builds submit "$KIT_DIR" \
+        --project="$HUB_PROJECT" \
+        --region="$REGION" \
+        "${sa_args[@]}" \
+        "${staging_args[@]}" \
+        --config="$SCRIPT_DIR/cloudbuild.yaml" \
+        --substitutions="_AR_URL=${AR_URL},_BASE_IMAGE=${base_img},_CORE_VERSION=${CORE_VERSION},_PACK_VERSION=${PACK_VERSION},_CORE_IMAGE_NAME=${core_img_name},_IMAGE_NAME=${target_img_name},_DOCKERFILE=${PACK_DOCKERFILE},_FINAL_USER=${final_user}" \
+        2>&1 | tee "$out_file" || rc=${PIPESTATUS[0]}
+      if [[ "$rc" -eq 0 ]]; then
+        rm -f "$out_file"
+        break
+      fi
+      if [[ "$attempt" -lt "$max_attempts" ]] && grep -qE 'serviceusage\.services\.use|Propagation of the new permission' "$out_file"; then
+        local wait_s=$((attempt * 15))
+        echo "Transient Service Usage / IAM propagation error on ${HUB_PROJECT} (attempt ${attempt}/${max_attempts}). Retrying in ${wait_s}s..." >&2
+        sleep "$wait_s"
+        attempt=$((attempt + 1))
+        continue
+      fi
+      rm -f "$out_file"
+      return "$rc"
+    done
+  fi
   if [[ "$DRY_RUN" != "true" ]]; then
     local digest pinned_ref core_digest
     digest="$(gcloud "${GCLOUD_ARGS[@]}" artifacts docker images describe \

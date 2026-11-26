@@ -154,7 +154,7 @@ def detect_binaries_and_commands(repo: pathlib.Path) -> tuple[list[str], dict[st
     commands = {
         "build": build_cmd,
         "lint": lint_cmd or "echo 'configure lint command'",
-        "test": test_cmd or "pytest -q",
+        "test": test_cmd,
         "e2e": "",
     }
     return sorted(binaries), commands, sorted(stacks), versions

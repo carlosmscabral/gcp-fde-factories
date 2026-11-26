@@ -6,10 +6,43 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
+import tempfile
 from typing import Any
 
 import yaml
+
+
+def assert_no_symlink_escape(repo: pathlib.Path, target: pathlib.Path) -> pathlib.Path:
+    """Verifies target stays inside repo and no path component from repo to target is a symlink."""
+    repo_root = repo.resolve()
+    rel = target.relative_to(repo_root) if target.is_absolute() else target
+    cur = repo_root
+    for part in rel.parts:
+        cur = cur / part
+        if cur.is_symlink():
+            raise ValueError(f"Refusing to traverse or write through symlink: {cur}")
+    resolved = cur.resolve()
+    try:
+        resolved.relative_to(repo_root)
+    except ValueError as exc:
+        raise ValueError(f"Refusing path escaping repository root: {target}") from exc
+    return cur
+
+
+def atomic_write_bytes(path: pathlib.Path, data: bytes) -> None:
+    """Writes bytes via a same-directory temporary file and os.replace to prevent truncated writes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    tmp_path = pathlib.Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp_path, path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def load_yaml(path: pathlib.Path) -> dict[str, Any]:

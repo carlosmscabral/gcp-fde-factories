@@ -4,11 +4,11 @@
 # These 3 explicit Custom Roles enforce zero-PII isolation and full split-SA separation.
 
 locals {
-  unique_target_projects = toset([
+  unique_target_projects = toset(compact([
     var.hub_project_id,
     var.inference_project_id,
-    var.sandbox_project_id,
-  ])
+    var.enable_sandbox_project ? var.sandbox_project_id : "",
+  ]))
 
   # Explicit read permissions for CES metadata without conversations or Insights.
   ces_metadata_read_perms = [
@@ -95,10 +95,12 @@ locals {
   # Assignable agent SAs eligible for human operator actAs grants under gcp_iam_check_mode=enforce.
   assignable_sa_map = merge(
     {
-      worker    = google_service_account.worker.name
-      deployer  = google_service_account.sandbox_deployer.name
-      evaluator = google_service_account.sandbox_evaluator.name
+      worker = google_service_account.worker.name
     },
+    var.enable_sandbox_project ? {
+      deployer  = google_service_account.sandbox_deployer[0].name
+      evaluator = google_service_account.sandbox_evaluator[0].name
+    } : {},
     var.enable_kaizen_gcp_obs ? { kaizen_viewer = google_service_account.kaizen_viewer[0].name } : {},
   )
 
@@ -113,7 +115,7 @@ locals {
 # --- Custom IAM Roles on Sandbox Project ---
 
 resource "google_project_iam_custom_role" "gecx_sandbox_deployer" {
-  count = var.enable_gecx_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_gecx_sandbox_roles ? 1 : 0
 
   project     = var.sandbox_project_id
   role_id     = "gecxSandboxDeployer"
@@ -125,7 +127,7 @@ resource "google_project_iam_custom_role" "gecx_sandbox_deployer" {
 }
 
 resource "google_project_iam_custom_role" "gecx_sandbox_evaluator" {
-  count = var.enable_gecx_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_gecx_sandbox_roles ? 1 : 0
 
   project     = var.sandbox_project_id
   role_id     = "gecxSandboxEvaluator"
@@ -137,7 +139,7 @@ resource "google_project_iam_custom_role" "gecx_sandbox_evaluator" {
 }
 
 resource "google_project_iam_custom_role" "gecx_sandbox_janitor" {
-  count = var.enable_gecx_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_gecx_sandbox_roles ? 1 : 0
 
   project     = var.sandbox_project_id
   role_id     = "gecxSandboxJanitor"
@@ -173,6 +175,8 @@ resource "google_project_iam_custom_role" "inference_vertex_predict" {
 
 # Explicit predict-only Vertex AI role for Sandbox Evaluator when sandbox_project_id differs from inference_project_id.
 resource "google_project_iam_custom_role" "sandbox_evaluator_predict" {
+  count = var.enable_sandbox_project ? 1 : 0
+
   project     = var.sandbox_project_id
   role_id     = "sandboxEvaluatorPredict"
   title       = "Sandbox Evaluator Predict-Only"
@@ -205,21 +209,27 @@ resource "google_service_account" "worker" {
 }
 
 resource "google_service_account" "sandbox_deployer" {
+  count = var.enable_sandbox_project ? 1 : 0
+
   project      = var.sandbox_project_id
   account_id   = "${var.name_prefix}-deployer"
-  display_name = "GECX Sandbox Ephemeral Deployer"
+  display_name = "Factory Sandbox Ephemeral Deployer"
 }
 
 resource "google_service_account" "sandbox_evaluator" {
+  count = var.enable_sandbox_project ? 1 : 0
+
   project      = var.sandbox_project_id
   account_id   = "${var.name_prefix}-eval"
-  display_name = "GECX Sandbox Evaluator"
+  display_name = "Factory Sandbox Evaluator"
 }
 
 resource "google_service_account" "sandbox_janitor" {
+  count = var.enable_sandbox_project ? 1 : 0
+
   project      = var.sandbox_project_id
   account_id   = "${var.name_prefix}-janitor"
-  display_name = "GECX Sandbox Hourly Janitor"
+  display_name = "Factory Sandbox Hourly Janitor"
 }
 
 resource "google_service_account" "release_builder" {
@@ -294,7 +304,7 @@ resource "google_project_iam_member" "hub_logging" {
   member  = "serviceAccount:${google_service_account.scion_hub.email}"
 }
 
-# Grant token minting strictly on the 3 assignable agent SAs (never on sandbox_janitor).
+# Grant token minting strictly on the assignable agent SAs (never on sandbox_janitor).
 resource "google_service_account_iam_member" "hub_mint_worker" {
   service_account_id = google_service_account.worker.name
   role               = "roles/iam.serviceAccountTokenCreator"
@@ -302,13 +312,17 @@ resource "google_service_account_iam_member" "hub_mint_worker" {
 }
 
 resource "google_service_account_iam_member" "hub_mint_deployer" {
-  service_account_id = google_service_account.sandbox_deployer.name
+  count = var.enable_sandbox_project ? 1 : 0
+
+  service_account_id = google_service_account.sandbox_deployer[0].name
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = "serviceAccount:${google_service_account.scion_hub.email}"
 }
 
 resource "google_service_account_iam_member" "hub_mint_evaluator" {
-  service_account_id = google_service_account.sandbox_evaluator.name
+  count = var.enable_sandbox_project ? 1 : 0
+
+  service_account_id = google_service_account.sandbox_evaluator[0].name
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = "serviceAccount:${google_service_account.scion_hub.email}"
 }
@@ -340,21 +354,25 @@ resource "google_project_iam_member" "operator_cloudbuild_editor" {
 
 # Allow CI Evaluator and Sandbox Deployer SAs to pull digest-pinned images from the Hub Artifact Registry.
 resource "google_project_iam_member" "evaluator_ar_reader" {
+  count = var.enable_sandbox_project ? 1 : 0
+
   project = var.hub_project_id
   role    = "roles/artifactregistry.reader"
-  member  = "serviceAccount:${google_service_account.sandbox_evaluator.email}"
+  member  = "serviceAccount:${google_service_account.sandbox_evaluator[0].email}"
 }
 
 resource "google_project_iam_member" "deployer_ar_reader" {
+  count = var.enable_sandbox_project ? 1 : 0
+
   project = var.hub_project_id
   role    = "roles/artifactregistry.reader"
-  member  = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+  member  = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
 # Materialize Sandbox Cloud Run and Vertex AI service agents so ADK containers pull from Hub Artifact Registry.
 resource "google_project_service_identity" "sandbox_cloudrun_agent" {
   provider = google-beta
-  count    = var.enable_adk_sandbox_roles ? 1 : 0
+  count    = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? 1 : 0
 
   project = var.sandbox_project_id
   service = "run.googleapis.com"
@@ -363,7 +381,7 @@ resource "google_project_service_identity" "sandbox_cloudrun_agent" {
 }
 
 resource "google_project_iam_member" "sandbox_cloudrun_ar_reader" {
-  count = var.enable_adk_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? 1 : 0
 
   project = var.hub_project_id
   role    = "roles/artifactregistry.reader"
@@ -374,7 +392,7 @@ resource "google_project_iam_member" "sandbox_cloudrun_ar_reader" {
 
 resource "google_project_service_identity" "sandbox_aiplatform_agent" {
   provider = google-beta
-  count    = var.enable_adk_sandbox_roles ? 1 : 0
+  count    = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
 
   project = var.sandbox_project_id
   service = "aiplatform.googleapis.com"
@@ -383,7 +401,7 @@ resource "google_project_service_identity" "sandbox_aiplatform_agent" {
 }
 
 resource "google_project_iam_member" "sandbox_aiplatform_ar_reader" {
-  count = var.enable_adk_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
 
   project = var.hub_project_id
   role    = "roles/artifactregistry.reader"
@@ -395,11 +413,11 @@ resource "google_project_iam_member" "sandbox_aiplatform_ar_reader" {
 # Optional binding for the Vertex AI Agent Engine dedicated Reasoning Engine service agent
 # (gcp-sa-aiplatform-re), materialized after the first ReasoningEngine API call in sandbox_project_id.
 resource "google_project_iam_member" "sandbox_agent_engine_re_ar_reader" {
-  count = var.enable_adk_sandbox_roles && var.enable_agent_engine_re_ar_reader ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles && var.enable_agent_engine_re_ar_reader ? 1 : 0
 
   project = var.hub_project_id
   role    = "roles/artifactregistry.reader"
-  member  = "serviceAccount:service-${data.google_project.sandbox.number}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
+  member  = "serviceAccount:service-${data.google_project.sandbox[0].number}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
 }
 
 # --- Inference Project Least-Privilege Predict-Only IAM (Worker, Deployer, Evaluator — HC-01 F26/F27) ---
@@ -411,15 +429,19 @@ resource "google_project_iam_member" "worker_vertex_predict" {
 }
 
 resource "google_project_iam_member" "deployer_inference_vertex_predict" {
+  count = var.enable_sandbox_project ? 1 : 0
+
   project = var.inference_project_id
   role    = google_project_iam_custom_role.inference_vertex_predict.id
-  member  = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+  member  = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
 resource "google_project_iam_member" "evaluator_inference_vertex_predict" {
+  count = var.enable_sandbox_project ? 1 : 0
+
   project = var.inference_project_id
   role    = google_project_iam_custom_role.inference_vertex_predict.id
-  member  = "serviceAccount:${google_service_account.sandbox_evaluator.email}"
+  member  = "serviceAccount:${google_service_account.sandbox_evaluator[0].email}"
 }
 
 resource "google_project_iam_member" "worker_service_usage" {
@@ -429,15 +451,19 @@ resource "google_project_iam_member" "worker_service_usage" {
 }
 
 resource "google_project_iam_member" "deployer_inference_service_usage" {
+  count = var.enable_sandbox_project ? 1 : 0
+
   project = var.inference_project_id
   role    = "roles/serviceusage.serviceUsageConsumer"
-  member  = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+  member  = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
 resource "google_project_iam_member" "evaluator_inference_service_usage" {
+  count = var.enable_sandbox_project ? 1 : 0
+
   project = var.inference_project_id
   role    = "roles/serviceusage.serviceUsageConsumer"
-  member  = "serviceAccount:${google_service_account.sandbox_evaluator.email}"
+  member  = "serviceAccount:${google_service_account.sandbox_evaluator[0].email}"
 }
 
 resource "google_project_iam_member" "worker_logging" {
@@ -455,57 +481,65 @@ resource "google_project_iam_member" "worker_monitoring" {
 # --- Sandbox Project Split IAM ---
 
 resource "google_project_iam_member" "deployer_custom_role" {
-  count = var.enable_gecx_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_gecx_sandbox_roles ? 1 : 0
 
   project = var.sandbox_project_id
   role    = google_project_iam_custom_role.gecx_sandbox_deployer[0].id
-  member  = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+  member  = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
 resource "google_project_iam_member" "deployer_service_usage" {
+  count = var.enable_sandbox_project ? 1 : 0
+
   project = var.sandbox_project_id
   role    = "roles/serviceusage.serviceUsageConsumer"
-  member  = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+  member  = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
 resource "google_project_iam_member" "evaluator_custom_role" {
-  count = var.enable_gecx_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_gecx_sandbox_roles ? 1 : 0
 
   project = var.sandbox_project_id
   role    = google_project_iam_custom_role.gecx_sandbox_evaluator[0].id
-  member  = "serviceAccount:${google_service_account.sandbox_evaluator.email}"
+  member  = "serviceAccount:${google_service_account.sandbox_evaluator[0].email}"
 }
 
 resource "google_project_iam_member" "evaluator_vertex_predict" {
+  count = var.enable_sandbox_project ? 1 : 0
+
   project = var.sandbox_project_id
-  role    = google_project_iam_custom_role.sandbox_evaluator_predict.id
-  member  = "serviceAccount:${google_service_account.sandbox_evaluator.email}"
+  role    = google_project_iam_custom_role.sandbox_evaluator_predict[0].id
+  member  = "serviceAccount:${google_service_account.sandbox_evaluator[0].email}"
 }
 
 resource "google_project_iam_member" "evaluator_service_usage" {
+  count = var.enable_sandbox_project ? 1 : 0
+
   project = var.sandbox_project_id
   role    = "roles/serviceusage.serviceUsageConsumer"
-  member  = "serviceAccount:${google_service_account.sandbox_evaluator.email}"
+  member  = "serviceAccount:${google_service_account.sandbox_evaluator[0].email}"
 }
 
 resource "google_project_iam_member" "janitor_custom_role" {
-  count = var.enable_gecx_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_gecx_sandbox_roles ? 1 : 0
 
   project = var.sandbox_project_id
   role    = google_project_iam_custom_role.gecx_sandbox_janitor[0].id
-  member  = "serviceAccount:${google_service_account.sandbox_janitor.email}"
+  member  = "serviceAccount:${google_service_account.sandbox_janitor[0].email}"
 }
 
 resource "google_project_iam_member" "janitor_service_usage" {
+  count = var.enable_sandbox_project ? 1 : 0
+
   project = var.sandbox_project_id
   role    = "roles/serviceusage.serviceUsageConsumer"
-  member  = "serviceAccount:${google_service_account.sandbox_janitor.email}"
+  member  = "serviceAccount:${google_service_account.sandbox_janitor[0].email}"
 }
 
 # --- Optional Multi-Pack ADK + Gemini Enterprise Sandbox Custom Roles (Explicit, Zero Wildcards) ---
 
 resource "google_project_iam_custom_role" "adk_sandbox_deployer" {
-  count = var.enable_adk_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
 
   project     = var.sandbox_project_id
   role_id     = "adkSandboxDeployer"
@@ -541,7 +575,7 @@ resource "google_project_iam_custom_role" "adk_sandbox_deployer" {
 }
 
 resource "google_project_iam_custom_role" "adk_sandbox_evaluator" {
-  count = var.enable_adk_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
 
   project     = var.sandbox_project_id
   role_id     = "adkSandboxEvaluator"
@@ -562,7 +596,7 @@ resource "google_project_iam_custom_role" "adk_sandbox_evaluator" {
 }
 
 resource "google_project_iam_custom_role" "adk_sandbox_janitor" {
-  count = var.enable_adk_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
 
   project     = var.sandbox_project_id
   role_id     = "adkSandboxJanitor"
@@ -585,36 +619,36 @@ resource "google_project_iam_custom_role" "adk_sandbox_janitor" {
 }
 
 resource "google_project_iam_member" "deployer_adk_custom_role" {
-  count = var.enable_adk_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
 
   project = var.sandbox_project_id
   role    = google_project_iam_custom_role.adk_sandbox_deployer[0].id
-  member  = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+  member  = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
 # Allow ADK Sandbox Deployer to submit Dockerfile builds with the dedicated builder SA
 # and attach the predict-only worker SA to ephemeral Sandbox Cloud Run services (HC-01 F29).
 resource "google_service_account_iam_member" "deployer_builder_act_as" {
-  count = var.enable_adk_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? 1 : 0
 
   service_account_id = google_service_account.release_builder.name
   role               = "roles/iam.serviceAccountUser"
-  member             = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+  member             = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
 resource "google_service_account_iam_member" "deployer_worker_act_as" {
-  count = var.enable_adk_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
 
   service_account_id = google_service_account.worker.name
   role               = "roles/iam.serviceAccountUser"
-  member             = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+  member             = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
 # Same-project Sandbox ADK Runtime SA for Cloud Run and Agent Engine workloads (HC-02 F10).
 # Avoids cross-project SA attachment rejections under constraints/iam.disableCrossProjectServiceAccountUsage
 # while holding predict-only rights on inference_project_id and zero write rights on sandbox_project_id.
 resource "google_service_account" "adk_runtime" {
-  count = var.enable_adk_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
 
   project      = var.sandbox_project_id
   account_id   = "${var.name_prefix}-adk-runtime"
@@ -622,15 +656,15 @@ resource "google_service_account" "adk_runtime" {
 }
 
 resource "google_service_account_iam_member" "deployer_adk_runtime_act_as" {
-  count = var.enable_adk_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
 
   service_account_id = google_service_account.adk_runtime[0].name
   role               = "roles/iam.serviceAccountUser"
-  member             = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+  member             = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
 resource "google_project_iam_member" "adk_runtime_inference_predict" {
-  count = var.enable_adk_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
 
   project = var.inference_project_id
   role    = google_project_iam_custom_role.inference_vertex_predict.id
@@ -638,7 +672,7 @@ resource "google_project_iam_member" "adk_runtime_inference_predict" {
 }
 
 resource "google_project_iam_member" "adk_runtime_inference_usage" {
-  count = var.enable_adk_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
 
   project = var.inference_project_id
   role    = "roles/serviceusage.serviceUsageConsumer"
@@ -646,15 +680,15 @@ resource "google_project_iam_member" "adk_runtime_inference_usage" {
 }
 
 resource "google_project_iam_member" "adk_runtime_sandbox_predict" {
-  count = var.enable_adk_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
 
   project = var.sandbox_project_id
-  role    = google_project_iam_custom_role.sandbox_evaluator_predict.id
+  role    = google_project_iam_custom_role.sandbox_evaluator_predict[0].id
   member  = "serviceAccount:${google_service_account.adk_runtime[0].email}"
 }
 
 resource "google_project_iam_member" "adk_runtime_sandbox_usage" {
-  count = var.enable_adk_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
 
   project = var.sandbox_project_id
   role    = "roles/serviceusage.serviceUsageConsumer"
@@ -662,7 +696,7 @@ resource "google_project_iam_member" "adk_runtime_sandbox_usage" {
 }
 
 resource "google_project_iam_member" "adk_runtime_hub_ar_reader" {
-  count = var.enable_adk_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
 
   project = var.hub_project_id
   role    = "roles/artifactregistry.reader"
@@ -670,35 +704,35 @@ resource "google_project_iam_member" "adk_runtime_hub_ar_reader" {
 }
 
 resource "google_project_iam_member" "deployer_hub_cloudbuild_editor" {
-  count = var.enable_adk_sandbox_roles && var.hub_project_id != var.sandbox_project_id ? 1 : 0
+  count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) && var.hub_project_id != var.sandbox_project_id ? 1 : 0
 
   project = var.hub_project_id
   role    = "roles/cloudbuild.builds.editor"
-  member  = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+  member  = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
 resource "google_project_iam_member" "deployer_hub_service_usage" {
-  count = var.enable_adk_sandbox_roles && var.hub_project_id != var.sandbox_project_id ? 1 : 0
+  count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) && var.hub_project_id != var.sandbox_project_id ? 1 : 0
 
   project = var.hub_project_id
   role    = "roles/serviceusage.serviceUsageConsumer"
-  member  = "serviceAccount:${google_service_account.sandbox_deployer.email}"
+  member  = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
 resource "google_project_iam_member" "evaluator_adk_custom_role" {
-  count = var.enable_adk_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
 
   project = var.sandbox_project_id
   role    = google_project_iam_custom_role.adk_sandbox_evaluator[0].id
-  member  = "serviceAccount:${google_service_account.sandbox_evaluator.email}"
+  member  = "serviceAccount:${google_service_account.sandbox_evaluator[0].email}"
 }
 
 resource "google_project_iam_member" "janitor_adk_custom_role" {
-  count = var.enable_adk_sandbox_roles ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
 
   project = var.sandbox_project_id
   role    = google_project_iam_custom_role.adk_sandbox_janitor[0].id
-  member  = "serviceAccount:${google_service_account.sandbox_janitor.email}"
+  member  = "serviceAccount:${google_service_account.sandbox_janitor[0].email}"
 }
 
 # --- Optional Tier-B Read-Only Kaizen Observability Service Account (v0.3.0) ---
@@ -745,7 +779,7 @@ resource "google_project_iam_member" "kaizen_inference_usage" {
 }
 
 resource "google_project_iam_member" "kaizen_sandbox_logging" {
-  count = var.enable_kaizen_gcp_obs ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_kaizen_gcp_obs ? 1 : 0
 
   project = var.sandbox_project_id
   role    = "roles/logging.viewer"
@@ -754,7 +788,7 @@ resource "google_project_iam_member" "kaizen_sandbox_logging" {
 
 # Grant Service Usage Consumer on sandbox_project_id so Cloud Logging clients sending x-goog-user-project avoid HTTP 403 (HC-04 F5).
 resource "google_project_iam_member" "kaizen_sandbox_usage" {
-  count = var.enable_kaizen_gcp_obs ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_kaizen_gcp_obs ? 1 : 0
 
   project = var.sandbox_project_id
   role    = "roles/serviceusage.serviceUsageConsumer"
@@ -764,7 +798,7 @@ resource "google_project_iam_member" "kaizen_sandbox_usage" {
 # --- Optional Keyless GitHub Actions Workload Identity Federation (for PR Verdict Gate + Janitor) ---
 
 resource "google_iam_workload_identity_pool" "github_actions" {
-  count = var.enable_github_wif ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_github_wif ? 1 : 0
 
   project                   = var.sandbox_project_id
   workload_identity_pool_id = "${var.name_prefix}-gh-pool"
@@ -775,7 +809,7 @@ resource "google_iam_workload_identity_pool" "github_actions" {
 }
 
 resource "google_iam_workload_identity_pool_provider" "github_oidc" {
-  count = var.enable_github_wif ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_github_wif ? 1 : 0
 
   project                            = var.sandbox_project_id
   workload_identity_pool_id          = google_iam_workload_identity_pool.github_actions[0].workload_identity_pool_id
@@ -794,17 +828,17 @@ resource "google_iam_workload_identity_pool_provider" "github_oidc" {
 }
 
 resource "google_service_account_iam_member" "wif_evaluator_impersonation" {
-  count = var.enable_github_wif ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_github_wif ? 1 : 0
 
-  service_account_id = google_service_account.sandbox_evaluator.name
+  service_account_id = google_service_account.sandbox_evaluator[0].name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_actions[0].name}/attribute.repository/${var.github_repository}"
 }
 
 resource "google_service_account_iam_member" "wif_janitor_impersonation" {
-  count = var.enable_github_wif ? 1 : 0
+  count = var.enable_sandbox_project && var.enable_github_wif ? 1 : 0
 
-  service_account_id = google_service_account.sandbox_janitor.name
+  service_account_id = google_service_account.sandbox_janitor[0].name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_actions[0].name}/attribute.repository/${var.github_repository}"
 }

@@ -1,0 +1,235 @@
+# Executable Pack Contract (Contract 1) for packs/generic (v0.6.0).
+# Composes the 13 scion-frontiers/agent-team (SEP) roles plus generic-deployer and kaizen-analyst
+# (15 offline sw-* templates) on top of core-gcp-fde-base without ADK or CES runtime bloat.
+schema_version: "1"
+
+pack:
+  name: generic
+  prefix: sw
+  version: "0.6.0"
+  status: active
+  description: "Generic software engineering factory pack (sw-*) for arbitrary brownfield or greenfield repositories on Google Cloud."
+
+upstream:
+  agent_team_repo: "scion-frontiers/agent-team"
+  agent_team_commit: "08faf48269da7d8dd0a20c4e5ca5093afb37495d"
+  skills_lock: "skills.lock"
+
+context_budget:
+  max_total_lines_per_role: 1800
+  max_lines_per_pack_skill: 300
+  max_delta_rules: 15
+
+specialist_templates:
+  - name: coordinator
+    base_role: coordinator
+    hub_role: full
+    sandbox_sa_slot: worker
+    delta_dir: templates/coordinator
+    strip_hardcoded_model: true
+    role_skills:
+      - software-engineering-process
+      - agent-state-continuity
+      - artifact-durability
+
+  - name: eng-manager
+    base_role: eng-manager
+    hub_role: full
+    sandbox_sa_slot: worker
+    delta_dir: templates/eng-manager
+    strip_hardcoded_model: true
+    role_skills:
+      - software-engineering-process
+      - agent-state-continuity
+      - artifact-durability
+
+  - name: architect
+    base_role: architect
+    hub_role: baseline
+    sandbox_sa_slot: worker
+    delta_dir: templates/architect
+    strip_hardcoded_model: true
+    role_skills:
+      - artifact-durability
+
+  - name: investigator
+    base_role: investigator
+    hub_role: baseline
+    sandbox_sa_slot: worker
+    delta_dir: templates/investigator
+    strip_hardcoded_model: true
+    role_skills:
+      - software-engineering-process
+      - artifact-durability
+
+  - name: developer
+    base_role: developer
+    hub_role: baseline
+    sandbox_sa_slot: worker
+    delta_dir: templates/developer
+    strip_hardcoded_model: true
+    role_skills:
+      - artifact-durability
+
+  - name: code-reviewer
+    base_role: code-reviewer
+    hub_role: baseline
+    sandbox_sa_slot: worker
+    delta_dir: templates/code-reviewer
+    strip_hardcoded_model: true
+    role_skills:
+      - software-engineering-process
+      - code-review
+
+  - name: test-engineer
+    base_role: test-engineer
+    hub_role: baseline
+    sandbox_sa_slot: worker
+    delta_dir: templates/test-engineer
+    strip_hardcoded_model: true
+    role_skills:
+      - artifact-durability
+
+  - name: security-auditor
+    base_role: security-auditor
+    hub_role: baseline
+    sandbox_sa_slot: worker
+    delta_dir: templates/security-auditor
+    strip_hardcoded_model: true
+    role_skills:
+      - artifact-durability
+
+  - name: generic-deployer
+    base_role: developer
+    hub_role: baseline
+    sandbox_sa_slot: deployer
+    delta_dir: templates/generic-deployer
+    strip_hardcoded_model: true
+    role_skills:
+      - artifact-durability
+
+  - name: kaizen-analyst
+    base_role: investigator
+    hub_role: baseline
+    sandbox_sa_slot: worker
+    delta_dir: templates/kaizen-analyst
+    strip_hardcoded_model: true
+    role_skills:
+      - artifact-durability
+      - gcp-kaizen-analyst
+
+  - name: qa-tester
+    base_role: qa-tester
+    hub_role: baseline
+    sandbox_sa_slot: worker
+    delta_dir: templates/qa-tester
+    strip_hardcoded_model: true
+    role_skills:
+      - artifact-durability
+
+  - name: researcher
+    base_role: researcher
+    hub_role: baseline
+    sandbox_sa_slot: worker
+    delta_dir: templates/researcher
+    strip_hardcoded_model: true
+    role_skills:
+      - artifact-durability
+
+  - name: doc-writer
+    base_role: doc-writer
+    hub_role: baseline
+    sandbox_sa_slot: worker
+    delta_dir: templates/doc-writer
+    strip_hardcoded_model: true
+    role_skills:
+      - artifact-durability
+
+  - name: release-notes
+    base_role: release-notes
+    hub_role: baseline
+    sandbox_sa_slot: worker
+    delta_dir: templates/release-notes
+    strip_hardcoded_model: true
+    role_skills:
+      - release-notes-daily
+      - artifact-durability
+
+  - name: web-builder
+    base_role: web-builder
+    hub_role: baseline
+    sandbox_sa_slot: worker
+    delta_dir: templates/web-builder
+    strip_hardcoded_model: true
+    role_skills:
+      - artifact-durability
+
+project_skills:
+  # --- Project-wide guardrail and generic software contract skills ---
+  - name: gcp-fde-guardrails
+    local_dir: core-gcp-fde/skills/gcp-fde-guardrails
+    version: "0.4.0"
+    scope: global
+    attach_to_project: true
+  - name: gcp-sandbox-contract
+    local_dir: core-gcp-fde/skills/gcp-sandbox-contract
+    version: "0.4.0"
+    scope: global
+    attach_to_project: true
+  - name: gcp-kaizen-light
+    local_dir: core-gcp-fde/skills/gcp-kaizen-light
+    version: "0.4.0"
+    scope: global
+    attach_to_project: true
+  - name: generic-software-guardrails
+    local_dir: packs/generic/skills/generic-software-guardrails
+    version: "0.1.0"
+    scope: global
+    attach_to_project: true
+
+  # --- Role-scoped Kaizen and SEP skills ---
+  - name: gcp-kaizen-analyst
+    local_dir: core-gcp-fde/skills/gcp-kaizen-analyst
+    version: "0.4.0"
+    scope: global
+    attach_to_project: false
+  - name: software-engineering-process
+    local_dir: vendor/agent-team/skills/software-engineering-process
+    version: "1.0.0"
+    scope: global
+    attach_to_project: false
+  - name: agent-state-continuity
+    local_dir: vendor/agent-team/skills/agent-state-continuity
+    version: "1.0.0"
+    scope: global
+    attach_to_project: false
+  - name: artifact-durability
+    local_dir: vendor/agent-team/skills/artifact-durability
+    version: "1.0.0"
+    scope: global
+    attach_to_project: false
+  - name: code-review
+    local_dir: vendor/agent-team/skills/code-review
+    version: "1.0.0"
+    scope: global
+    attach_to_project: false
+  - name: release-notes-daily
+    local_dir: vendor/agent-team/skills/release-notes-daily
+    version: "1.0.0"
+    scope: global
+    attach_to_project: false
+
+runtime_image:
+  dockerfile: "packs/generic/Dockerfile"
+  harness_configs:
+    - "core-gcp-fde/harness-configs/claude-vertex.yaml"
+    - "core-gcp-fde/harness-configs/antigravity-vertex.yaml"
+
+verification:
+  level1_offline_commands:
+    - "python3 /opt/generic-factory/generic_sandbox_gate.py --level 1"
+  level2_sandbox_runner: "packs/generic/scripts/generic-eval-runner.sh"
+  not_verifiable_in_sandbox:
+    - "customer-private-vpc-peering"
+    - "production-customer-idp-sso"
+    - "legacy-onprem-dependencies"

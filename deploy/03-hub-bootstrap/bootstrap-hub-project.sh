@@ -16,6 +16,7 @@ TARGET_REPO=""
 BACKUP_DIR=""
 HARNESS_IMAGE_ANTIGRAVITY=""
 HARNESS_IMAGE_CLAUDE=""
+START_COORDINATOR="auto"
 TMP_CLEANUP_DIRS=()
 PROJ_FLAGS=()
 
@@ -35,7 +36,8 @@ usage() {
 Usage: bootstrap-hub-project.sh <preflight|plan|backup|apply|rollback|overlay-sync> \
   --kit <release-kit-dir> --hub <https-or-loopback-url> \
   [--landing-zone <landing-zone-outputs.json>] [--repo <target-repo-dir>] [--backup-dir <dir>] \
-  [--harness-image-antigravity <digest-or-registry-ref>] [--harness-image-claude <digest-or-registry-ref>]
+  [--harness-image-antigravity <digest-or-registry-ref>] [--harness-image-claude <digest-or-registry-ref>] \
+  [--start-coordinator | --no-start-coordinator]
 EOF
   exit 2
 }
@@ -51,6 +53,8 @@ while [[ $# -gt 0 ]]; do
     --backup-dir) BACKUP_DIR="$2"; shift 2 ;;
     --harness-image-antigravity) HARNESS_IMAGE_ANTIGRAVITY="$2"; shift 2 ;;
     --harness-image-claude) HARNESS_IMAGE_CLAUDE="$2"; shift 2 ;;
+    --start-coordinator) START_COORDINATOR="true"; shift ;;
+    --no-start-coordinator) START_COORDINATOR="false"; shift ;;
     *) echo "Unknown flag: $1" >&2; usage ;;
   esac
 done
@@ -72,7 +76,7 @@ parse_repo_cfg() {
     python3 "$SCRIPT_DIR/parse_hub_project.py" --repo "$TARGET_REPO" --expected-pack "$pack_name"
   else
     cat <<'JSON'
-{"pack":"","mode":"sandbox-direct","diversity_profile":"cross-model","limits":{"default_max_duration":"2h","default_max_turns":60,"default_max_model_calls":150,"auto_suspend_idle":true},"exclude_skills":[],"overlay_skills":[],"kaizen":{"enabled":true,"schedule_cron":"0 17 * * 5","time_zone":"America/Sao_Paulo","coordinator_agent":"coordinator","enable_gcp_obs":false},"harnesses":{"default":"antigravity-vertex","claude_model_garden_enabled":false,"vertex_gemini_location":"global","vertex_claude_region":"global"},"model_routing":{}}
+{"pack":"","mode":"sandbox-direct","deploy_target":"","diversity_profile":"cross-model","limits":{"default_max_duration":"2h","default_max_turns":60,"default_max_model_calls":150,"auto_suspend_idle":true},"exclude_skills":[],"overlay_skills":[],"kaizen":{"enabled":true,"schedule_cron":"0 17 * * 5","time_zone":"America/Sao_Paulo","coordinator_agent":"coordinator","enable_gcp_obs":false},"harnesses":{"default":"antigravity-vertex","claude_model_garden_enabled":false,"vertex_gemini_location":"global","vertex_claude_region":"global"},"model_routing":{},"monorepo":{"enabled":false,"subdir":"","agent_prefix":""},"roster":{"enabled_roles":[],"disabled_roles":[],"max_wip":3,"reviewer_replicas":1}}
 JSON
   fi
 }
@@ -96,13 +100,48 @@ do_preflight() {
 
 do_plan() {
   do_preflight
-  echo "=== PLAN: Pack Templates (Prefix-Scoped Only) ==="
-  ls -1 "$KIT_DIR/templates"
+  local pack_name pack_prefix repo_cfg disabled_roles_json mode deploy_target coord_tpl has_brief="false"
+  pack_name="$(jq -re '.pack' "$KIT_DIR/manifest.json")"
+  pack_prefix="$(jq -re '.pack_prefix // .pack' "$KIT_DIR/manifest.json")"
+  repo_cfg="$(parse_repo_cfg "$pack_name")"
+  disabled_roles_json="$(jq -c '.roster.disabled_roles // []' <<< "$repo_cfg")"
+  mode="$(jq -re '.mode' <<< "$repo_cfg")"
+  deploy_target="$(jq -r '.deploy_target // ""' <<< "$repo_cfg")"
+  coord_tpl="${pack_prefix}-coordinator"
+  if [[ -n "$TARGET_REPO" && -f "$TARGET_REPO/.factory/coordinator-bootstrap-brief.md" ]]; then
+    has_brief="true"
+  fi
+
+  echo "=== PLAN: Pack Templates (Prefix-Scoped, Roster-Filtered) ==="
+  for tpl_dir in "$KIT_DIR"/templates/*; do
+    [[ -d "$tpl_dir" ]] || continue
+    local tname role_short is_disabled
+    tname="$(basename "$tpl_dir")"
+    role_short="${tname#"${pack_prefix}-"}"
+    is_disabled="$(jq -r --arg full "$tname" --arg short "$role_short" 'index($full) != null or index($short) != null' <<< "$disabled_roles_json")"
+    if [[ "$is_disabled" == "true" ]]; then
+      echo "${tname} [SKIP - disabled in roster]"
+    else
+      echo "${tname}"
+    fi
+  done
   echo "=== PLAN: Hub Skill Bank Skills ==="
   ls -1 "$KIT_DIR/skills"
   if [[ -d "$KIT_DIR/harness-configs" ]]; then
     echo "=== PLAN: Harness Configs ==="
     ls -1 "$KIT_DIR/harness-configs"
+  fi
+  echo "=== PLAN: Execution Mode and Coordinator Standby ==="
+  echo "mode=${mode} deploy_target=${deploy_target:-default}"
+  if [[ "$mode" == "sandbox-direct" && "$deploy_target" != "none" ]]; then
+    echo "sandbox_service_accounts=register"
+  else
+    echo "sandbox_service_accounts=skip"
+  fi
+  if [[ "$START_COORDINATOR" == "false" || -z "$TARGET_REPO" || ( "$START_COORDINATOR" == "auto" && "$has_brief" != "true" ) ]]; then
+    echo "coordinator_auto_start=skip (${coord_tpl})"
+  else
+    echo "coordinator_auto_start=enabled (${coord_tpl}, standby via --task-file)"
   fi
   echo "=== PLAN: Current Hub Template Status ==="
   scion templates status --hub "$HUB_URL" || true
@@ -198,6 +237,87 @@ ensure_kaizen_schedule() {
   echo "SCHEDULED KAIZEN: weekly-kaizen (${kz_cron} ${kz_tz} -> ${kz_coord} --wake)"
 }
 
+ensure_coordinator_started() {
+  local pack_prefix="$1" default_harness="$2" repo_cfg="$3" worker_sa="$4"
+  local coord_name coord_tpl coord_harness coord_model coord_thinking disabled_json coord_disabled
+  coord_name="$(jq -re --arg p "$pack_prefix" '.kaizen.coordinator_agent // ($p + "-coordinator")' <<< "$repo_cfg")"
+  coord_tpl="${pack_prefix}-coordinator"
+  coord_harness="$(jq -r --arg d "$default_harness" '.model_routing.coordinator.harness // $d' <<< "$repo_cfg")"
+  coord_harness="${pack_prefix}-${coord_harness}"
+  coord_model="$(jq -r '.model_routing.coordinator.model // empty' <<< "$repo_cfg")"
+  coord_thinking="$(jq -r '.model_routing.coordinator.thinking_level // empty' <<< "$repo_cfg")"
+  disabled_json="$(jq -c '.roster.disabled_roles // []' <<< "$repo_cfg")"
+  coord_disabled="$(jq -r --arg full "$coord_tpl" 'index("coordinator") != null or index($full) != null' <<< "$disabled_json")"
+
+  if [[ "$coord_disabled" == "true" ]]; then
+    echo "SKIP coordinator start: coordinator role is disabled in roster.disabled_roles."
+    return 0
+  fi
+
+  # Never pass -w <monorepo.subdir> on coordinator start (C1): keep full repo mounted so
+  # .factory/ and AGENTS.md stay readable, and rely on coordinator-bootstrap-brief.md for subdir scope.
+  local start_args=(start "$coord_name" -t "$coord_tpl" --role full --harness-config "$coord_harness")
+  if [[ -n "$coord_model" ]]; then
+    start_args+=(--model "$coord_model")
+  fi
+  if [[ -n "$coord_thinking" ]]; then
+    start_args+=(--thinking-level "$coord_thinking")
+  fi
+  if [[ -n "$worker_sa" ]]; then
+    start_args+=(--service-account "$worker_sa")
+  fi
+  local has_brief="false"
+  if [[ -n "$TARGET_REPO" && -f "$TARGET_REPO/.factory/coordinator-bootstrap-brief.md" ]]; then
+    has_brief="true"
+    start_args+=(--task-file "$TARGET_REPO/.factory/coordinator-bootstrap-brief.md")
+  else
+    start_args+=("Read .factory/hub-project.yaml, .factory/knowledge-index.yaml, and .factory/waves/wave-1.yaml. Post a concise standby readiness summary in Scion Chat and run sciontool status blocked until the Product Owner approves execution.")
+  fi
+  start_args+=(--wait-timeout 2m --non-interactive ${PROJ_FLAGS[@]+"${PROJ_FLAGS[@]}"} --hub "$HUB_URL")
+
+  # Auto-start only on v0.6.0+ repos with a standby brief (or explicit --start-coordinator),
+  # preventing unexpected agent spawns when re-applying legacy v0.5.0 repos (H3).
+  if [[ "$START_COORDINATOR" == "false" || -z "$TARGET_REPO" || ( "$START_COORDINATOR" == "auto" && "$has_brief" != "true" ) ]]; then
+    echo "COORDINATOR START SKIPPED (opt-out, no --repo, or legacy repo without .factory/coordinator-bootstrap-brief.md). Ready command:"
+    printf '  scion'
+    printf ' %q' "${start_args[@]}"
+    printf '\n'
+    return 0
+  fi
+
+  # Fail-closed idempotency check (H2): never spawn a duplicate if scion list fails or returns non-JSON.
+  local list_json list_rc=0 existing_coord
+  list_json="$(scion --format json list ${PROJ_FLAGS[@]+"${PROJ_FLAGS[@]}"} --hub "$HUB_URL" 2>/dev/null)" || list_rc=$?
+  if [[ "$list_rc" -ne 0 ]] || ! jq -e 'type == "array" or type == "object"' <<< "$list_json" >/dev/null 2>&1; then
+    echo "WARNING: scion list failed or returned non-JSON (rc=${list_rc}). Skipping automatic coordinator start to prevent duplicate spawns. Run manually:" >&2
+    printf '  scion' >&2
+    printf ' %q' "${start_args[@]}" >&2
+    printf '\n' >&2
+    return 0
+  fi
+
+  existing_coord="$(jq -r \
+    --arg n "$coord_name" \
+    --arg pid "${SCION_HUB_PROJECT_ID:-}" \
+    --arg pslug "${PROJECT_SLUG:-}" \
+    '((if type == "array" then . else (.agents // .items // []) end)[]
+      | select((.name == $n or .slug == $n)
+        and (
+          ($pid == "" and $pslug == "")
+          or ((.projectId // .project_id // .projectSlug // .project_slug // .project // "") == "")
+          or ($pid != "" and (.projectId // .project_id // .project // "") == $pid)
+          or ($pslug != "" and (.projectSlug // .project_slug // .project // "") == $pslug)
+        ))
+      | .name // .slug) // empty' <<< "$list_json" | head -n 1 || true)"
+  if [[ -n "$existing_coord" ]]; then
+    echo "SKIP coordinator start: ${coord_name} already exists on Hub."
+    return 0
+  fi
+
+  scion "${start_args[@]}"
+  echo "COORDINATOR STARTED (standby mode): ${coord_name} (template=${coord_tpl}, harness=${coord_harness})"
+}
+
 do_apply() {
   do_preflight
   local pack_name pack_prefix repo_cfg mode max_dur max_turns max_calls auto_susp exclude_json
@@ -283,27 +403,36 @@ do_apply() {
     scion hub settings set default_harness_config "${pack_prefix}-${default_harness}" --hub "$HUB_URL"
   fi
 
-  # 3. Sync local templates (stores zero upstream source URL, blocking Refresh clobber).
+  # 3. Sync local templates filtered by roster.disabled_roles (zero upstream source URL).
+  local disabled_roles_json
+  disabled_roles_json="$(jq -c '.roster.disabled_roles // []' <<< "$repo_cfg")"
   for tpl_dir in "$KIT_DIR"/templates/*; do
     [[ -d "$tpl_dir" ]] || continue
-    local tname
+    local tname role_short is_disabled
     tname="$(basename "$tpl_dir")"
+    role_short="${tname#"${pack_prefix}-"}"
+    is_disabled="$(jq -r --arg full "$tname" --arg short "$role_short" 'index($full) != null or index($short) != null' <<< "$disabled_roles_json")"
+    if [[ "$is_disabled" == "true" ]]; then
+      echo "SKIP template (disabled in roster): $tname"
+      continue
+    fi
     scion templates sync "$tpl_dir" --name "$tname" "${PROJ_FLAGS[@]}" --hub "$HUB_URL"
   done
 
   # 4. Register and verify factory SAs idempotently (never register sandbox_janitor on the Hub).
-  local resolved_proj_id
+  local resolved_proj_id worker_sa="" deploy_target
+  deploy_target="$(jq -r '.deploy_target // ""' <<< "$repo_cfg")"
   resolved_proj_id="$(resolve_project_id)"
   if [[ -n "$resolved_proj_id" ]]; then
     export SCION_HUB_PROJECT_ID="$resolved_proj_id"
   fi
   if [[ -n "$LANDING_ZONE_JSON" ]]; then
-    local inf_p sbx_p worker_sa dep_sa eval_sa
+    local inf_p sbx_p dep_sa eval_sa
     inf_p="$(jq -re '.inference_project_id.value' "$LANDING_ZONE_JSON")"
-    sbx_p="$(jq -re '.sandbox_project_id.value' "$LANDING_ZONE_JSON")"
+    sbx_p="$(jq -r '.sandbox_project_id.value // empty' "$LANDING_ZONE_JSON")"
     worker_sa="$(jq -re '.worker_sa_email.value' "$LANDING_ZONE_JSON")"
-    dep_sa="$(jq -re '.sandbox_deployer_sa_email.value' "$LANDING_ZONE_JSON")"
-    eval_sa="$(jq -re '.sandbox_evaluator_sa_email.value' "$LANDING_ZONE_JSON")"
+    dep_sa="$(jq -r '.sandbox_deployer_sa_email.value // empty' "$LANDING_ZONE_JSON")"
+    eval_sa="$(jq -r '.sandbox_evaluator_sa_email.value // empty' "$LANDING_ZONE_JSON")"
 
     local id_proj_flags=("${PROJ_FLAGS[@]}")
     if [[ -n "${SCION_HUB_PROJECT_ID:-}" ]]; then
@@ -312,11 +441,20 @@ do_apply() {
     register_and_verify_sa "$worker_sa" "$inf_p" "factory-worker"
     scion project identity default set "$worker_sa" "${id_proj_flags[@]}" --hub "$HUB_URL"
 
-    if [[ "$mode" == "sandbox-direct" ]]; then
+    if [[ "$mode" == "sandbox-direct" && "$deploy_target" != "none" ]]; then
+      [[ -n "$sbx_p" && -n "$dep_sa" ]] || {
+        echo "APPLY FAILED: sandbox-direct with deploy_target='${deploy_target:-default}' requires sandbox_project_id and sandbox_deployer_sa_email in landing-zone outputs." >&2
+        exit 1
+      }
       register_and_verify_sa "$dep_sa" "$sbx_p" "${pack_prefix}-deployer"
-      register_and_verify_sa "$eval_sa" "$sbx_p" "${pack_prefix}-evaluator"
+      if [[ -n "$eval_sa" ]]; then
+        register_and_verify_sa "$eval_sa" "$sbx_p" "${pack_prefix}-evaluator"
+      elif [[ "$pack_name" != "generic" ]]; then
+        echo "APPLY FAILED: pack '${pack_name}' in sandbox-direct mode requires sandbox_evaluator_sa_email." >&2
+        exit 1
+      fi
     else
-      echo "MODE ci-only: skipping Sandbox Deployer and Evaluator SA registration on Hub."
+      echo "SKIP Sandbox Deployer/Evaluator SA registration (mode=${mode}, deploy_target=${deploy_target:-default})."
     fi
 
     # Register read-only Tier-B Kaizen Viewer SA on Hub when enable_gcp_obs is active (HC-04 F5).
@@ -374,6 +512,7 @@ do_apply() {
   if [[ -n "$TARGET_REPO" ]]; then
     do_overlay_sync
   fi
+  ensure_coordinator_started "$pack_prefix" "$default_harness" "$repo_cfg" "$worker_sa"
   echo "APPLY COMPLETE."
 }
 

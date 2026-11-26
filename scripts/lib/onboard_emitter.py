@@ -1,8 +1,8 @@
-"""Deterministic Readiness Gate, atomic AGENTS.md merge, and Layer 3 overlay emitter (v0.4.0).
+"""Deterministic Readiness Gate, atomic AGENTS.md merge, and Layer 3 overlay emitter (v0.6.0).
 
-Delegates Dockerfile recipe rendering to scripts/lib/dockerfile_recipes.py.
-Enforces Adopt-First invariants: atomic writes, non-destructive hub-project/backlog merge,
-CRLF preservation, symlink refusal, and AGENTS/CLAUDE/GEMINI scaffold parity preservation.
+Pre-validates every target path against symlink escapes before writing any file on disk,
+writes each artifact atomically via os.replace, and preserves agent-authored Dockerfiles
+and Knowledge Plane files across re-emissions.
 """
 from __future__ import annotations
 
@@ -14,23 +14,40 @@ from typing import Any
 import yaml
 
 from scripts.lib.dockerfile_recipes import render_conditional_dockerfile
-from scripts.lib.model_routing import build_default_harnesses_and_routing
+from scripts.lib.io_utils import assert_no_symlink_escape, atomic_write_bytes
+from scripts.lib.onboard_hub_config import build_hub_project_overlay, merge_modernization_backlog
+from scripts.lib.onboard_kp import plan_knowledge_plane
 from scripts.lib.schema_validator import validate_against_schema
 
 START_MARKER = "<!-- gcp-fde-factory:start -->"
 END_MARKER = "<!-- gcp-fde-factory:end -->"
 START_LINE_RE = re.compile(r"^[ \t]*<!-- gcp-fde-factory:start -->[ \t]*$", re.MULTILINE)
 END_LINE_RE = re.compile(r"^[ \t]*<!-- gcp-fde-factory:end -->[ \t]*$", re.MULTILINE)
+GENERATED_DOCKERFILE_HEADER = "# Conditional Layer 3 derived customer image"
 
 
 def check_readiness(profile: dict[str, Any], schema_path: pathlib.Path) -> dict[str, Any]:
     """Evaluates whether an onboarding profile passes the deterministic Readiness Gate."""
     issues = validate_against_schema(profile, schema_path)
+    warnings: list[str] = []
 
     if not issues:
         cmds = profile.get("commands", {})
         if "configure lint command" in str(cmds.get("lint", "")):
             issues.append("commands.lint still contains the placeholder value. Confirm the real lint command.")
+        if not str(cmds.get("test", "")).strip():
+            issues.append("commands.test must not be empty. Confirm the canonical test command.")
+
+        if profile.get("pack") == "generic":
+            dt = str(profile.get("deploy_target") or "")
+            if not dt:
+                issues.append("Pack 'generic' requires an explicit 'deploy_target' (cloud-run, gke, custom, or none).")
+            elif dt in ("agent-engine", "ces"):
+                issues.append(f"Pack 'generic' does not support deploy_target '{dt}'. Use cloud-run, gke, custom, or none.")
+
+        roster = profile.get("roster") or {}
+        if int(roster.get("max_wip") or 0) >= 4 and int(roster.get("reviewer_replicas") or 1) < 2:
+            warnings.append("roster.max_wip >= 4 with reviewer_replicas < 2 may bottleneck PR reviews. Set reviewer_replicas: 2.")
 
         if profile.get("track") == "complete":
             if len(str(profile.get("mission", "")).strip()) < 10:
@@ -42,10 +59,15 @@ def check_readiness(profile: dict[str, Any], schema_path: pathlib.Path) -> dict[
             if not profile.get("invariants"):
                 issues.append("Complete track requires at least one verifiable entry in 'invariants'.")
             pyr = profile.get("evaluation_pyramid") or {}
-            if not (pyr.get("l1_offline") and pyr.get("l2_sandbox")):
-                issues.append("Complete track requires 'evaluation_pyramid' with 'l1_offline' and 'l2_sandbox'.")
+            needs_l2 = profile.get("deploy_target") != "none"
+            if not pyr.get("l1_offline") or (needs_l2 and not pyr.get("l2_sandbox")):
+                issues.append(
+                    "Complete track requires 'evaluation_pyramid' with 'l1_offline' (and 'l2_sandbox' when deploy_target != none)."
+                )
+            if profile.get("pack") == "generic" and needs_l2 and not str(cmds.get("e2e") or "").strip():
+                issues.append("Pack 'generic' on complete track with deploy_target != none requires a non-empty commands.e2e.")
 
-    return {"ready": len(issues) == 0, "missing_or_weak": issues}
+    return {"ready": len(issues) == 0, "missing_or_weak": issues, "warnings": warnings}
 
 
 def compute_merged_agents_md(existing: str | None, block_body: str) -> str:
@@ -84,10 +106,8 @@ def _render_conventions_skill(profile: dict[str, Any]) -> str:
     absorbed = profile.get("absorbed_conventions") or []
     absorbed_lines = "".join(f"- {rule}\n" for rule in absorbed) if absorbed else "- Follow pre-existing repository AI instructions.\n"
     return (
-        f"---\n"
-        f"name: {slug}-repo-conventions\n"
-        f"description: Repository commands, Git Flow rules, and absorbed conventions for {slug}.\n"
-        f"---\n\n"
+        f"---\nname: {slug}-repo-conventions\n"
+        f"description: Repository commands, Git Flow rules, and absorbed conventions for {slug}.\n---\n\n"
         f"# Repository Conventions (`{slug}`)\n\n"
         f"## 1. Canonical Repository Commands\n"
         f"- Lint command: `{cmds['lint']}`\n"
@@ -113,7 +133,7 @@ def _content_semver(skill_text: str) -> str:
 
 
 def _ensure_scion_gitignore_bytes(existing: bytes | None) -> bytes | None:
-    """Appends .scion/agents/ to .gitignore idempotently while preserving CRLF/LF line endings (HC-05 F5)."""
+    """Appends .scion/agents/ to .gitignore idempotently while preserving CRLF/LF endings (HC-05 F5)."""
     if existing is None:
         return b"# Scion project-local agent runtime metadata\n.scion/agents/\n"
     text = existing.decode("utf-8", errors="replace")
@@ -129,8 +149,10 @@ def emit_layer3_overlay(
     profile: dict[str, Any],
     pack_image_ref: str,
     profile_schema_path: pathlib.Path,
+    *,
+    force_knowledge: bool = False,
 ) -> dict[str, Any]:
-    """Computes and atomically emits the Layer 3 .factory/ overlay after Readiness Gate validation."""
+    """Pre-validates all paths and symlinks, then atomically emits Layer 3 files and Knowledge Plane."""
     repo = repo_dir.resolve()
     if not repo.is_dir():
         raise ValueError(f"Target repository directory does not exist: {repo}")
@@ -155,93 +177,32 @@ def emit_layer3_overlay(
     skill_ver = _content_semver(skill_text)
     conv_dir_rel = f"skills/{slug}-repo-conventions"
 
-    # Non-destructively merge existing hub-project.yaml (preserve exclude_skills, custom overlays, limits).
-    hub_proj_path = repo / ".factory" / "hub-project.yaml"
-    existing_hub = yaml.safe_load(hub_proj_path.read_text(encoding="utf-8")) if hub_proj_path.is_file() else {}
-    existing_hub = existing_hub if isinstance(existing_hub, dict) else {}
-    preserved_overlays = [
-        ov for ov in (existing_hub.get("overlay_skills") or [])
-        if isinstance(ov, dict) and ov.get("dir") != conv_dir_rel
-    ]
-    preserved_overlays.append({"dir": conv_dir_rel, "version": skill_ver})
-
-    default_limits = {
-        "default_max_duration": "2h",
-        "default_max_turns": 60,
-        "default_max_model_calls": 150,
-        "auto_suspend_idle": True,
-    }
-    merged_limits = {**default_limits, **(existing_hub.get("limits") or {}), **(profile.get("limits") or {})}
-    harnesses_cfg, model_routing_cfg = build_default_harnesses_and_routing(
-        diversity_profile=str(profile["diversity_profile"]),
-        raw_harnesses={**(existing_hub.get("harnesses") or {}), **(profile.get("harnesses") or {})} or None,
-        raw_routing={**(existing_hub.get("model_routing") or {}), **(profile.get("model_routing") or {})} or None,
+    # Phase 1: Validate all paths/symlinks and compute every payload BEFORE writing any file on disk.
+    hub_project, coordinator_name = build_hub_project_overlay(
+        repo,
+        profile,
+        conv_dir_rel=conv_dir_rel,
+        skill_ver=skill_ver,
+        core_df_rel=core_df_rel,
+        tester_df_rel=tester_df_rel,
+        hub_schema_path=profile_schema_path.parent / "hub-project.schema.json",
     )
-    hub_project = {
-        "schema_version": "1",
-        "pack": profile["pack"],
-        "pack_version": profile["pack_version"],
-        "mode": existing_hub.get("mode") or profile["mode"],
-        "diversity_profile": profile["diversity_profile"],
-        "limits": merged_limits,
-        "harnesses": harnesses_cfg,
-        "model_routing": model_routing_cfg,
-        "exclude_skills": list(existing_hub.get("exclude_skills") or []),
-        "overlay_skills": preserved_overlays,
-        "kaizen": {
-            "enabled": bool(profile.get("kaizen_enabled", True)),
-            "schedule_cron": profile.get("kaizen_schedule_cron", "0 17 * * 5"),
-            "time_zone": profile.get("kaizen_time_zone", "America/Sao_Paulo"),
-            "coordinator_agent": str((existing_hub.get("kaizen") or {}).get("coordinator_agent") or "coordinator"),
-            "enable_gcp_obs": bool((existing_hub.get("kaizen") or {}).get("enable_gcp_obs", False)),
-        },
-        "brownfield": {
-            "track": profile["track"],
-            "existing_hub": bool(profile["existing_hub"]),
-            "custom_image_dockerfile": core_df_rel,
-            "tester_image_dockerfile": tester_df_rel,
-            "profile_path": ".factory/factory-profile.yaml",
-        },
-    }
+    merged_gaps = merge_modernization_backlog(repo, profile)
+    kp_plan = plan_knowledge_plane(repo, profile, coordinator_name, force_knowledge=force_knowledge)
 
-    hub_schema_path = profile_schema_path.parent / "hub-project.schema.json"
-    if hub_schema_path.is_file():
-        hub_errs = validate_against_schema(hub_project, hub_schema_path)
-        if hub_errs:
-            raise ValueError("Generated hub-project.yaml failed schema validation: " + " | ".join(hub_errs))
-
-    # Merge modernization backlog by gap ID so PO statuses survive re-emission.
-    backlog_path = repo / ".factory" / "modernization-backlog.yaml"
-    existing_gaps: dict[str, dict[str, Any]] = {}
-    if backlog_path.is_file():
-        prev_bl = yaml.safe_load(backlog_path.read_text(encoding="utf-8"))
-        if isinstance(prev_bl, dict):
-            for g in prev_bl.get("gaps") or []:
-                if isinstance(g, dict) and g.get("id"):
-                    existing_gaps[str(g["id"])] = g
-    for g in profile.get("modernization_gaps") or []:
-        gid = str(g["id"])
-        if gid in existing_gaps:
-            existing_gaps[gid] = {**g, "status": existing_gaps[gid].get("status", "open")}
-        else:
-            existing_gaps[gid] = dict(g)
-
-    # Pre-compute AGENTS.md merge before writing ANY file on disk (atomic failure behavior).
-    agents_path = repo / "AGENTS.md"
-    if agents_path.is_symlink():
-        raise ValueError(f"Refusing to write through symlink: {agents_path}")
+    agents_path = assert_no_symlink_escape(repo, repo / "AGENTS.md")
     existing_agents_raw = agents_path.read_bytes() if agents_path.exists() else None
     existing_agents_str = existing_agents_raw.decode("utf-8") if existing_agents_raw is not None else None
     block = (
         f"## Google Cloud FDE Factory Overlay (`{profile['pack']}@{profile['pack_version']}`)\n"
         f"- Factory overlay config: `.factory/hub-project.yaml` and `.factory/factory-profile.yaml`\n"
         f"- In-place knowledge index: `.factory/knowledge-index.yaml`\n"
+        f"- Initial Wave-1 backlog: `.factory/waves/wave-1.yaml`\n"
+        f"- Coordinator standby brief: `.factory/coordinator-bootstrap-brief.md`\n"
         f"- Repository conventions skill: `{conv_dir_rel}/SKILL.md`\n"
         f"- Modernization backlog: `.factory/modernization-backlog.yaml`"
     )
     merged_agents_bytes = compute_merged_agents_md(existing_agents_str, block).encode("utf-8")
-
-    # Detect whether AGENTS/CLAUDE/GEMINI were byte-identical before emit (preserve CI parity).
     mirror_siblings = (
         existing_agents_raw is not None
         and (repo / "CLAUDE.md").is_file()
@@ -252,68 +213,67 @@ def emit_layer3_overlay(
         and (repo / "GEMINI.md").read_bytes() == existing_agents_raw
     )
 
-    # Pre-compute .gitignore update atomically before writing any file (HC-05 F5).
-    gitignore_path = repo / ".gitignore"
-    if gitignore_path.is_symlink():
-        raise ValueError(f"Refusing to write through symlink: {gitignore_path}")
-    existing_gi_raw = gitignore_path.read_bytes() if gitignore_path.exists() else None
-    updated_gi_bytes = _ensure_scion_gitignore_bytes(existing_gi_raw)
+    gitignore_path = assert_no_symlink_escape(repo, repo / ".gitignore")
+    updated_gi_bytes = _ensure_scion_gitignore_bytes(gitignore_path.read_bytes() if gitignore_path.exists() else None)
 
-    # All validations and merges succeeded; commit outputs cleanly and preserve cognitive custom Dockerfiles (ADR-015).
-    factory_dir = repo / ".factory"
-    factory_dir.mkdir(parents=True, exist_ok=True)
-    created: list[str] = []
+    writes: list[tuple[pathlib.Path, bytes, str]] = []
+    unlinks: list[pathlib.Path] = []
+    preserved_custom_dockerfiles: list[str] = []
 
     for rel_df, content in ((".factory/Dockerfile.customer", core_df_text), (".factory/Dockerfile.customer-tester", tester_df_text)):
-        df_path = repo / rel_df
+        df_path = assert_no_symlink_escape(repo, repo / rel_df)
+        is_generated = df_path.is_file() and df_path.read_text(encoding="utf-8", errors="ignore").startswith(GENERATED_DOCKERFILE_HEADER)
         if content:
-            df_path.write_text(content, encoding="utf-8")
-            created.append(rel_df)
-        elif df_path.is_file() and df_path.read_text(encoding="utf-8", errors="ignore").startswith("# Conditional Layer 3 derived customer image"):
-            df_path.unlink()
+            if df_path.is_file() and not is_generated:
+                preserved_custom_dockerfiles.append(rel_df)
+            else:
+                writes.append((df_path, content.encode("utf-8"), rel_df))
+        elif is_generated:
+            unlinks.append(df_path)
 
-    skill_dir = repo / conv_dir_rel
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    (skill_dir / "SKILL.md").write_text(skill_text, encoding="utf-8")
-    created.append(f"{conv_dir_rel}/SKILL.md")
+    skill_path = assert_no_symlink_escape(repo, repo / conv_dir_rel / "SKILL.md")
+    writes.append((skill_path, skill_text.encode("utf-8"), f"{conv_dir_rel}/SKILL.md"))
+    writes.extend(kp_plan["writes"])
 
-    hub_proj_path.write_text(yaml.safe_dump(hub_project, sort_keys=False), encoding="utf-8")
-    (factory_dir / "factory-profile.yaml").write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
-    (factory_dir / "knowledge-index.yaml").write_text(
-        yaml.safe_dump(
+    yaml_files = (
+        (".factory/hub-project.yaml", hub_project),
+        (".factory/factory-profile.yaml", profile),
+        (
+            ".factory/knowledge-index.yaml",
             {
                 "schema_version": "1",
                 "sources": profile.get("knowledge_sources", []),
+                "knowledge_files": kp_plan["knowledge_files"],
                 "requirements": profile.get("requirements", []),
                 "invariants": profile.get("invariants", []),
             },
-            sort_keys=False,
         ),
-        encoding="utf-8",
+        (".factory/modernization-backlog.yaml", {"schema_version": "1", "gaps": merged_gaps}),
     )
-    backlog_path.write_text(
-        yaml.safe_dump({"schema_version": "1", "gaps": list(existing_gaps.values())}, sort_keys=False),
-        encoding="utf-8",
-    )
-    created.extend([
-        ".factory/hub-project.yaml",
-        ".factory/factory-profile.yaml",
-        ".factory/knowledge-index.yaml",
-        ".factory/modernization-backlog.yaml",
-    ])
+    for rel, payload in yaml_files:
+        path = assert_no_symlink_escape(repo, repo / rel)
+        writes.append((path, yaml.safe_dump(payload, sort_keys=False).encode("utf-8"), rel))
 
-    agents_path.write_bytes(merged_agents_bytes)
-    created.append("AGENTS.md")
+    writes.append((agents_path, merged_agents_bytes, "AGENTS.md"))
     if updated_gi_bytes is not None:
-        gitignore_path.write_bytes(updated_gi_bytes)
-        created.append(".gitignore")
+        writes.append((gitignore_path, updated_gi_bytes, ".gitignore"))
     if mirror_siblings:
-        (repo / "CLAUDE.md").write_bytes(merged_agents_bytes)
-        (repo / "GEMINI.md").write_bytes(merged_agents_bytes)
-        created.extend(["CLAUDE.md", "GEMINI.md"])
+        for sib in ("CLAUDE.md", "GEMINI.md"):
+            writes.append((assert_no_symlink_escape(repo, repo / sib), merged_agents_bytes, sib))
+
+    # Phase 2: All checks passed. Commit atomically via temp-file rename.
+    created: list[str] = []
+    for path in unlinks:
+        path.unlink()
+    for path, data, rel in writes:
+        atomic_write_bytes(path, data)
+        created.append(rel)
 
     return {
         "emitted_files": created,
+        "preserved_knowledge_files": kp_plan["preserved"],
+        "preserved_custom_dockerfiles": preserved_custom_dockerfiles,
+        "coordinator_agent": coordinator_name,
         "custom_dockerfile": core_df_rel,
         "tester_dockerfile": tester_df_rel,
         "conventions_skill_version": skill_ver,

@@ -7,8 +7,8 @@ options:
 substitutions:
   _AR_URL: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/factory-images"
   _BASE_IMAGE: "python:3.12-slim-bookworm"
-  _CORE_VERSION: "0.5.0"
-  _PACK_VERSION: "0.5.0"
+  _CORE_VERSION: "0.6.0"
+  _PACK_VERSION: "0.6.0"
   _CORE_IMAGE_NAME: "core-gcp-fde-base"
   _IMAGE_NAME: "gecx-runtime"
   _DOCKERFILE: "packs/gecx/Dockerfile"
