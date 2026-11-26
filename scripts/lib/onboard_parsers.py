@@ -120,16 +120,16 @@ def detect_binaries_and_commands(repo: pathlib.Path) -> tuple[list[str], dict[st
                 sec = pkg.get(key)
                 if isinstance(sec, dict):
                     all_node_deps.update(str(k).lower() for k in sec.keys())
-            if (repo / "pnpm-lock.yaml").is_file():
+            if (repo / "pnpm-lock.yaml").is_file() or (repo / "pnpm-workspace.yaml").is_file():
                 binaries.add("pnpm")
             if any("playwright" in d for d in all_node_deps) or any(repo.glob("playwright.config.*")):
                 binaries.add("playwright-node")
             if "eslint" in all_node_deps or any(repo.glob(".eslintrc*")):
                 binaries.add("eslint")
-                lint_cmd = lint_cmd or "npm run lint"
+                lint_cmd = lint_cmd or ("pnpm run lint" if "pnpm" in binaries else "npm run lint")
             scripts = pkg.get("scripts") if isinstance(pkg.get("scripts"), dict) else {}
             if "test" in scripts and not test_cmd:
-                test_cmd = "npm test"
+                test_cmd = "pnpm test" if "pnpm" in binaries else "npm test"
 
     if (repo / "go.mod").is_file():
         stacks.add("go")
@@ -138,7 +138,9 @@ def detect_binaries_and_commands(repo: pathlib.Path) -> tuple[list[str], dict[st
     if (repo / "pom.xml").is_file():
         stacks.add("java")
         binaries.update({"jdk", "mvn"})
-        test_cmd = test_cmd or "mvn test"
+        mvn_bin = "./mvnw" if (repo / "mvnw").is_file() else "mvn"
+        test_cmd = test_cmd or f"{mvn_bin} test"
+        build_cmd = build_cmd or f"{mvn_bin} -DskipTests compile"
     if any(repo.glob("*.tf")) or any(repo.glob("deploy/*/*.tf")) or any(repo.glob("infra/*.tf")):
         stacks.add("terraform")
 
@@ -245,13 +247,23 @@ def detect_hooks_and_ai_divergence(repo: pathlib.Path) -> tuple[list[str], list[
                     hooks.append(child.relative_to(repo).as_posix())
 
     # Check whether co-existing AGENTS.md, CLAUDE.md, and GEMINI.md files diverge.
+    # Treat single-line @AGENTS.md / @CLAUDE.md / @GEMINI.md include directives as parity (HC-09 F3).
     ai_present: dict[str, bytes] = {}
     for fname in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
         p = repo / fname
         if p.is_file() and not p.is_symlink():
-            ai_present[fname] = p.read_bytes().replace(b"\r\n", b"\n").strip()
+            norm = p.read_bytes().replace(b"\r\n", b"\n").strip()
+            ai_present[fname] = norm
+    resolved_contents: set[bytes] = set()
+    for fname, norm in ai_present.items():
+        if norm.startswith(b"@") and b"\n" not in norm:
+            target_name = norm[1:].decode("utf-8", errors="ignore").strip()
+            if target_name in ai_present:
+                resolved_contents.add(ai_present[target_name])
+                continue
+        resolved_contents.add(norm)
     diverged: list[str] = []
-    if len(ai_present) >= 2 and len(set(ai_present.values())) > 1:
+    if len(ai_present) >= 2 and len(resolved_contents) > 1:
         diverged = sorted(ai_present.keys())
 
     if hooks:

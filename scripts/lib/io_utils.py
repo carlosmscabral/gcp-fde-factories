@@ -31,6 +31,18 @@ def assert_no_symlink_escape(repo: pathlib.Path, target: pathlib.Path) -> pathli
     return cur
 
 
+def assert_read_path_inside_repo(repo: pathlib.Path, target: pathlib.Path) -> pathlib.Path:
+    """Allows read-only access to in-repo symlinks while blocking any symlink escaping repo root."""
+    repo_root = repo.resolve()
+    raw_target = target if target.is_absolute() else (repo_root / target)
+    resolved = raw_target.resolve()
+    try:
+        resolved.relative_to(repo_root)
+    except ValueError as exc:
+        raise ValueError(f"Refusing path escaping repository root: {target}") from exc
+    return resolved
+
+
 def atomic_write_bytes(path: pathlib.Path, data: bytes) -> None:
     """Writes bytes via a same-directory temporary file and os.replace to prevent truncated writes."""
     path.parent.mkdir(parents=True, exist_ok=True)

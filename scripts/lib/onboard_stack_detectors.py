@@ -151,8 +151,10 @@ def detect_extended_signals(repo_dir: pathlib.Path) -> dict[str, Any]:
     if (repo / "build.gradle").is_file() or (repo / "build.gradle.kts").is_file():
         extra_stacks.add("java")
         extra_binaries.update({"jdk", "gradle"})
-        extra_commands.setdefault("test", "./gradlew test")
-        extra_commands.setdefault("build", "./gradlew build")
+        # Avoid mixing Gradle build with Maven test when pom.xml coexists (HC-09).
+        if not (repo / "pom.xml").is_file():
+            extra_commands.setdefault("test", "./gradlew test")
+            extra_commands.setdefault("build", "./gradlew build")
 
     if (repo / "nx.json").is_file():
         extra_binaries.add("nx")

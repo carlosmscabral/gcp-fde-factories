@@ -11,5 +11,5 @@
     "curl": "7.88+",
     "bash": "5.x"
   },
-  "heavy_test_candidates": ["playwright", "playwright-node", "jdk", "mvn"]
+  "heavy_test_candidates": ["playwright", "playwright-node"]
 }

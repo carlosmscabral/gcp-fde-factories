@@ -188,10 +188,12 @@ def parse_hub_project(repo_dir: pathlib.Path, expected_pack: str = "") -> dict[s
         "reviewer_replicas": int(raw_roster.get("reviewer_replicas") or 1),
     }
 
+    raw_bf = raw.get("brownfield") if isinstance(raw.get("brownfield"), dict) else {}
     return {
         "pack": pack,
         "mode": mode,
         "deploy_target": str(raw.get("deploy_target") or ""),
+        "existing_hub": bool(raw_bf.get("existing_hub", False)),
         "diversity_profile": diversity,
         "limits": limits,
         "exclude_skills": [str(s) for s in (raw.get("exclude_skills") or [])],

@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-from scripts.lib.io_utils import assert_no_symlink_escape
+from scripts.lib.io_utils import assert_no_symlink_escape, assert_read_path_inside_repo
 from scripts.lib.onboard_roles import PACK_PREFIXES
 
 VALID_SEP_SIZES = frozenset({"small", "chunky", "large"})
@@ -229,7 +229,9 @@ def check_knowledge_plane(repo_dir: pathlib.Path) -> dict[str, Any]:
         for rel in idx.get(field) or []:
             rel_s = str(rel)
             try:
-                target = assert_no_symlink_escape(repo, repo / rel_s)
+                # Allow read-only in-repo symlinks in sources (e.g. GEMINI.md -> AGENTS.md), block escapes (HC-09 F5).
+                guard = assert_read_path_inside_repo if field == "sources" else assert_no_symlink_escape
+                target = guard(repo, repo / rel_s)
             except ValueError as exc:
                 errors.append(str(exc))
                 continue

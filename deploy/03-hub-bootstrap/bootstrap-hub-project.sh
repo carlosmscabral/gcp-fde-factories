@@ -76,7 +76,7 @@ parse_repo_cfg() {
     python3 "$SCRIPT_DIR/parse_hub_project.py" --repo "$TARGET_REPO" --expected-pack "$pack_name"
   else
     cat <<'JSON'
-{"pack":"","mode":"sandbox-direct","deploy_target":"","diversity_profile":"cross-model","limits":{"default_max_duration":"2h","default_max_turns":60,"default_max_model_calls":150,"auto_suspend_idle":true},"exclude_skills":[],"overlay_skills":[],"kaizen":{"enabled":true,"schedule_cron":"0 17 * * 5","time_zone":"America/Sao_Paulo","coordinator_agent":"coordinator","enable_gcp_obs":false},"harnesses":{"default":"antigravity-vertex","claude_model_garden_enabled":false,"vertex_gemini_location":"global","vertex_claude_region":"global"},"model_routing":{},"monorepo":{"enabled":false,"subdir":"","agent_prefix":""},"roster":{"enabled_roles":[],"disabled_roles":[],"max_wip":3,"reviewer_replicas":1}}
+{"pack":"","mode":"sandbox-direct","deploy_target":"","existing_hub":false,"diversity_profile":"cross-model","limits":{"default_max_duration":"2h","default_max_turns":60,"default_max_model_calls":150,"auto_suspend_idle":true},"exclude_skills":[],"overlay_skills":[],"kaizen":{"enabled":true,"schedule_cron":"0 17 * * 5","time_zone":"America/Sao_Paulo","coordinator_agent":"coordinator","enable_gcp_obs":false},"harnesses":{"default":"antigravity-vertex","claude_model_garden_enabled":false,"vertex_gemini_location":"global","vertex_claude_region":"global"},"model_routing":{},"monorepo":{"enabled":false,"subdir":"","agent_prefix":""},"roster":{"enabled_roles":[],"disabled_roles":[],"max_wip":3,"reviewer_replicas":1}}
 JSON
   fi
 }
@@ -335,6 +335,7 @@ do_apply() {
   do_backup
 
   # 1. Publish pack skills first and attach non-excluded project skills pinned to exact versions.
+  # Handle concurrent shared-Hub 409 conflicts idempotently when multiple factories apply simultaneously (HC-09 F1).
   local existing_skills_json
   existing_skills_json="$(scion --format json project skills list "${PROJ_FLAGS[@]}" --hub "$HUB_URL")"
   while IFS=$'\t' read -r sname sver sattach; do
@@ -344,7 +345,29 @@ do_apply() {
     if scion skills resolve "skill://scion/global/${sname}@${sver}" --hub "$HUB_URL" >/dev/null 2>&1; then
       echo "SKIP publish: ${sname}@${sver} already published in Hub Skill Bank."
     else
-      scion skills publish "$skill_dir" --scope global --version "$sver" --hub "$HUB_URL"
+      local pub_out="" pub_rc=0
+      pub_out="$(scion skills publish "$skill_dir" --scope global --version "$sver" --hub "$HUB_URL" 2>&1)" || pub_rc=$?
+      if [[ "$pub_rc" -eq 0 ]]; then
+        printf '%s\n' "$pub_out"
+      elif grep -qiE '409|conflict|already exists|already published' <<< "$pub_out"; then
+        local resolved_after="false"
+        for _try in 1 2 3 4 5; do
+          if scion skills resolve "skill://scion/global/${sname}@${sver}" --hub "$HUB_URL" >/dev/null 2>&1; then
+            resolved_after="true"
+            break
+          fi
+          sleep 1
+        done
+        if [[ "$resolved_after" == "true" ]]; then
+          echo "SKIP publish (concurrent peer published ${sname}@${sver})."
+        else
+          printf '%s\n' "$pub_out" >&2
+          return "$pub_rc"
+        fi
+      else
+        printf '%s\n' "$pub_out" >&2
+        return "$pub_rc"
+      fi
     fi
     local is_excluded
     is_excluded="$(jq -r --arg n "$sname" 'index($n) != null' <<< "$exclude_json")"
@@ -356,11 +379,12 @@ do_apply() {
   done < <(jq -r '.skills[] | [.name, .version, ((if has("attach_to_project") then .attach_to_project else true end) | tostring)] | @tsv' "$KIT_DIR/manifest.json")
 
   # 2. Materialize Vertex AI project/region + real harness image into global Scion harness-configs store and sync.
-  local default_harness claude_mg_enabled gemini_loc claude_reg inf_proj=""
+  local default_harness claude_mg_enabled gemini_loc claude_reg existing_hub inf_proj=""
   default_harness="$(jq -re '.harnesses.default // "antigravity-vertex"' <<< "$repo_cfg")"
   claude_mg_enabled="$(jq -re '(.harnesses.claude_model_garden_enabled // false) | tostring' <<< "$repo_cfg")"
   gemini_loc="$(jq -re '.harnesses.vertex_gemini_location // "global"' <<< "$repo_cfg")"
   claude_reg="$(jq -re '.harnesses.vertex_claude_region // "global"' <<< "$repo_cfg")"
+  existing_hub="$(jq -r '(.existing_hub // false) | tostring' <<< "$repo_cfg")"
   if [[ -n "$LANDING_ZONE_JSON" && -f "$LANDING_ZONE_JSON" ]]; then
     inf_proj="$(jq -r '.inference_project_id.value // empty' "$LANDING_ZONE_JSON")"
   fi
@@ -398,9 +422,24 @@ do_apply() {
         --gemini-location "$gemini_loc" \
         --claude-region "$claude_reg" \
         --pin-image "$img_override"
-      scion harness-config sync "$hc_name" --global --hub "$HUB_URL"
+      local hc_out="" hc_rc=0
+      hc_out="$(scion harness-config sync "$hc_name" --global --hub "$HUB_URL" 2>&1)" || hc_rc=$?
+      if [[ "$hc_rc" -eq 0 ]]; then
+        printf '%s\n' "$hc_out"
+      elif grep -qiE '409|conflict|already exists' <<< "$hc_out"; then
+        sleep 2
+        scion harness-config sync "$hc_name" --global --hub "$HUB_URL"
+      else
+        printf '%s\n' "$hc_out" >&2
+        return "$hc_rc"
+      fi
     done
-    scion hub settings set default_harness_config "${pack_prefix}-${default_harness}" --hub "$HUB_URL"
+    # Avoid overwriting Hub-global default_harness_config when attaching another factory to a shared Hub (HC-09 F1).
+    if [[ "$existing_hub" == "true" ]]; then
+      echo "SKIP hub-global default_harness_config update (brownfield.existing_hub=true; agents pass --harness-config explicitly)."
+    else
+      scion hub settings set default_harness_config "${pack_prefix}-${default_harness}" --hub "$HUB_URL"
+    fi
   fi
 
   # 3. Sync local templates filtered by roster.disabled_roles (zero upstream source URL).

@@ -30,8 +30,22 @@ AI_FILE_CANDIDATES = (
     ".github/copilot-instructions.md",
 )
 
-HEAVY_TEST_BINARIES = {"playwright", "playwright-node", "jdk", "mvn"}
+HEAVY_TEST_BINARIES = {"playwright", "playwright-node"}
 SUPPORTED_RECIPE_BINARIES = frozenset(INSTALL_RECIPES.keys())
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+
+
+def _resolve_pack_manifest(explicit: pathlib.Path | None, pack_name: str) -> pathlib.Path | None:
+    """Auto-resolves packs/<pack>/toolchain-manifest.json when scan runs without --pack (HC-09 F2)."""
+    if explicit is not None:
+        return explicit
+    for cand in (
+        REPO_ROOT / "packs" / pack_name / "toolchain-manifest.json",
+        pathlib.Path(f"/opt/gcp-fde/{pack_name}-toolchain-manifest.json"),
+    ):
+        if cand.is_file():
+            return cand
+    return None
 
 
 def _truncate_note(text: str, limit: int = 200) -> str:
@@ -69,10 +83,15 @@ def scan_repository_facts(
     if (repo / ".claude" / "skills").is_dir():
         ai_files.append(".claude/skills/")
 
+    # Compute pack recommendation before toolchain delta so packless scans resolve baked binaries (HC-09 F2).
+    pack_rec = recommend_pack({"stacks": merged_stacks})
+    chosen_pack = pack or pack_rec["pack"]
+    effective_manifest = _resolve_pack_manifest(toolchain_manifest_path, chosen_pack)
+
     baked: set[str] = set()
     heavy_candidates = set(HEAVY_TEST_BINARIES)
-    if toolchain_manifest_path and toolchain_manifest_path.is_file():
-        manifest = load_json(toolchain_manifest_path)
+    if effective_manifest and effective_manifest.is_file():
+        manifest = load_json(effective_manifest)
         baked = set(manifest.get("baked_binaries", {}).keys())
         heavy_candidates.update(manifest.get("heavy_test_candidates", []))
 
@@ -115,8 +134,6 @@ def scan_repository_facts(
         "modernization_gaps": gaps,
     }
 
-    pack_rec = recommend_pack(facts)
-    chosen_pack = pack or pack_rec["pack"]
     facts["recommended_pack"] = pack_rec
     facts["selected_pack"] = chosen_pack
     facts["proposed_roles"] = propose_roles(facts, pack=chosen_pack, track=track)
