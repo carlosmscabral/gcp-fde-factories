@@ -175,7 +175,7 @@ def test_h3_m2_m3_m4_landing_zone_isolates_sandbox_builder_trims_runtime_and_pre
     for dropped in ('"aiplatform.sessions.delete"', '"aiplatform.memories.delete"', '"aiplatform.memories.update"'):
         assert dropped not in rt_block
     assert '"telemetry.traces.write"' in rt_block
-    for predefined_role in ('"roles/cloudtrace.agent"', '"roles/logging.logWriter"', '"roles/monitoring.metricWriter"', '"roles/logging.viewer"'):
+    for predefined_role in ('"roles/cloudtrace.agent"', '"roles/logging.logWriter"', '"roles/monitoring.metricWriter"', '"roles/logging.viewer"', '"roles/browser"'):
         assert predefined_role in iam_tf
     apis_tf = (REPO_ROOT / "deploy/01-landing-zone/apis.tf").read_text(encoding="utf-8")
     for otlp_api in ('"telemetry.googleapis.com"', '"cloudtrace.googleapis.com"', '"monitoring.googleapis.com"'):

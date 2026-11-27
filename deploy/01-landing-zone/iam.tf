@@ -976,6 +976,15 @@ resource "google_project_iam_member" "adk_runtime_sandbox_metric_writer" {
   member  = "serviceAccount:${google_service_account.adk_runtime[0].email}"
 }
 
+# Predefined Browser role (resourcemanager.projects.get) so OTLP resource detection resolves project metadata without silent 403 (HC12-F3).
+resource "google_project_iam_member" "adk_runtime_sandbox_browser" {
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = "roles/browser"
+  member  = "serviceAccount:${google_service_account.adk_runtime[0].email}"
+}
+
 resource "google_project_iam_member" "evaluator_adk_custom_role" {
   count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
 
