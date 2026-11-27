@@ -502,8 +502,44 @@ resource "google_project_service_identity" "sandbox_discoveryengine_agent" {
   depends_on = [google_project_service.enabled]
 }
 
-# Optional binding for the Vertex AI Agent Engine dedicated Reasoning Engine service agent
-# (gcp-sa-aiplatform-re), materialized after the first ReasoningEngine API call in sandbox_project_id.
+# Unconditional cold-start Artifact Registry Reader bindings on sandbox_images (HC12-F2).
+# Grants Vertex AI Reasoning Engine Service Agent (gcp-sa-aiplatform-re), Vertex AI Service Agent
+# (gcp-sa-aiplatform), and adk_runtime read rights on PR images in sandbox_images on Attempt 1.
+resource "google_artifact_registry_repository_iam_member" "sandbox_agent_engine_re_sandbox_ar_reader" {
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
+
+  project    = var.sandbox_project_id
+  location   = var.region
+  repository = google_artifact_registry_repository.sandbox_images[0].repository_id
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:service-${data.google_project.sandbox[0].number}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
+
+  depends_on = [google_project_service_identity.sandbox_aiplatform_agent]
+}
+
+resource "google_artifact_registry_repository_iam_member" "sandbox_aiplatform_sandbox_ar_reader" {
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
+
+  project    = var.sandbox_project_id
+  location   = var.region
+  repository = google_artifact_registry_repository.sandbox_images[0].repository_id
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:${google_project_service_identity.sandbox_aiplatform_agent[0].email}"
+
+  depends_on = [google_project_service_identity.sandbox_aiplatform_agent]
+}
+
+resource "google_artifact_registry_repository_iam_member" "adk_runtime_sandbox_ar_reader" {
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
+
+  project    = var.sandbox_project_id
+  location   = var.region
+  repository = google_artifact_registry_repository.sandbox_images[0].repository_id
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:${google_service_account.adk_runtime[0].email}"
+}
+
+# Optional cross-project binding on hub_project_id for legacy deployments pulling PR images from Hub AR.
 resource "google_project_iam_member" "sandbox_agent_engine_re_ar_reader" {
   count = var.enable_sandbox_project && var.enable_adk_sandbox_roles && var.enable_agent_engine_re_ar_reader ? 1 : 0
 

@@ -161,6 +161,9 @@ def test_h3_m2_m3_m4_landing_zone_isolates_sandbox_builder_trims_runtime_and_pre
     assert 'resource "google_project_iam_member" "builder_ar_writer"' not in iam_tf
     assert "deployer_hub_cloudbuild_editor" not in iam_tf
     assert "service_account_id = google_service_account.sandbox_builder[0].name" in iam_tf
+    assert 'resource "google_project_service_identity" "sandbox_aiplatform_agent"' in iam_tf
+    assert 'resource "google_artifact_registry_repository_iam_member" "sandbox_agent_engine_re_sandbox_ar_reader"' in iam_tf
+    assert 'resource "google_artifact_registry_repository_iam_member" "adk_runtime_sandbox_ar_reader"' in iam_tf
     assert 'output "sandbox_artifact_registry_url"' in out_tf
     assert 'output "sandbox_builder_sa_email"' in out_tf
 
