@@ -164,13 +164,16 @@ def test_h3_m2_m3_m4_landing_zone_isolates_sandbox_builder_trims_runtime_and_pre
     assert 'output "sandbox_artifact_registry_url"' in out_tf
     assert 'output "sandbox_builder_sa_email"' in out_tf
 
-    # M2: adkSandboxRuntime drops delete and memory update permissions while retaining OTLP telemetry.traces.write.
+    # M2: adkSandboxRuntime drops delete and memory update permissions while retaining OTLP telemetry.traces.write
+    # and binding official predefined observability roles (roles/cloudtrace.agent, roles/logging.logWriter, roles/monitoring.metricWriter).
     rt_start = iam_tf.index('resource "google_project_iam_custom_role" "adk_sandbox_runtime"')
     rt_end = iam_tf.index('resource "google_project_iam_member" "adk_runtime_sandbox_sessions"', rt_start)
     rt_block = iam_tf[rt_start:rt_end]
     for dropped in ('"aiplatform.sessions.delete"', '"aiplatform.memories.delete"', '"aiplatform.memories.update"'):
         assert dropped not in rt_block
     assert '"telemetry.traces.write"' in rt_block
+    for predefined_role in ('"roles/cloudtrace.agent"', '"roles/logging.logWriter"', '"roles/monitoring.metricWriter"', '"roles/logging.viewer"'):
+        assert predefined_role in iam_tf
     apis_tf = (REPO_ROOT / "deploy/01-landing-zone/apis.tf").read_text(encoding="utf-8")
     for otlp_api in ('"telemetry.googleapis.com"', '"cloudtrace.googleapis.com"', '"monitoring.googleapis.com"'):
         assert otlp_api in apis_tf
@@ -354,5 +357,35 @@ def test_ge_license_preflight_classifies_states_and_keeps_zero_pii_iam(
     )
     assert proc.returncode == 0, f"Standalone container import failed: {proc.stderr}"
     assert "--project" in proc.stdout
+
+
+def test_audit_silent_403_scanner_catches_otlp_denial_and_ignores_intentional_probes() -> None:
+    """Confirms Zero-Silent-403 scanner catches background OTLP 403 while allowing marked negative probes."""
+    spec = importlib.util.spec_from_file_location("audit_silent_403", REPO_ROOT / "scripts/audit-silent-403.py")
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    entries = [
+        {
+            "timestamp": "2026-11-27T00:01:00Z",
+            "severity": "ERROR",
+            "textPayload": "Failed to export spans: 403 Forbidden PERMISSION_DENIED telemetry.traces.write",
+        },
+        {
+            "timestamp": "2026-11-27T00:02:00Z",
+            "severity": "WARNING",
+            "textPayload": "Intentional negative-probe HTTP 403 on userStores/default_user_store/userLicenses",
+        },
+        {
+            "timestamp": "2026-11-27T00:03:00Z",
+            "severity": "INFO",
+            "textPayload": "Healthy request processed HTTP 200",
+        },
+    ]
+    findings = mod.classify_log_entries(entries)
+    assert len(findings) == 1
+    assert "telemetry.traces.write" in findings[0]["message"]
+
 
 

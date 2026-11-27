@@ -791,6 +791,15 @@ resource "google_service_account_iam_member" "deployer_builder_act_as" {
   member             = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
+# Predefined Logging Viewer on disposable Sandbox so deployer can inspect build and runtime logs without chasing granular log perms.
+resource "google_project_iam_member" "deployer_sandbox_logging_viewer" {
+  count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = "roles/logging.viewer"
+  member  = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
+}
+
 resource "google_project_iam_member" "deployer_sandbox_cloudbuild_editor" {
   count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? 1 : 0
 
@@ -902,6 +911,32 @@ resource "google_project_iam_member" "adk_runtime_sandbox_sessions" {
 
   project = var.sandbox_project_id
   role    = google_project_iam_custom_role.adk_sandbox_runtime[0].id
+  member  = "serviceAccount:${google_service_account.adk_runtime[0].email}"
+}
+
+# Predefined observability roles on disposable Sandbox prevent SDK drift (e.g. OTLP telemetry.traces.write)
+# while adkSandboxRuntime enforces M2 session/memory boundaries without engine lifecycle rights.
+resource "google_project_iam_member" "adk_runtime_sandbox_trace_agent" {
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = "roles/cloudtrace.agent"
+  member  = "serviceAccount:${google_service_account.adk_runtime[0].email}"
+}
+
+resource "google_project_iam_member" "adk_runtime_sandbox_log_writer" {
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.adk_runtime[0].email}"
+}
+
+resource "google_project_iam_member" "adk_runtime_sandbox_metric_writer" {
+  count = var.enable_sandbox_project && var.enable_adk_sandbox_roles ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = "roles/monitoring.metricWriter"
   member  = "serviceAccount:${google_service_account.adk_runtime[0].email}"
 }
 
