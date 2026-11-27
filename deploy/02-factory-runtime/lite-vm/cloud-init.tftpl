@@ -93,8 +93,15 @@ runcmd:
     image_registry: "${artifact_registry_url}"
     default_gcp_identity_mode: "block"
     default_agent_role: "baseline"
+    telemetry:
+      enabled: true
+      cloud:
+        enabled: true
+        provider: "gcp"
+        gcp_project_id: "${hub_project_id}"
     server:
       hub:
+        gcp_project_id: "${hub_project_id}"
         gcp_iam_check_mode: "enforce"
         gcp_iam_deny_unknown_policy: "${gcp_iam_deny_unknown_policy}"
 %{ if hub_public_url != "" ~}

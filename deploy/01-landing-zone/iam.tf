@@ -379,6 +379,72 @@ resource "google_project_iam_member" "hub_logging" {
   member  = "serviceAccount:${google_service_account.scion_hub.email}"
 }
 
+# Native Scion Metrics Dashboard and Cloud Log Query read/write observability roles on hub_project_id.
+resource "google_project_iam_member" "hub_monitoring_viewer" {
+  project = var.hub_project_id
+  role    = "roles/monitoring.viewer"
+  member  = "serviceAccount:${google_service_account.scion_hub.email}"
+}
+
+resource "google_project_iam_member" "hub_logging_viewer" {
+  project = var.hub_project_id
+  role    = "roles/logging.viewer"
+  member  = "serviceAccount:${google_service_account.scion_hub.email}"
+}
+
+resource "google_project_iam_member" "hub_monitoring_metric_writer" {
+  project = var.hub_project_id
+  role    = "roles/monitoring.metricWriter"
+  member  = "serviceAccount:${google_service_account.scion_hub.email}"
+}
+
+resource "google_project_iam_member" "hub_cloudtrace_agent" {
+  project = var.hub_project_id
+  role    = "roles/cloudtrace.agent"
+  member  = "serviceAccount:${google_service_account.scion_hub.email}"
+}
+
+# Native Scion sciontool GCP telemetry export roles (keyless ADC) for assignable agent SAs on hub_project_id.
+locals {
+  scion_telemetry_roles = {
+    metric_writer = "roles/monitoring.metricWriter"
+    trace_agent   = "roles/cloudtrace.agent"
+    log_writer    = "roles/logging.logWriter"
+  }
+
+  scion_telemetry_agent_sas = merge(
+    {
+      coordinator = google_service_account.coordinator.email
+      worker      = google_service_account.worker.email
+    },
+    var.enable_sandbox_project ? {
+      deployer  = google_service_account.sandbox_deployer[0].email
+      evaluator = google_service_account.sandbox_evaluator[0].email
+    } : {},
+    var.enable_kaizen_gcp_obs ? {
+      kaizen = google_service_account.kaizen_viewer[0].email
+    } : {},
+  )
+
+  scion_telemetry_agent_bindings = merge([
+    for slot, sa_email in local.scion_telemetry_agent_sas : {
+      for rkey, role in local.scion_telemetry_roles :
+      "${slot}/${rkey}" => {
+        member = "serviceAccount:${sa_email}"
+        role   = role
+      }
+    }
+  ]...)
+}
+
+resource "google_project_iam_member" "agent_scion_telemetry_writers" {
+  for_each = local.scion_telemetry_agent_bindings
+
+  project = var.hub_project_id
+  role    = each.value.role
+  member  = each.value.member
+}
+
 # Grant token minting strictly on the assignable agent SAs (never on sandbox_janitor).
 resource "google_service_account_iam_member" "hub_mint_coordinator" {
   service_account_id = google_service_account.coordinator.name

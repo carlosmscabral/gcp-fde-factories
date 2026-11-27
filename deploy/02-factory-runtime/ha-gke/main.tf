@@ -22,6 +22,9 @@ locals {
     gcp_iam_deny_unknown        = "fail-open"
     default_identity_mode       = "block"
     default_agent_role          = "baseline"
+    telemetry_enabled           = true
+    telemetry_cloud_provider    = "gcp"
+    telemetry_gcp_project_id    = var.hub_project_id
     gke_dns_control_plane       = true
     hub_db_persistence          = "pvc-or-cloudsql-required"
     shared_dir_storage_class    = "standard-rwx"

@@ -642,6 +642,18 @@ do_apply() {
     scion hub experiments enable lifecycle.idle_suspend --hub "$HUB_URL"
   fi
 
+  # Enable native Scion GCP telemetry export and Metrics Dashboard backed by hub_project_id (keyless ADC).
+  if [[ -n "$LANDING_ZONE_JSON" ]]; then
+    local hub_p
+    hub_p="$(jq -r '.hub_project_id.value // empty' "$LANDING_ZONE_JSON")"
+    if [[ -n "$hub_p" ]]; then
+      scion hub settings set telemetry.enabled true --hub "$HUB_URL"
+      scion hub settings set telemetry.cloud.enabled true --hub "$HUB_URL"
+      scion hub settings set telemetry.cloud.provider gcp --hub "$HUB_URL"
+      scion hub settings set telemetry.cloud.gcp_project_id "$hub_p" --hub "$HUB_URL"
+    fi
+  fi
+
   # Set project-scope Vertex AI env vars (injectionMode=always) so container-side harness provisioners
   # (e.g. antigravity/provision.py) and ADC quotaProject routing receive inference_project_id on both
   # Lite VM and GKE cross-project topologies (HC-01 F24, HC-02 F8).

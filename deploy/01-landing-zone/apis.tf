@@ -22,6 +22,8 @@ locals {
       "iamcredentials.googleapis.com",
       "logging.googleapis.com",
       "monitoring.googleapis.com",
+      "cloudtrace.googleapis.com",
+      "telemetry.googleapis.com",
     ],
     var.enable_gke_api ? ["container.googleapis.com"] : [],
   )

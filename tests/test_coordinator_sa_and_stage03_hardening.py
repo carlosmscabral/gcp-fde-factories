@@ -128,6 +128,7 @@ def test_stage03_bootstrap_resolves_dot_scion_project_id_and_hardening_helpers()
     assert 'ensure_coordinator_started "$pack_prefix" "$default_harness" "$repo_cfg" "${coord_sa:-$worker_sa}"' in text
     assert "AGY_ADC_AUTH=true" in text
     assert 'scion hub experiments enable lifecycle.idle_suspend --hub "$HUB_URL"' in text
+    assert 'scion hub settings set telemetry.cloud.gcp_project_id "$hub_p" --hub "$HUB_URL"' in text
     assert "warn_github_token_injection_mode" in text
     assert "print_github_ci_variables" in text
     assert "RUNTIME_IMAGE_DIGEST" in text
@@ -150,3 +151,28 @@ def test_adk_verdict_gate_matches_both_root_and_monorepo_subagent_paths() -> Non
     assert live_pat.search("agents/ciudadano-documentos/app/agent.py")
     assert live_pat.search("agents/ciudadano-documentos/Dockerfile")
     assert not live_pat.search("README.md")
+
+
+def test_native_scion_telemetry_defaults_across_stage01_and_stage02() -> None:
+    """Confirms Stage 01 IAM/APIs and Stage 02 templates enable native Scion GCP telemetry and Metrics Dashboard by default."""
+    apis_tf = (REPO_ROOT / "deploy/01-landing-zone/apis.tf").read_text(encoding="utf-8")
+    iam_tf = (REPO_ROOT / "deploy/01-landing-zone/iam.tf").read_text(encoding="utf-8")
+    cloud_init = (REPO_ROOT / "deploy/02-factory-runtime/lite-vm/cloud-init.tftpl").read_text(encoding="utf-8")
+    ha_gke = (REPO_ROOT / "deploy/02-factory-runtime/ha-gke/main.tf").read_text(encoding="utf-8")
+
+    assert '"cloudtrace.googleapis.com"' in apis_tf
+    assert '"telemetry.googleapis.com"' in apis_tf
+    for res_name in (
+        "hub_monitoring_viewer",
+        "hub_logging_viewer",
+        "hub_monitoring_metric_writer",
+        "hub_cloudtrace_agent",
+        "agent_scion_telemetry_writers",
+    ):
+        assert f'"{res_name}"' in iam_tf, f"Missing telemetry IAM resource {res_name}"
+
+    assert 'provider: "gcp"' in cloud_init
+    assert 'gcp_project_id: "${hub_project_id}"' in cloud_init
+    assert 'telemetry_enabled           = true' in ha_gke
+    assert 'telemetry_cloud_provider    = "gcp"' in ha_gke
+    assert 'telemetry_gcp_project_id    = var.hub_project_id' in ha_gke

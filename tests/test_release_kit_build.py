@@ -198,6 +198,7 @@ def test_bootstrap_schedules_weekly_kaizen_by_default_and_enforces_claude_model_
     lz = tmp_path / "lz.json"
     lz.write_text(
         json.dumps({
+            "hub_project_id": {"value": "cust-hub-proj"},
             "inference_project_id": {"value": "cust-inf-proj"},
             "sandbox_project_id": {"value": "cust-sbx-proj"},
             "worker_sa_email": {"value": "worker@cust-inf-proj.iam.gserviceaccount.com"},
@@ -248,6 +249,10 @@ def test_bootstrap_schedules_weekly_kaizen_by_default_and_enforces_claude_model_
     assert "default_agent_role" not in calls  # read-only in Scion v0.4 server-config API (dbUnwrittenLayer1Paths)
     assert "default_max_model_calls 150" in calls
     assert "hub experiments enable lifecycle.idle_suspend --hub" in calls
+    assert "hub settings set telemetry.enabled true --hub" in calls
+    assert "hub settings set telemetry.cloud.enabled true --hub" in calls
+    assert "hub settings set telemetry.cloud.provider gcp --hub" in calls
+    assert "hub settings set telemetry.cloud.gcp_project_id cust-hub-proj --hub" in calls
     assert "default_harness_config gecx-antigravity-vertex" in calls
     assert "harness-config sync gecx-antigravity-vertex --global --hub" in calls
     assert "gecx-claude-vertex --global" not in calls
