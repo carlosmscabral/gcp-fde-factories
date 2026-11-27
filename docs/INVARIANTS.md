@@ -25,6 +25,7 @@ If a change breaks an invariant, fix the code or update the linked ADR before me
 | INV-15 | Public clean-room sanitization and secret denylist | [ADR-011](adr/ADR-011-public-clean-room-and-runtime-denylist.md) | `scripts/sanitize-public-check.py`, `scripts/lib/sanitizer.py` | `tests/test_sanitizer.py` |
 | INV-16 | Functional E2E qualification and verified teardown | [ADR-012](adr/ADR-012-functional-hillclimbing-e2e-qualification.md) | `docs/HILLCLIMBING_CHARTER.md` | Live E2E Hillclimbing Scorecard |
 | INV-17 | Generic pack, zero-clobber Knowledge Plane, and safe Coordinator bootstrap | [ADR-016](adr/ADR-016-structured-onboarding-knowledge-plane-and-generic-pack.md) | `scripts/lib/onboard_kp.py`, `packs/generic/`, `deploy/03-hub-bootstrap/bootstrap-hub-project.sh` | `tests/test_v060_onboarding_and_generic_pack.py` |
+| INV-18 | Zero-Silent-403 runtime audit and predefined observability IAM | [ADR-012](adr/ADR-012-functional-hillclimbing-e2e-qualification.md), [ADR-013](adr/ADR-013-cross-project-adc-quota-and-sandbox-runtime-sa.md) | `scripts/audit-silent-403.py`, `deploy/01-landing-zone/iam.tf` | `tests/test_costela_adversarial_fixes.py` |
 
 ## Detailed Invariant Specifications
 
@@ -115,3 +116,8 @@ Every qualification run must delete all ephemeral projects, containers, and test
 `packs/generic` (`sw-*`) must reuse the `pack.schema.json` contract, `release_kit.py` builder, and `scion-frontiers/agent-team` (SEP) roles on top of `core-gcp-fde-base` without duplicating the pack engine.
 `scripts/lib/onboard_emitter.py` and `scripts/lib/onboard_kp.py` must refuse symlink escapes before writing any file, preserve custom `.factory/Dockerfile.customer*` and existing `.factory/knowledge/*` or `.factory/waves/wave-1.yaml` files on re-emit unless `--force-knowledge` is passed, and fail closed in `factory_onboard.py kp-check` on broken links, duplicate task IDs, or orphan `REQ-NNN` references.
 `deploy/03-hub-bootstrap/bootstrap-hub-project.sh apply` must filter synced templates by `roster.disabled_roles`, skip Deployer and Evaluator SAs when `deploy_target` is `none`, omit `-w` on Coordinator start, verify idempotency fail-closed via `scion --format json list`, and start the lead Coordinator in PO-gated standby mode only for repositories carrying `.factory/coordinator-bootstrap-brief.md` (or `--start-coordinator`) unless `--no-start-coordinator` is passed.
+
+### INV-18: Zero-Silent-403 Runtime Audit and Predefined Observability IAM
+
+Every Hillclimbing qualification round must run `scripts/audit-silent-403.py` across Hub, Inference, and Sandbox Cloud Logging streams after live agent execution to catch background `PERMISSION_DENIED` errors hidden behind HTTP `200` responses.
+Stage 01 Terraform (`deploy/01-landing-zone/iam.tf`) must bind official Google Cloud predefined observability roles (`roles/cloudtrace.agent`, `roles/logging.logWriter`, `roles/monitoring.metricWriter`, and `roles/browser` on `adk_runtime`, plus `roles/logging.viewer` on `sandbox_deployer`) rather than hand-maintained telemetry custom-role subsets, while keeping strict Zero-PII and cross-project custom roles on data-plane and privilege boundaries.
