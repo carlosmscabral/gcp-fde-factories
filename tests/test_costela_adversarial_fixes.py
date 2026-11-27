@@ -167,13 +167,14 @@ def test_h3_m2_m3_m4_landing_zone_isolates_sandbox_builder_trims_runtime_and_pre
     assert 'output "sandbox_artifact_registry_url"' in out_tf
     assert 'output "sandbox_builder_sa_email"' in out_tf
 
-    # M2: adkSandboxRuntime drops delete and memory update permissions while retaining OTLP telemetry.traces.write
-    # and binding official predefined observability roles (roles/cloudtrace.agent, roles/logging.logWriter, roles/monitoring.metricWriter).
+    # M2/HC12-F4: adkSandboxRuntime drops memory delete/update while keeping sessions.delete for L3 smoke cleanup
+    # and binding official predefined observability roles (roles/cloudtrace.agent, roles/logging.logWriter, roles/monitoring.metricWriter, roles/browser).
     rt_start = iam_tf.index('resource "google_project_iam_custom_role" "adk_sandbox_runtime"')
     rt_end = iam_tf.index('resource "google_project_iam_member" "adk_runtime_sandbox_sessions"', rt_start)
     rt_block = iam_tf[rt_start:rt_end]
-    for dropped in ('"aiplatform.sessions.delete"', '"aiplatform.memories.delete"', '"aiplatform.memories.update"'):
+    for dropped in ('"aiplatform.memories.delete"', '"aiplatform.memories.update"'):
         assert dropped not in rt_block
+    assert '"aiplatform.sessions.delete"' in rt_block
     assert '"telemetry.traces.write"' in rt_block
     for predefined_role in ('"roles/cloudtrace.agent"', '"roles/logging.logWriter"', '"roles/monitoring.metricWriter"', '"roles/logging.viewer"', '"roles/browser"'):
         assert predefined_role in iam_tf

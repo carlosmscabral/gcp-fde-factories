@@ -929,6 +929,7 @@ resource "google_project_iam_custom_role" "adk_sandbox_runtime" {
     "aiplatform.sessionEvents.append",
     "aiplatform.sessionEvents.list",
     "aiplatform.sessions.create",
+    "aiplatform.sessions.delete",
     "aiplatform.sessions.get",
     "aiplatform.sessions.list",
     "aiplatform.sessions.run",
