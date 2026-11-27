@@ -77,7 +77,7 @@ def build_hub_project_overlay(
         "overlay_skills": preserved_overlays,
         "kaizen": {
             "enabled": bool(profile.get("kaizen_enabled", True)),
-            "schedule_cron": profile.get("kaizen_schedule_cron", "0 17 * * 5"),
+            "schedule_cron": profile.get("kaizen_schedule_cron", "0 0 * * *"),
             "time_zone": profile.get("kaizen_time_zone", "America/Sao_Paulo"),
             "coordinator_agent": coordinator_name,
             "enable_gcp_obs": bool((existing_hub.get("kaizen") or {}).get("enable_gcp_obs", False)),

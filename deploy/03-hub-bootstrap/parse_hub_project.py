@@ -55,7 +55,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "overlay_skills": [],
     "kaizen": {
         "enabled": True,
-        "schedule_cron": "0 17 * * 5",
+        "schedule_cron": "0 0 * * *",
         "time_zone": "America/Sao_Paulo",
         "coordinator_agent": "coordinator",
         "enable_gcp_obs": False,
@@ -153,7 +153,7 @@ def parse_hub_project(repo_dir: pathlib.Path, expected_pack: str = "") -> dict[s
     raw_kz = raw.get("kaizen") if isinstance(raw.get("kaizen"), dict) else {}
     kaizen = {
         "enabled": bool(raw_kz.get("enabled", True)),
-        "schedule_cron": str(raw_kz.get("schedule_cron") or "0 17 * * 5"),
+        "schedule_cron": str(raw_kz.get("schedule_cron") or "0 0 * * *"),
         "time_zone": str(raw_kz.get("time_zone") or "America/Sao_Paulo"),
         "coordinator_agent": str(raw_kz.get("coordinator_agent") or "coordinator"),
         "enable_gcp_obs": bool(raw_kz.get("enable_gcp_obs", False)),

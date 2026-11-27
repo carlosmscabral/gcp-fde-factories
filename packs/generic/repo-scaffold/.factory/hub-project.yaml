@@ -43,7 +43,7 @@ exclude_skills: []
 overlay_skills: []
 kaizen:
   enabled: true
-  schedule_cron: "0 17 * * 5"
+  schedule_cron: "0 0 * * *"
   time_zone: "America/Sao_Paulo"
   coordinator_agent: "sw-coordinator"
   enable_gcp_obs: false

@@ -237,7 +237,7 @@
       }
     },
     "kaizen_enabled": { "type": "boolean", "default": true },
-    "kaizen_schedule_cron": { "type": "string", "default": "0 17 * * 5" },
+    "kaizen_schedule_cron": { "type": "string", "default": "0 0 * * *" },
     "kaizen_time_zone": { "type": "string", "default": "America/Sao_Paulo" },
     "harnesses": {
       "type": "object",

@@ -191,6 +191,6 @@ questions:
     applies_to_packs: ["all"]
     applies_to_tracks: ["express", "complete"]
     required_for_generic_express: false
-    prompt: "Confirm the weekly 0-token Kaizen schedule (default: Fridays 17:00 America/Sao_Paulo, cron '0 17 * * 5')."
+    prompt: "Confirm the daily 0-token Kaizen schedule (default: daily 00:00 America/Sao_Paulo, cron '0 0 * * *')."
     why_we_ask: "Runs closed-loop telemetry analysis every week so the Coordinator surfaces process and toolchain improvements."
     challenge_prompt: "Disable Kaizen only if the team already runs an external continuous telemetry audit."

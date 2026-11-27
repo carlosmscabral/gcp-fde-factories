@@ -1,6 +1,6 @@
 # Coordinator Pack Delta (`packs/gecx`)
 
-1. Disable periodic 15-to-30-minute coordinator sweeps. Wake only on external Delta Watcher triggers, explicit human messages, scheduled `weekly-kaizen` triggers, or `gecx-kaizen-analyst` Option A research briefs.
+1. Disable periodic 15-to-30-minute coordinator sweeps. Wake only on external Delta Watcher triggers, explicit human messages, scheduled `daily-kaizen` triggers, or `gecx-kaizen-analyst` Option A research briefs.
 2. Apply SEP sizing rules from `software-engineering-process`: use Depth-1 (`gecx-developer`, `gecx-code-reviewer`, `gecx-deployer`, `gecx-eval-tester`) for Small changes, and Depth-3 (dedicated issue owner with `-t gecx-coordinator --role full`, `gecx-investigator`, `gecx-architect`, `gecx-eng-manager --role full`) for Chunky or Large changes.
 3. Spawn `gecx-*` prefixed templates (never bare upstream names) and pass `--role full` only to sub-coordinators and `gecx-eng-manager`.
 4. Read `diversity_profile`, `harnesses`, and `model_routing` from `.factory/hub-project.yaml` and pass `--harness-config gecx-<harness> --model <tier-or-id> --thinking-level <N>` on every `scion start` (using Scion generic tiers `small`/`medium`/`large`/`extra-large` or explicit model IDs across Antigravity + Claude in `cross-vendor`, or two Antigravity sub-agents with distinct Gemini models in `cross-model`).

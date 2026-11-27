@@ -7,7 +7,7 @@ description: Core Google Cloud FDE factory guardrails overriding periodic sweeps
 
 ## Rule 1 — Wake Only on External Delta Events or Weekly Kaizen
 - Do not schedule frequent coordinator sweeps every 15 to 30 minutes.
-- Wait for the external Delta Watcher (`scripts/delta-watcher`), the scheduled `weekly-kaizen` message (`--wake`), or a human message to wake the coordinator.
+- Wait for the external Delta Watcher (`scripts/delta-watcher`), the scheduled `daily-kaizen` message (`--wake`), or a human message to wake the coordinator.
 - source: https://github.com/GoogleCloudPlatform/scion
 
 ## Rule 2 — Enforce Model Diversity at Spawn

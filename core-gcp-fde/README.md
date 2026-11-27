@@ -40,7 +40,7 @@ flowchart TB
 
 ## 2. Closed-Loop Kaizen State Machine (`kaizen_collect.py` + `kaizen_verifier.py`)
 
-`bootstrap-hub-project.sh apply` schedules `weekly-kaizen` (`0 17 * * 5 America/Sao_Paulo`, Friday 17:00 BRT) automatically on every project unless `kaizen.enabled: false` is set. Every cycle collects 0-token telemetry, archives a dated snapshot under `.factory/kaizen/snapshots/`, persists `proposals.state.json`, and evaluates previously merged proposals tagged with `Kaizen-Ref: KZ-YYYY-MM-DD-NN`.
+`bootstrap-hub-project.sh apply` schedules `daily-kaizen` (`0 0 * * * America/Sao_Paulo`, daily 00:00 BRT) automatically on every project unless `kaizen.enabled: false` is set. Every cycle collects 0-token telemetry, archives a dated snapshot under `.factory/kaizen/snapshots/`, persists `proposals.state.json`, and evaluates previously merged proposals tagged with `Kaizen-Ref: KZ-YYYY-MM-DD-NN`.
 
 ```mermaid
 stateDiagram-v2

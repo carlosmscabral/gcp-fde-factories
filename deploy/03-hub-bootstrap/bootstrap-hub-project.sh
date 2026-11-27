@@ -76,7 +76,7 @@ parse_repo_cfg() {
     python3 "$SCRIPT_DIR/parse_hub_project.py" --repo "$TARGET_REPO" --expected-pack "$pack_name"
   else
     cat <<'JSON'
-{"pack":"","mode":"sandbox-direct","deploy_target":"","existing_hub":false,"diversity_profile":"cross-model","limits":{"default_max_duration":"2h","default_max_turns":60,"default_max_model_calls":150,"auto_suspend_idle":true},"exclude_skills":[],"overlay_skills":[],"kaizen":{"enabled":true,"schedule_cron":"0 17 * * 5","time_zone":"America/Sao_Paulo","coordinator_agent":"coordinator","enable_gcp_obs":false},"harnesses":{"default":"antigravity-vertex","claude_model_garden_enabled":false,"vertex_gemini_location":"global","vertex_claude_region":"global"},"model_routing":{},"monorepo":{"enabled":false,"subdir":"","agent_prefix":""},"roster":{"enabled_roles":[],"disabled_roles":[],"max_wip":3,"reviewer_replicas":1}}
+{"pack":"","mode":"sandbox-direct","deploy_target":"","existing_hub":false,"diversity_profile":"cross-model","limits":{"default_max_duration":"2h","default_max_turns":60,"default_max_model_calls":150,"auto_suspend_idle":true},"exclude_skills":[],"overlay_skills":[],"kaizen":{"enabled":true,"schedule_cron":"0 0 * * *","time_zone":"America/Sao_Paulo","coordinator_agent":"coordinator","enable_gcp_obs":false},"harnesses":{"default":"antigravity-vertex","claude_model_garden_enabled":false,"vertex_gemini_location":"global","vertex_claude_region":"global"},"model_routing":{},"monorepo":{"enabled":false,"subdir":"","agent_prefix":""},"roster":{"enabled_roles":[],"disabled_roles":[],"max_wip":3,"reviewer_replicas":1}}
 JSON
   fi
 }
@@ -323,27 +323,33 @@ ensure_kaizen_schedule() {
     echo "KAIZEN SCHEDULE: explicitly disabled via .factory/hub-project.yaml (kaizen.enabled=false)."
     return 0
   fi
-  local sched_json existing_sched kz_sa_hint="worker SA"
+  local sched_json existing_match stale_ids kz_sa_hint="worker SA"
   if [[ "$kz_gcp_obs" == "true" ]]; then
     kz_sa_hint="kaizen-viewer SA"
   fi
   sched_json="$(scion --format json schedule list --show recurring "${PROJ_FLAGS[@]}" --hub "$HUB_URL")"
-  existing_sched="$(jq -r '((if type == "array" then . elif (.schedules | type) == "object" then (.schedules.schedules // []) elif (.schedules | type) == "array" then .schedules else (.items // []) end)[] | select(.name == "weekly-kaizen") | .id) // empty' <<< "$sched_json" | head -n 1)"
-  if [[ -n "$existing_sched" ]]; then
-    echo "SKIP schedule: weekly-kaizen ($existing_sched) already registered."
+  # Reconcile daily-kaizen idempotently: skip if cron and timezone already match, else replace stale daily/weekly entries.
+  existing_match="$(jq -r --arg c "$kz_cron" --arg tz "$kz_tz" '((if type == "array" then . elif (.schedules | type) == "object" then (.schedules.schedules // []) elif (.schedules | type) == "array" then .schedules else (.items // []) end)[] | select(.name == "daily-kaizen" and ((.cronExpr // $c) == $c) and ((.timeZone // $tz) == $tz)) | .id) // empty' <<< "$sched_json" | head -n 1)"
+  if [[ -n "$existing_match" ]]; then
+    echo "SKIP schedule: daily-kaizen ($existing_match) already registered (${kz_cron} ${kz_tz})."
     return 0
   fi
+  stale_ids="$(jq -r '((if type == "array" then . elif (.schedules | type) == "object" then (.schedules.schedules // []) elif (.schedules | type) == "array" then .schedules else (.items // []) end)[] | select(.name == "daily-kaizen" or .name == "weekly-kaizen") | .id) // empty' <<< "$sched_json" || true)"
+  while IFS= read -r stale_id; do
+    [[ -n "$stale_id" ]] || continue
+    scion schedule delete "$stale_id" "${PROJ_FLAGS[@]}" --hub "$HUB_URL" >/dev/null 2>&1 || true
+  done <<< "$stale_ids"
   scion schedule create-recurring \
-    --name "weekly-kaizen" \
+    --name "daily-kaizen" \
     --cron "$kz_cron" \
     --time-zone "$kz_tz" \
     --type message \
     --agent "$kz_coord" \
     --wake \
-    --message "Run weekly closed-loop Kaizen cycle: spawn ${pack_prefix}-kaizen-analyst (--role baseline, ${kz_sa_hint}), collect 0-token telemetry, publish report and Artifact, then retire it." \
+    --message "Run daily closed-loop Kaizen cycle: spawn ${pack_prefix}-kaizen-analyst (--role baseline, ${kz_sa_hint}), collect 0-token telemetry, publish report and Artifact, then retire it." \
     "${PROJ_FLAGS[@]}" \
     --hub "$HUB_URL"
-  echo "SCHEDULED KAIZEN: weekly-kaizen (${kz_cron} ${kz_tz} -> ${kz_coord} --wake)"
+  echo "SCHEDULED KAIZEN: daily-kaizen (${kz_cron} ${kz_tz} -> ${kz_coord} --wake)"
 }
 
 ensure_coordinator_started() {

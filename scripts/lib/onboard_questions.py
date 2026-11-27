@@ -177,7 +177,7 @@ def build_draft_profile(
         },
         "modernization_gaps": list(scan_facts.get("modernization_gaps") or []),
         "kaizen_enabled": True,
-        "kaizen_schedule_cron": "0 17 * * 5",
+        "kaizen_schedule_cron": "0 0 * * *",
         "kaizen_time_zone": "America/Sao_Paulo",
     }
     if monorepo_info.get("detected"):

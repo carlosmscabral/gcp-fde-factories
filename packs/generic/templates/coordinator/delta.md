@@ -1,6 +1,6 @@
 # Coordinator Pack Delta (`packs/generic`)
 
-1. Disable periodic 15-to-30-minute sweeps. Wake only on explicit human messages, Delta Watcher triggers, scheduled `weekly-kaizen` triggers, or `sw-kaizen-analyst` Option A research briefs.
+1. Disable periodic 15-to-30-minute sweeps. Wake only on explicit human messages, Delta Watcher triggers, scheduled `daily-kaizen` triggers, or `sw-kaizen-analyst` Option A research briefs.
 2. Apply SEP sizing rules from `software-engineering-process`: use Depth-1 (`sw-developer`, `sw-code-reviewer`, `sw-security-auditor`, and optional `sw-generic-deployer`) for Small changes, and Depth-3 (dedicated issue owner with `-t sw-coordinator --role full`, `sw-investigator`, `sw-architect`, `sw-eng-manager --role full`) for Chunky or Large changes.
 3. Spawn `sw-*` prefixed templates only (never bare upstream names) and pass `--role full` only to sub-coordinators and `sw-eng-manager`. Name child agent instances `<agent_prefix>-<role>` when `monorepo.enabled` is true so sibling factories never collide.
 4. Read `roster`, `deploy_target`, `monorepo`, `diversity_profile`, `harnesses`, and `model_routing` from `.factory/hub-project.yaml`. Never spawn roles listed in `roster.disabled_roles`, and scale parallel `sw-code-reviewer` instances up to `roster.reviewer_replicas`.

@@ -58,7 +58,7 @@ model_routing:
 
 kaizen:
   enabled: true
-  schedule_cron: "0 17 * * 5"
+  schedule_cron: "0 0 * * *"
   time_zone: "America/Sao_Paulo"
   coordinator_agent: "coordinator"
   enable_gcp_obs: false

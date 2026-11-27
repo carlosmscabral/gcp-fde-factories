@@ -225,7 +225,7 @@ def test_bootstrap_schedules_weekly_kaizen_by_default_and_enforces_claude_model_
     assert placeholder_fail.returncode != 0
     assert "placeholder image" in placeholder_fail.stderr
 
-    # 1. Default apply with real harness image: schedules weekly-kaizen, syncs global harness-config, sets max_model_calls.
+    # 1. Default apply with real harness image: schedules daily-kaizen, syncs global harness-config, sets max_model_calls.
     log_file.write_text("", encoding="utf-8")
     res = subprocess.run(
         [
@@ -244,7 +244,7 @@ def test_bootstrap_schedules_weekly_kaizen_by_default_and_enforces_claude_model_
     assert res.returncode == 0, res.stderr
     calls = log_file.read_text(encoding="utf-8")
     assert "schedule list --show recurring --hub" in calls
-    assert "schedule create-recurring --name weekly-kaizen --cron 0 17 * * 5 --time-zone America/Sao_Paulo --type message --agent coordinator --wake" in calls
+    assert "schedule create-recurring --name daily-kaizen --cron 0 0 * * * --time-zone America/Sao_Paulo --type message --agent coordinator --wake" in calls
     assert "default_agent_role" not in calls  # read-only in Scion v0.4 server-config API (dbUnwrittenLayer1Paths)
     assert "default_max_model_calls 150" in calls
     assert "default_harness_config gecx-antigravity-vertex" in calls
