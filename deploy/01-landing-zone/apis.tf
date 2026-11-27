@@ -24,6 +24,7 @@ locals {
       "monitoring.googleapis.com",
       "cloudtrace.googleapis.com",
       "telemetry.googleapis.com",
+      "apphub.googleapis.com",
     ],
     var.enable_gke_api ? ["container.googleapis.com"] : [],
   )
@@ -43,6 +44,8 @@ locals {
       "serviceusage.googleapis.com",
       "iamcredentials.googleapis.com",
       "logging.googleapis.com",
+      "apphub.googleapis.com",
+      "agentregistry.googleapis.com",
     ],
     var.enable_gecx_sandbox_roles ? ["ces.googleapis.com", "texttospeech.googleapis.com"] : [],
     var.enable_adk_sandbox_roles ? [

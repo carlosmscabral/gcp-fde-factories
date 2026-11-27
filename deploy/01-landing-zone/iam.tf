@@ -1068,6 +1068,55 @@ resource "google_project_iam_member" "janitor_adk_custom_role" {
   member  = "serviceAccount:${google_service_account.sandbox_janitor[0].email}"
 }
 
+# Predefined Agent Registry and App Hub roles on disposable Sandbox for agent registration, readback, and cleanup.
+resource "google_project_iam_member" "deployer_sandbox_agentregistry_editor" {
+  count = var.enable_sandbox_project ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = "roles/agentregistry.editor"
+  member  = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
+}
+
+resource "google_project_iam_member" "deployer_sandbox_apphub_editor" {
+  count = var.enable_sandbox_project ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = "roles/apphub.editor"
+  member  = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
+}
+
+resource "google_project_iam_member" "evaluator_sandbox_agentregistry_viewer" {
+  count = var.enable_sandbox_project ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = "roles/agentregistry.viewer"
+  member  = "serviceAccount:${google_service_account.sandbox_evaluator[0].email}"
+}
+
+resource "google_project_iam_member" "evaluator_sandbox_apphub_viewer" {
+  count = var.enable_sandbox_project ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = "roles/apphub.viewer"
+  member  = "serviceAccount:${google_service_account.sandbox_evaluator[0].email}"
+}
+
+resource "google_project_iam_member" "janitor_sandbox_agentregistry_editor" {
+  count = var.enable_sandbox_project ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = "roles/agentregistry.editor"
+  member  = "serviceAccount:${google_service_account.sandbox_janitor[0].email}"
+}
+
+resource "google_project_iam_member" "janitor_sandbox_apphub_editor" {
+  count = var.enable_sandbox_project ? 1 : 0
+
+  project = var.sandbox_project_id
+  role    = "roles/apphub.editor"
+  member  = "serviceAccount:${google_service_account.sandbox_janitor[0].email}"
+}
+
 # --- Optional Tier-B Read-Only Kaizen Observability Service Account (v0.3.0) ---
 
 resource "google_service_account" "kaizen_viewer" {

@@ -162,14 +162,22 @@ def test_native_scion_telemetry_defaults_across_stage01_and_stage02() -> None:
 
     assert '"cloudtrace.googleapis.com"' in apis_tf
     assert '"telemetry.googleapis.com"' in apis_tf
+    assert '"apphub.googleapis.com"' in apis_tf
+    assert '"agentregistry.googleapis.com"' in apis_tf
     for res_name in (
         "hub_monitoring_viewer",
         "hub_logging_viewer",
         "hub_monitoring_metric_writer",
         "hub_cloudtrace_agent",
         "agent_scion_telemetry_writers",
+        "deployer_sandbox_agentregistry_editor",
+        "deployer_sandbox_apphub_editor",
+        "evaluator_sandbox_agentregistry_viewer",
+        "evaluator_sandbox_apphub_viewer",
+        "janitor_sandbox_agentregistry_editor",
+        "janitor_sandbox_apphub_editor",
     ):
-        assert f'"{res_name}"' in iam_tf, f"Missing telemetry IAM resource {res_name}"
+        assert f'"{res_name}"' in iam_tf, f"Missing telemetry/registry IAM resource {res_name}"
 
     assert 'provider: "gcp"' in cloud_init
     assert 'gcp_project_id: "${hub_project_id}"' in cloud_init
