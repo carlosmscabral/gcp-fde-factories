@@ -43,7 +43,15 @@ locals {
       "logging.googleapis.com",
     ],
     var.enable_gecx_sandbox_roles ? ["ces.googleapis.com", "texttospeech.googleapis.com"] : [],
-    var.enable_adk_sandbox_roles ? ["discoveryengine.googleapis.com", "run.googleapis.com", "cloudbuild.googleapis.com", "artifactregistry.googleapis.com"] : [],
+    var.enable_adk_sandbox_roles ? [
+      "discoveryengine.googleapis.com",
+      "run.googleapis.com",
+      "cloudbuild.googleapis.com",
+      "artifactregistry.googleapis.com",
+      "telemetry.googleapis.com",
+      "cloudtrace.googleapis.com",
+      "monitoring.googleapis.com",
+    ] : [],
     var.enable_generic_sandbox_roles ? ["run.googleapis.com", "cloudbuild.googleapis.com", "artifactregistry.googleapis.com"] : [],
   ) : []
 

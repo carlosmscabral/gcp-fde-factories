@@ -164,12 +164,16 @@ def test_h3_m2_m3_m4_landing_zone_isolates_sandbox_builder_trims_runtime_and_pre
     assert 'output "sandbox_artifact_registry_url"' in out_tf
     assert 'output "sandbox_builder_sa_email"' in out_tf
 
-    # M2: adkSandboxRuntime drops delete and memory update permissions.
+    # M2: adkSandboxRuntime drops delete and memory update permissions while retaining OTLP telemetry.traces.write.
     rt_start = iam_tf.index('resource "google_project_iam_custom_role" "adk_sandbox_runtime"')
     rt_end = iam_tf.index('resource "google_project_iam_member" "adk_runtime_sandbox_sessions"', rt_start)
     rt_block = iam_tf[rt_start:rt_end]
     for dropped in ('"aiplatform.sessions.delete"', '"aiplatform.memories.delete"', '"aiplatform.memories.update"'):
         assert dropped not in rt_block
+    assert '"telemetry.traces.write"' in rt_block
+    apis_tf = (REPO_ROOT / "deploy/01-landing-zone/apis.tf").read_text(encoding="utf-8")
+    for otlp_api in ('"telemetry.googleapis.com"', '"cloudtrace.googleapis.com"', '"monitoring.googleapis.com"'):
+        assert otlp_api in apis_tf
 
     # M3/M4: WIF normalizes lowercase and keeps count=[0] addresses for primary github_repository.
     assert "assertion.repository.lowerAscii()" in iam_tf

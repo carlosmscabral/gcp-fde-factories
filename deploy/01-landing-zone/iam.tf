@@ -891,6 +891,7 @@ resource "google_project_iam_custom_role" "adk_sandbox_runtime" {
     "cloudtrace.traces.patch",
     "logging.logEntries.create",
     "monitoring.timeSeries.create",
+    "telemetry.traces.write",
   ]
 
   depends_on = [google_project_service.enabled]
