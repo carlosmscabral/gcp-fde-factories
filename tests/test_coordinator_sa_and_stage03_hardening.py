@@ -75,16 +75,18 @@ def test_coordinator_sa_split_preserves_least_privilege_and_blocks_worker_escala
 
 
 def test_release_kit_grants_extended_limits_only_to_coordinator(tmp_path: pathlib.Path) -> None:
-    """Confirms Release Kit sets 8h/200/400 ceiling on coordinator templates while leaving leaf workers at Hub defaults."""
+    """Confirms Release Kit sets 0s wall-clock and 400/800 token caps on coordinator templates while leaf workers inherit Hub defaults."""
     kit_dir = tmp_path / "adk-kit"
     build_release_kit(REPO_ROOT, REPO_ROOT / "packs/adk", kit_dir)
 
     coord_yaml = yaml.safe_load((kit_dir / "templates/adk-coordinator/scion-agent.yaml").read_text(encoding="utf-8"))
     dev_yaml = yaml.safe_load((kit_dir / "templates/adk-developer/scion-agent.yaml").read_text(encoding="utf-8"))
 
-    assert coord_yaml["max_duration"] == "8h"
-    assert coord_yaml["max_turns"] == 200
-    assert coord_yaml["max_model_calls"] == 400
+    # "0s" satisfies Scion agent-v1.schema.json regex ^[0-9]+(s|m|h)$, blocks Hub 2h fallback, and disables wall-clock kill.
+    assert coord_yaml["max_duration"] == "0s"
+    assert re.fullmatch(r"[0-9]+(s|m|h)", coord_yaml["max_duration"])
+    assert coord_yaml["max_turns"] == 400
+    assert coord_yaml["max_model_calls"] == 800
     assert "SA slot: coordinator" in coord_yaml["description"]
 
     assert "max_duration" not in dev_yaml
@@ -125,6 +127,7 @@ def test_stage03_bootstrap_resolves_dot_scion_project_id_and_hardening_helpers()
     assert 'register_and_verify_sa "$coord_sa" "$inf_p" "factory-coordinator"' in text
     assert 'ensure_coordinator_started "$pack_prefix" "$default_harness" "$repo_cfg" "${coord_sa:-$worker_sa}"' in text
     assert "AGY_ADC_AUTH=true" in text
+    assert 'scion hub experiments enable lifecycle.idle_suspend --hub "$HUB_URL"' in text
     assert "warn_github_token_injection_mode" in text
     assert "print_github_ci_variables" in text
     assert "RUNTIME_IMAGE_DIGEST" in text

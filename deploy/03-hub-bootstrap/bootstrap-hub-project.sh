@@ -636,6 +636,11 @@ do_apply() {
   scion hub settings set default_max_turns "$max_turns" --hub "$HUB_URL"
   scion hub settings set default_max_model_calls "$max_calls" --hub "$HUB_URL"
   scion hub settings set server.hub.auto_suspend_idle "$auto_susp" --hub "$HUB_URL"
+  # Enable lifecycle.idle_suspend experiment whenever auto_suspend_idle is active so the Hub
+  # runs the idle auto-suspend sweep and auto-wakes suspended coordinators on inbound messages.
+  if [[ "$auto_susp" == "true" ]]; then
+    scion hub experiments enable lifecycle.idle_suspend --hub "$HUB_URL"
+  fi
 
   # Set project-scope Vertex AI env vars (injectionMode=always) so container-side harness provisioners
   # (e.g. antigravity/provision.py) and ADC quotaProject routing receive inference_project_id on both

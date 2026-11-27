@@ -247,6 +247,7 @@ def test_bootstrap_schedules_weekly_kaizen_by_default_and_enforces_claude_model_
     assert "schedule create-recurring --name daily-kaizen --cron 0 0 * * * --time-zone America/Sao_Paulo --type message --agent coordinator --wake" in calls
     assert "default_agent_role" not in calls  # read-only in Scion v0.4 server-config API (dbUnwrittenLayer1Paths)
     assert "default_max_model_calls 150" in calls
+    assert "hub experiments enable lifecycle.idle_suspend --hub" in calls
     assert "default_harness_config gecx-antigravity-vertex" in calls
     assert "harness-config sync gecx-antigravity-vertex --global --hub" in calls
     assert "gecx-claude-vertex --global" not in calls
