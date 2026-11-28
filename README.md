@@ -35,7 +35,7 @@ flowchart TB
     end
 
     subgraph DELIV["3-Stage Customer GCP Delivery (deploy/)"]
-        S1["Stage 01: Landing Zone<br/>VPC, AR, 7-8 SAs, Custom Roles, WIF"]
+        S1["Stage 01: Landing Zone<br/>VPC, AR, 4-10 SAs, Custom Roles, WIF"]
         S2["Stage 02: Factory Runtime<br/>lite-vm (Shielded) or ha-gke (Preview)"]
         S3["Stage 03: Hub Bootstrap<br/>stage-release-kit -> bootstrap-hub-project -> Standby Coordinator"]
     end
@@ -100,7 +100,7 @@ flowchart LR
 
 ---
 
-## 5. Quickstart (5 Commands)
+## 5. Quickstart (5 Steps)
 
 ```bash
 # 1. Create Python 3.12 virtualenv and install catalog tooling
@@ -140,10 +140,10 @@ uv pip install --python .venv/bin/python -e ".[dev]"
 | **3-Stage Deployment** | [`deploy/README.md`](deploy/README.md) | Stage 01 Terraform Landing Zone, Stage 02 `lite-vm` / `ha-gke` (Preview), Stage 03 image rebuild vs. mirror & Hub bootstrap |
 | **JSON Contracts** | [`schemas/README.md`](schemas/README.md) | Producer-to-consumer contract map across all 8 JSON Schemas (`Draft 2020-12`) |
 | **Drift Canaries** | [`canaries/README.md`](canaries/README.md) | Upstream CLI/API snapshot guards for `scion`, `cxas-scrapi`, and Discovery Engine `v1alpha` |
-| **Operations Manual** | [`docs/AGENT_AUTHORING_AND_OPERATIONS.md`](docs/AGENT_AUTHORING_AND_OPERATIONS.md) | Deep Scion `v0.4.0-preview.3` internals, filesystem mounts, Artifacts/Decisions, Depth-3 walkthrough & Day-2 triage |
-| **Landing Zone & Org Policies** | [`docs/CUSTOMER_LANDING_ZONE_REQUIREMENTS.md`](docs/CUSTOMER_LANDING_ZONE_REQUIREMENTS.md) | Multi-project topologies, APIs, 7–8 SAs, Custom Roles (GECX + ADK), Org Policy matrix & FinOps guardrails |
-| **Hands-On Walkthrough** | [`docs/HANDS_ON_WALKTHROUGH.md`](docs/HANDS_ON_WALKTHROUGH.md) | Step-by-step zero-to-teardown walkthrough paired with `./scripts/hands-on-walkthrough.sh` |
-| **Formal Kaizen & Brownfield Spec** | [`docs/specs/SPEC_KAIZEN_AND_BROWNFIELD_ONBOARDING.md`](docs/specs/SPEC_KAIZEN_AND_BROWNFIELD_ONBOARDING.md) | Formal ASD-STE100 specification and acceptance criteria for `v0.3.0` + `v0.4.0` |
-| **Architecture Decision Records** | [`docs/adr/README.md`](docs/adr/README.md) | Formal traceable ADRs (`ADR-001`–`ADR-012`) governing boundaries, IAM, Vertex AI, and runtimes |
-| **Architectural Invariants** | [`docs/INVARIANTS.md`](docs/INVARIANTS.md) | 16 enforceable invariants (`INV-01`–`INV-16`) mapped 1:1 to ADRs, code paths, and automated tests |
-| **Hillclimbing Charter** | [`docs/HILLCLIMBING_CHARTER.md`](docs/HILLCLIMBING_CHARTER.md) | Functional-first live GCP qualification program (Levels 0–5, VM+GECX and GKE+ADK tracks, teardown proof) |
+| **Operations Manual** | [`docs/AGENT_AUTHORING_AND_OPERATIONS.md`](docs/AGENT_AUTHORING_AND_OPERATIONS.md) | Comprehensive Scion `v0.4.0-preview.3+` & multi-pack (`gecx`, `adk`, `generic`) didactic guide: IAP Web UI, filesystem, Artifacts/Decisions, `/grill-me`, Knowledge Plane, Kaizen, HC-01–12 & Day-2 triage |
+| **Landing Zone & Org Policies** | [`docs/CUSTOMER_LANDING_ZONE_REQUIREMENTS.md`](docs/CUSTOMER_LANDING_ZONE_REQUIREMENTS.md) | 3/2/1-project & optional no-Sandbox topologies, APIs, Split-SA isolation (`vertexInferencePredict`, `adk_runtime`, `generic`), Org Policy matrix & FinOps guardrails |
+| **Hands-On Walkthrough** | [`docs/HANDS_ON_WALKTHROUGH.md`](docs/HANDS_ON_WALKTHROUGH.md) | Step-by-step zero-to-teardown walkthrough across `gecx`, `adk`, and `generic` paired with `./scripts/hands-on-walkthrough.sh` |
+| **Formal Kaizen & Brownfield Spec** | [`docs/specs/SPEC_KAIZEN_AND_BROWNFIELD_ONBOARDING.md`](docs/specs/SPEC_KAIZEN_AND_BROWNFIELD_ONBOARDING.md) | Formal ASD-STE100 baseline specification for `v0.3.0` + `v0.4.0` (extended by `ADR-014`–`ADR-016` for `v0.5.0`/`v0.6.0`) |
+| **Architecture Decision Records** | [`docs/adr/README.md`](docs/adr/README.md) | Formal traceable ADRs (`ADR-001`–`ADR-016`) governing boundaries, IAM, Vertex AI, native ADK, cognitive onboarding, and `packs/generic` |
+| **Architectural Invariants** | [`docs/INVARIANTS.md`](docs/INVARIANTS.md) | 18 enforceable invariants (`INV-01`–`INV-18`) traced to `ADR-001`–`ADR-016`, code paths, and automated tests |
+| **Hillclimbing Charter** | [`docs/HILLCLIMBING_CHARTER.md`](docs/HILLCLIMBING_CHARTER.md) | Functional-first live GCP qualification program (`HC-01`–`HC-12`, VM+GECX, GKE+ADK, Generic no-Sandbox, 5-repo shared Hub, `INV-18` Zero-Silent-403, `$0` teardown proof) |

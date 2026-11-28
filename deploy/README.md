@@ -13,8 +13,8 @@ flowchart LR
     subgraph S1["Stage 01: 01-landing-zone (Platform / SecOps)"]
         NET["Custom VPC + Cloud NAT<br/>or Shared VPC"]
         AR["Artifact Registry<br/>(factory-images)"]
-        IAM["7-8 Service Accounts<br/>+ Explicit Custom Roles<br/>+ Optional GitHub WIF"]
-        BUD["Inference Budget Alert<br/>+ Pub/Sub Kill-Switch"]
+        IAM["4-10 Service Accounts<br/>+ Explicit Custom Roles<br/>+ Optional GitHub WIF"]
+        BUD["Inference Budget Alert (70/90%)<br/>+ Pub/Sub Topic (No Auto-Consumer)"]
     end
 
     subgraph S2["Stage 02: 02-factory-runtime (Platform / FDE)"]

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Interactive didactic runner for gcp-fde-factories (packs/gecx and packs/adk).
+# Interactive didactic runner for gcp-fde-factories (packs/gecx, packs/adk, and packs/generic).
 # Walks an engineer step-by-step through every stage of the factory, explaining WHY
 # each command runs before executing it. Passes --configuration only when requested.
 set -euo pipefail
@@ -15,15 +15,15 @@ KIT_OUT=""
 
 usage() {
   cat <<'EOF'
-Usage: scripts/hands-on-walkthrough.sh [--pack gecx|adk] [--step 1|2|3|4|5|6|all] \
+Usage: scripts/hands-on-walkthrough.sh [--pack gecx|adk|generic] [--step 1|2|3|4|5|6|all] \
   [--gcloud-config <name>] [--hub-project <project-id>] [--hub-vm <vm-name>] [--zone <zone>]
 
 Steps (safe, read/build-focused local and GCP verification steps):
   1  Validate pack schemas, SHA-40 skills.lock, Layer 0+1+2 context budget, and clean-room sanitizer
-  2  Run the full offline unit test suite (anti-forgery Verdict, Kaizen, Brownfield, ADK/GE, IAM)
+  2  Run the full offline unit test suite (anti-forgery Verdict, Kaizen, Brownfield, ADK/GE, Generic, IAM)
   3  Build a self-contained offline Release Kit and inspect generated templates and skills
   4  Validate all 3 Terraform deployment stages (01-landing-zone, lite-vm, ha-gke)
-  5  Verify CLI and API contract canaries against pinned snapshots
+  5  Verify CLI and API contract canaries against pinned snapshots (GECX, ADK, Scion)
   6  Inspect live Hub VM health over IAP SSH (requires --hub-project and --hub-vm)
 EOF
   exit 2
@@ -75,17 +75,23 @@ step_3() {
     "Composes prefix-isolated templates (zero external URIs, zero hardcoded models) and Hub Skill Bank directories into $KIT_OUT."
   cd "$REPO_ROOT"
   ./build.sh --release-kit "packs/${PACK}" --out "$KIT_OUT"
-  echo "--- Generated templates (notice ${PACK}- prefix, no model key) ---"
+  local sample_tpl="${PACK}-deployer"
+  if [[ "$PACK" == "generic" ]]; then
+    sample_tpl="sw-generic-deployer"
+  fi
+  echo "--- Generated templates (notice isolated prefix, zero hardcoded model key) ---"
   ls -1 "$KIT_OUT/templates"
-  echo "--- Sample ${PACK}-deployer/scion-agent.yaml ---"
-  cat "$KIT_OUT/templates/${PACK}-deployer/scion-agent.yaml"
+  echo "--- Sample ${sample_tpl}/scion-agent.yaml ---"
+  cat "$KIT_OUT/templates/${sample_tpl}/scion-agent.yaml"
   echo "--- Generated manifest.json summary ---"
+  command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is required for Step 3." >&2; exit 1; }
   jq '{pack, pack_version, scion_tested, external_uris_remaining, templates: [.templates[].name], skills: [.skills[].name]}' "$KIT_OUT/manifest.json"
 }
 
 step_4() {
   pause_step "STEP 4: Validate 3-Stage Repeatable Terraform" \
     "Confirms Stage 01 (Landing Zone) and Stage 02 (lite-vm + ha-gke) HCL syntax and variable contracts are valid."
+  command -v terraform >/dev/null 2>&1 || { echo "ERROR: terraform is required for Step 4." >&2; exit 1; }
   for tfdir in deploy/01-landing-zone deploy/02-factory-runtime/lite-vm deploy/02-factory-runtime/ha-gke; do
     echo "--- terraform validate: $tfdir ---"
     terraform -chdir="$REPO_ROOT/$tfdir" init -backend=false -input=false -no-color >/dev/null
@@ -94,10 +100,21 @@ step_4() {
 }
 
 step_5() {
-  pause_step "STEP 5: Contract Canaries (GECX CLI + ADK GE Export)" \
+  pause_step "STEP 5: Contract Canaries (GECX CLI + ADK GE Export; Scion snapshot-only)" \
     "Verifies pinned CLI and API contract snapshots so upstream drift breaks the PR instead of breaking production."
-  "$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/canaries/gecx/check_cli_contract.py"
-  "$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/canaries/adk/check_ge_contract.py"
+  case "$PACK" in
+    gecx) "$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/canaries/gecx/check_cli_contract.py" ;;
+    adk)  "$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/canaries/adk/check_ge_contract.py" ;;
+    *)
+      "$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/canaries/gecx/check_cli_contract.py"
+      "$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/canaries/adk/check_ge_contract.py"
+      ;;
+  esac
+  if [[ -f "$REPO_ROOT/canaries/scion/check_cli_contract.py" ]]; then
+    "$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/canaries/scion/check_cli_contract.py"
+  else
+    echo "SKIP: canaries/scion/ contains a pinned JSON contract snapshot only (live checker tracked in Issue #1)."
+  fi
 }
 
 step_6() {
@@ -111,7 +128,7 @@ step_6() {
   if [[ -n "$GCLOUD_CONFIG" ]]; then
     GCLOUD_ARGS=(--configuration="$GCLOUD_CONFIG")
   fi
-  gcloud "${GCLOUD_ARGS[@]}" compute ssh "$HUB_VM" \
+  gcloud ${GCLOUD_ARGS[@]+"${GCLOUD_ARGS[@]}"} compute ssh "$HUB_VM" \
     --project="$HUB_PROJECT" --zone="$HUB_ZONE" --tunnel-through-iap \
     --command="curl -fsS http://127.0.0.1:8080/healthz | jq . && echo '=== Settings YAML ===' && sudo cat /home/scion/.scion/settings.yaml"
 }

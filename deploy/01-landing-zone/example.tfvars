@@ -20,3 +20,16 @@ subnet_cidr       = "10.42.0.0/20"
 factory_operator_members = [
   "group:gecx-factory-operators@example.com",
 ]
+
+# Pack Sandbox role toggles (IMPORTANT: enable_gecx_sandbox_roles defaults to true in variables.tf).
+# For packs/adk or packs/generic, explicitly set enable_gecx_sandbox_roles = false to avoid creating CES roles/APIs.
+enable_sandbox_project       = true
+enable_gecx_sandbox_roles    = true
+enable_adk_sandbox_roles     = false
+enable_generic_sandbox_roles = false
+
+# Optional extras (GitHub WIF requires enable_sandbox_project = true; set enable_budget_pubsub_topic = false under DRS).
+enable_github_wif          = false
+github_repository          = ""
+enable_kaizen_gcp_obs      = false
+enable_budget_pubsub_topic = true

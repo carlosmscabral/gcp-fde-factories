@@ -1,539 +1,404 @@
-# Guia Completo — Scion `v0.4.0-preview.3` + Operação das Fábricas (`packs/gecx v0.4.0` e `packs/adk v0.1.0`)
+# Guia Didático Completo — Plataforma `gcp-fde-factories` (`v0.6.0 contra-filé`) & Scion `v0.4.0-preview.3`
 
-**Audiência:** FDEs e Tech Leads que querem dominar **o Scion por dentro** (arquitetura, comandos, skills, comunicação entre agentes e imagens Docker customizadas) e **operar as fábricas `packs/gecx` (`v0.4.0`) e `packs/adk` (`v0.1.0`) com a hierarquia completa `scion-frontiers/agent-team` (SEP, 16 papéis)** para construir agentes complexos em produção no Google Cloud.
+**Versão:** `v0.6.0` (`contra-filé`) · **Scion Pinado:** `v0.4.0-preview.3` · **Upstream SEP:** `scion-frontiers/agent-team@08faf48` · **ADK Scaffold:** `google/agents-cli v1.15.0`
+**Audiência:** FDEs, Arquitetos Google Cloud e Tech Leads — mesmo quem **nunca usou o Scion** antes — que precisam entender o modelo mental, operar fábricas multi-pack (`packs/gecx`, `packs/adk`, `packs/generic`) e depurar agentes no Dia 2.
 
 > [!TIP]
-> Se você ainda não provisionou a infraestrutura GCP (Terraform, VM do Hub, Org Policies e Release Kit), comece pelo guia de infraestrutura em [HANDS_ON_WALKTHROUGH.md](HANDS_ON_WALKTHROUGH.md) e pelos requisitos de Landing Zone em [CUSTOMER_LANDING_ZONE_REQUIREMENTS.md](CUSTOMER_LANDING_ZONE_REQUIREMENTS.md). Este guia assume o Scion Hub no ar e cobre **todo o funcionamento do Scion e da fábrica no Dia 2, sempre baseado em exemplos concretos**.
+> **Onde começar conforme seu objetivo:**
+> - **Primeira leitura (modelo mental + vocabulário):** comece pela **Parte 0** abaixo (5 minutos).
+> - **Subir a infra do zero ao teardown (com pré-requisitos e comandos passo a passo):** siga [HANDS_ON_WALKTHROUGH.md](HANDS_ON_WALKTHROUGH.md) e [CUSTOMER_LANDING_ZONE_REQUIREMENTS.md](CUSTOMER_LANDING_ZONE_REQUIREMENTS.md).
+> - **Consultar contratos formais:** [INVARIANTS.md](INVARIANTS.md) (`INV-01`–`INV-17`) e [docs/adr/](adr/README.md) (`ADR-001`–`ADR-016`).
+
+### Mapa do Guia
+0. [Parte 0 — Modelo Mental em 1 Página, Convenção dos 3 Prefixos & Glossário](#parte-0--modelo-mental-em-1-página-convenção-dos-3-prefixos--glossário)
+1. [Parte 1 — Scion `v0.4.0-preview.3` por Dentro: Arquitetura, Web UI via IAP e Roles](#parte-1--scion-v040-preview3-por-dentro-arquitetura-web-ui-via-iap-e-roles)
+2. [Parte 2 — Skills, Comunicação Multi-Agente, Filesystem e Primitivas Nativas (Artifacts & Decisions)](#parte-2--skills-comunicação-multi-agente-filesystem-e-primitivas-nativas-artifacts--decisions)
+3. [Parte 3 — Imagens Docker, Layer 3 Custom (`Dockerfile.customer`) e Roteamento Vertex AI](#parte-3--imagens-docker-layer-3-custom-dockerfilecustomer-e-roteamento-vertex-ai)
+4. [Parte 4 — Arquitetura 4-Camadas, Catálogo Multi-Pack (`gecx`, `adk`, `generic`) e Multi-Fábrica em 1 Hub](#parte-4--arquitetura-4-camadas-catálogo-multi-pack-gecx-adk-generic-e-multi-fábrica-em-1-hub)
+5. [Parte 5 — Onboarding Brownfield Dia 0: `/grill-me` (E1), Knowledge Plane (E2) e Coordinator em Standby](#parte-5--onboarding-brownfield-dia-0-grill-me-e1-knowledge-plane-e2-e-coordinator-em-standby)
+6. [Parte 6 — 3 Walkthroughs Concretos de Ponta a Ponta (`gecx`, `adk` e `generic`)](#parte-6--3-walkthroughs-concretos-de-ponta-a-ponta-gecx-adk-e-generic)
+7. [Parte 7 — Topologias GCP (3 / 2 / 1 Projeto + Sem Sandbox), Split-SA e Operação Dia 2](#parte-7--topologias-gcp-3--2--1-projeto--sem-sandbox-split-sa-e-operação-dia-2)
+8. [Parte 8 — Motor Kaizen Closed-Loop, Overlay, Ledger Hillclimbing (`HC-01`–`HC-09`), Roadmap e Referências](#parte-8--motor-kaizen-closed-loop-overlay-ledger-hillclimbing-hc-01hc-09-roadmap-e-referências)
 
 ---
 
-## Parte 1 — Tutorial Completo do Scion `v0.4.0-preview.3` (Arquitetura, Conceitos e Modos)
+## Parte 0 — Modelo Mental em 1 Página, Convenção dos 3 Prefixos & Glossário
 
-O **Scion** é uma plataforma open-source de orquestração de times de agentes de IA que separa rigorosamente o **plano de controle (Hub)** da **camada de execução (Runtime Broker + Containers)**. O mesmo CLI (`scion`) e os mesmos templates rodam no seu laptop, em uma VM única ou em cluster corporativo de alta disponibilidade.
+### 0.1 O Que É uma Fábrica Autônoma em 60 Segundos
 
-![Arquitetura Interna do Scion v0.4 — Onde Ficam as Skills e Como Agentes Conversam](assets/scion_architecture_and_comms.png)
+Uma fábrica em `gcp-fde-factories` junta **quatro peças independentes**:
+
+1. **Catálogo Local (`packs/gecx`, `packs/adk` ou `packs/generic`):** empacota papéis especializados de engenharia (desenvolvedor, arquiteto, revisor cego, auditor de segurança, deployer) e skills em um **Release Kit 100% offline** (`./build.sh --release-kit`).
+2. **Infraestrutura GCP do Cliente (Stages 01 e 02):** Terraform cria VPC privada, Artifact Registry, Service Accounts segregadas (sem chaves JSON) e sobe o servidor **Scion Hub** (plano de controle) em VM sem IP público.
+3. **Overlay do Repositório Cliente (`.factory/`):** o onboarding (`/grill-me`) captura requisitos, comandos de build/test e regras do repositório sem alterar código existente.
+4. **Ciclo de Entrega Supervisionado (Stage 03 → PR):** o Stage 03 reconcilia o Hub e inicia um agente líder (`<prefix>-coordinator`) em **standby**. Após aceite do PO, o time investiga, projeta (design aprovado por humano), implementa, faz revisão cega em modelo distinto, valida no Sandbox (ou CI-only) e para em um **Pull Request com aprovação humana obrigatória** (nunca auto-merge).
+
+### 0.2 Convenção dos 3 Prefixos (Leia Antes de Copiar Comandos!)
+
+Para evitar confusão entre nomes no GCP, no Scion Hub e nos templates, guarde esta tabela:
+
+| Onde Aparece | Convenção Real no Código | Exemplo (`packs/generic`) | Fonte no Código |
+| :--- | :--- | :--- | :--- |
+| **E-mail da SA no GCP (Terraform)** | `<name_prefix>-<papel>@<proj>.iam.gserviceaccount.com` | `gecx-fac-worker@...` *(default `name_prefix = "gecx-factory"`)* | `deploy/01-landing-zone/variables.tf` |
+| **Label da SA no Scion Hub (`--service-account`)** | **`factory-worker`** (fixo para todos os packs!) · `<pack_prefix>-deployer` · `<pack_prefix>-evaluator` | `factory-worker` · `sw-deployer` | `deploy/03-hub-bootstrap/bootstrap-hub-project.sh:480-490` |
+| **Template & Coordinator (`-t`, `@...`)** | Template: `<pack_prefix>-<papel>` · Agente raiz `v0.6.0`: **`<prefix>-coordinator`** | Template `sw-coordinator` · Agente `@sw-coordinator` *(confira com `scion list`)* | `scripts/lib/onboard_hub_config.py:59-65` |
+
+### 0.3 Glossário Rápido (Termos Usados Neste Guia)
+
+| Termo | Significado Direto |
+| :--- | :--- |
+| **SEP** (*Software Engineering Process*) | Metodologia multi-agente upstream (`scion-frontiers/agent-team`): **§2** design vai direto ao humano; **§4** passada única pré-PR de `security-auditor`; **§5** revisão de código cega pelo `code-reviewer`. |
+| **Depth-1 / Depth-2 / Depth-3 & Issue Owner** | Escala SEP de delegação: tarefas pequenas (`Depth-1`), médias (`Depth-2`) ou grandes (`Depth-3`, onde o Coordinator cria um *Dedicated Issue Owner* para coordenar `investigator`, `architect` e `eng-manager`). |
+| **Mode Spine** | Os 3 modos oficiais do Scion v0.4 (`Workstation`, `Single-node Hosted`, `HA Hosted`) — todo comando passa por um Hub. |
+| **AK1 Kernel & Provenance Claims** | Motor de autorização do Scion Hub que cruza permissões positivas com restrições monotônicas e grava no JWT quem criou o agente (`creator_user_id`), impedindo escalação de privilégio. |
+| **Modo `assign` (GCP SA)** | Modo do Scion onde o Hub intercepta o endpoint de metadados do container e emite tokens curtos da Service Account atribuída (zero chaves JSON no disco). |
+| **L0 / L1 / L2 / L3** | As 4 camadas do catálogo: **L0** upstream vendored (`vendor/`), **L1** core compartilhado (`core-gcp-fde/`), **L2** packs de domínio (`packs/*`), **L3** overlay do repo cliente (`.factory/`). |
+| **Level 1 / Level 2** | **Level 1:** testes determinísticos 100% offline (ambiente limpo de credenciais). **Level 2:** validação live contra recursos efêmeros `[CI]` no Sandbox GCP. |
+| **Tier A / Tier B (Kaizen)** | **Tier A:** telemetria 0-token local (Hub, Git, verdicts, workarounds). **Tier B:** leitura opcional de Cloud Monitoring/Logging via SA `<name_prefix>-kaizen@`. |
+| **`[CI]`, Verdict & Janitor** | Recursos efêmeros de teste levam prefixo `[CI]` (ou label `factory_ci=true`). O **Verdict** (`.factory/verdicts/pr-N.json`) amarra a prova ao `commit_sha` do PR. O **Janitor** remove recursos `[CI]` expirados. |
+| **`sandbox-direct` vs. `ci-only`** | Valores de `mode` em `.factory/hub-project.yaml`: `sandbox-direct` registra SAs de Sandbox no Hub; `ci-only` omite SAs de Sandbox (toda verificação ocorre no CI). |
+| **Durability Push** | Regra SEP de enviar commits ao branch remoto continuamente — commits que ficam só dentro do container somem quando o container é removido. |
+| **Prove-It** | Prática SEP de escrever testes que falham sem a correção e provam o comportamento real em vez de mocks vazios. |
+| **CriticMarkup** | Sintaxe leve usada pelo editor gráfico de Track Changes do Scion Hub (`{~~antigo~>novo~~}`, `{>>comentário<<}`). |
+| **WIF & DRS** | **WIF:** *Workload Identity Federation* (OIDC keyless para GitHub Actions). **DRS:** *Domain Restricted Sharing* (`constraints/iam.allowedPolicyMemberDomains`). |
+
+---
+
+## Parte 1 — Scion `v0.4.0-preview.3` por Dentro: Arquitetura, Web UI via IAP e Roles
+
+O **Scion** é uma plataforma open-source de orquestração de times de agentes de IA que separa rigorosamente o **plano de controle (Hub)** da **camada de execução (Runtime Broker + Containers)**. O mesmo CLI (`scion`) e os mesmos templates rodam no seu laptop, em uma VM única ou em GKE.
+
+![Arquitetura Interna do Scion v0.4 — Control Plane vs. Execução](assets/scion_architecture_and_comms.png)
 
 ### 1.1 Os 3 Modos de Execução (*Mode Spine*)
 
-Na v0.4, **todo comando `scion` passa por um Hub** (o antigo modo solo sem Hub foi removido). O que muda entre modos é quanta infraestrutura existe atrás do Hub (`choosing-a-mode.md`):
+Na `v0.4`, **todo comando `scion` passa por um Hub** (`choosing-a-mode.md`):
 
-| Modo | Control Plane + Banco | Multiusuário | Quando Escolher |
+| Modo | Control Plane + Banco | Multiusuário | Como Nossa Plataforma Implanta |
 | :--- | :--- | :--- | :--- |
-| **Workstation** | *Combo server* local (`Hub + Broker + Web`) em `127.0.0.1`, SQLite local | Não (só você) | *"Quero testar agentes na minha máquina agora."* Um comando: `scion server start`. |
-| **Single-node Hosted** | 1 Hub em rede (VM única ou 1 instância Cloud Run) + SQLite em disco | Sim (OAuth / IAP) | **Nosso `deploy/02-factory-runtime/lite-vm`:** Hub compartilhado simples e barato para 1 cliente ou piloto. |
-| **HA Hosted** | Múltiplas réplicas do Hub atrás de Load Balancer + Cloud SQL Postgres + GCS | Sim (OAuth / Groups) | **Nosso `deploy/02-factory-runtime/ha-gke`:** operação contínua sem downtime para times grandes. |
+| **Workstation** | *Combo server* local (`Hub + Broker + Web`) em `127.0.0.1`, SQLite local | Não (só você) | Experimentação local com `scion server start`. |
+| **Single-node Hosted** | 1 Hub em rede (VM única) + SQLite em disco | Sim (OAuth / IAP) | **`deploy/02-factory-runtime/lite-vm`:** Shielded VM sem IP público, capaz de hospedar **várias fábricas em paralelo** (validado com 5 repos simultâneos no `HC-09`). |
+| **HA Hosted** | Múltiplas réplicas atrás de LB + Cloud SQL Postgres + Filestore NFS | Sim (OAuth / Groups) | **`deploy/02-factory-runtime/ha-gke`** é uma **ponte de contrato validada** (0 blocos `resource` TF): ela valida outputs do Stage 01 e emite parâmetros para o módulo Terraform/Helm **upstream** do Scion (a validação atual da ponte usa SQLite em PVC `ReadWriteOnce`; o HA multi-réplica com Cloud SQL vem do módulo upstream). |
 
 ### 1.2 As 4 Peças da Arquitetura Interna
 
-1. **`scion` CLI & Web Dashboard:** sua interface de comando. Em modo hosted, o CLI fala HTTPS/WebSocket com o Hub (ou por túnel IAP em `http://127.0.0.1:8080`).
-2. **Scion Hub (Control Plane):** detém identidade, autenticação, projetos, **Skill Bank**, **Message Plane**, **notificações SSE** e o motor de autorização **AK1 Kernel** (`Effective Permissions = RoleBindings positivos ∩ AccessConstraints monotônicos`). Emite JWTs assinados com *provenance claims* (`creator_user_id`, `template_id`, `project_id`, `broker_id`) e faz troca de tokens de Service Account GCP sem nenhuma chave JSON estática.
-3. **Runtime Broker:** serviço conectado ao Hub via canal de controle. Quando o Hub despacha um `scion start`, o Broker provisiona o workspace (worktree ou clone Git), hidrata o template e baixa as skills (com cache por SHA-256) e sobe o container no runtime configurado (Docker, Podman, Apple Container ou Kubernetes).
-4. **Container do Agente (non-root `UID 1000`):** executa o *harness* (Claude Code, Gemini CLI, Antigravity, OpenCode ou Codex) sempre dentro de uma sessão **`tmux` obrigatória** supervisionada pelo binário **`sciontool`**.
+1. **`scion` CLI & Web Dashboard:** sua interface de comando. Em modo hosted, o CLI fala HTTPS/WebSocket com o Hub (via túnel IAP SSH em `http://127.0.0.1:8080` ou via Cloud Run IAP Proxy).
+2. **Scion Hub (Control Plane):** detém identidade, autenticação, projetos, **Skill Bank**, **Message Plane**, **notificações SSE**, **Schedules (`weekly-kaizen`)**, **Native Artifacts & Decisions** e o motor de autorização **AK1 Kernel**. Emite JWTs de 10 h com *provenance claims* e troca tokens curtos de Service Account GCP via `serviceAccountTokenCreator` sem nenhuma chave JSON estática.
+3. **Runtime Broker:** conectado ao Hub, provisiona o workspace (worktree ou clone Git), baixa skills validando SHA-256, injeta variáveis de ambiente (como `GOOGLE_CLOUD_QUOTA_PROJECT`, `ADR-013`) e sobe o container (Docker, Podman ou Kubernetes).
+4. **Container do Agente (non-root `UID 1000`):** executa o *harness* (`antigravity`, `claude`, `gemini`, `opencode` ou `codex`) dentro de uma sessão **`tmux`** supervisionada pelo binário **`sciontool`**.
 
 > [!NOTE]
-> **Agentes Containerizados vs. Managed Agents (`--profile managed-agents`):** o Scion também suporta *Managed Agents* que rodam direto via API de nuvem sem container nem repositório Git (ótimos para pesquisa pura). Em `packs/gecx`, usamos **sempre agentes containerizados no Runtime Broker** porque precisamos de Git worktrees/clones isolados, `cxas 1.11.0`, `/opt/gecx-foundry` e `suspend`/`resume`.
+> **Containerizados vs. Managed Agents (`--profile managed-agents`):** o Scion também suporta *Managed Agents* sem container (bons para pesquisa pura). Em `gcp-fde-factories`, usamos **sempre agentes containerizados no Runtime Broker** porque precisamos de Git isolado, toolchains pinados (`cxas`, `uv`, `adk`, `go`, `cargo`, `mvn`, `pnpm`) e `suspend`/`resume`.
 
-### 1.3 Modelo de Estado do Agente (`Phase` × `Activity` × `Detail`)
+### 1.3 Modelo de Estado (`Phase` × `Activity` × `Detail`) e `sciontool status`
 
-O Scion separa infraestrutura de cognição em três dimensões (`concepts.md`):
-
-- **`Phase` (ciclo do container):** `created` → `provisioning` → `cloning` → `starting` → `running` → `stopping` → `stopped`, além de `suspended` (pausado com sessão preservada), `error` (crash com exit code não-zero ou OOM) e `halted` (interrompido pela plataforma).
-- **`Activity` (o que a IA faz dentro de `running`):** `initializing`, `working`, `thinking`, `executing`, `waiting_for_input`, `blocked`, `idle`, `completed`, `limits_exceeded`, `stalled`, `offline`, `harness_error`.
-- **`Detail`:** resumo livre do passo atual (tool em execução ou pergunta ao usuário).
-
-**Como o agente avisa o Hub ao terminar um turno (`sciontool status`):**
-Todo agente recebe automaticamente um preâmbulo obrigatório exigindo encerrar cada turno com um destes quatro sinais:
-
-- `sciontool status blocked "<motivo>"` — esperando algo específico (filho terminar, resposta de pergunta ou **job em background** como build/testes). **Regra crítica:** nunca sinalize `idle` enquanto um build/teste background estiver rodando, pois o auto-suspend encerraria o container e mataria o job.
-- `sciontool status idle` — nada pendente até chegar nova mensagem (pode ser auto-suspenso e acorda sozinho com nova mensagem quando `lifecycle.idle_suspend` está ligado).
-- `sciontool status task_completed "<resumo>"` — entregou o artefato pedido.
-- `sciontool status ask_user "<pergunta>"` — dispara alerta no sino do Web Dashboard e aparece em `scion list --activity waiting_for_input`.
+O Scion separa infraestrutura de cognição (`concepts.md`):
+- **`Phase` (container):** `created` → `provisioning` → `cloning` → `starting` → `running` → `stopping` → `stopped`, além de `suspended`, `error` (exit não-zero ou OOM) e `halted`.
+- **`Activity` (dentro de `running`):** `initializing`, `working`, `thinking`, `executing`, `waiting_for_input`, `blocked`, `idle`, `completed`, `limits_exceeded`, `stalled`, `offline`, `harness_error`.
+- **Encerramento de turno (`sciontool status`):**
+  - `sciontool status blocked "<motivo>"` — aguardando filho, resposta ou **job em background** (build/testes). **Nunca sinalize `idle` enquanto um job background roda**, senão o auto-suspend encerra o container.
+  - `sciontool status idle` — nada pendente (elegível a auto-suspend quando `lifecycle.idle_suspend` está ativo).
+  - `sciontool status task_completed "<resumo>"` — entregou o artefato pedido.
+  - `sciontool status ask_user "<pergunta>"` — alerta no Web Dashboard e aparece em `scion list --activity waiting_for_input`.
 
 ### 1.4 Workspaces & Modos de Compartilhamento (`workspaces-and-sharing.md`)
 
-Todo container monta seu diretório de trabalho em `/workspace`. O projeto escolhe um de quatro modos:
-
 | Modo | Como Isola Agentes | Onde é Padrão | Detalhe Importante |
 | :--- | :--- | :--- | :--- |
-| **`Worktree-per-agent`** | Linked git worktree em `.scion/agents/<nome>/workspace` no branch `<nome>` | Hub Workstation local | Exige **Git >= 2.48**. Copia apenas commits do `HEAD` (mudanças não commitadas não entram). **Nunca dê ao agente o nome do branch em checkout** (ex.: `main`). |
-| **`Clone-per-agent`** | Cada container clona o repo HTTPS e cria branch `scion/<nome>` | **Hub Remoto / Hosted** | Usa secret `GITHUB_TOKEN` (`Contents: Read/Write`) do projeto no Hub. Não depende de SSH local. |
+| **`Worktree-per-agent`** | Linked git worktree em `.scion/agents/<nome>/workspace` no branch `<nome>` | Hub Workstation local | Exige **Git >= 2.48**. Copia apenas commits do `HEAD`. Nunca dê ao agente o nome do branch em checkout (`main`). |
+| **`Clone-per-agent`** | Clone HTTPS próprio no branch `scion/<nome>` | **Hub Remoto / Hosted** | Usa secret `GITHUB_TOKEN` (`Contents: Read/Write`) do projeto no Hub. |
 | **`Shared-plain`** | Todos montam a mesma pasta sem isolamento | Projetos sem Git | Bom para pastas de documentos compartilhados. |
 | **`Empty-per-agent`** | Diretório vazio privado por agente | Projetos Hub-managed sem Git | Sem repositório externo. |
 
 > [!CAUTION]
-> **Diretório `.scion/` é somente leitura dentro do agente:** quando `.scion/` está na raiz do workspace, o Scion monta essa pasta em modo read-only e oculta `.scion/agents/`. Por isso, templates editáveis por agentes devem ficar em pastas normais do repo (como `packs/gecx/templates/`) e ser sincronizados por caminho (`scion templates sync ./minha-pasta`).
+> **Diretório `.scion/` é somente leitura dentro do agente:** o Broker monta `.scion/` em `RO` e mascara `.scion/agents/` com `tmpfs` vazio. Por isso, nossos arquivos de configuração editáveis vivem em `.factory/` e `packs/*/templates/`.
 
-### 1.5 Mini-Tutorial Prático do Scion CLI + Tmux + Web Dashboard (5 Minutos)
-
-Se você nunca usou o `scion` na vida, este roteiro reproduz a experiência completa do tutorial oficial (`getting-started/tutorial.md` e `hosted/user/hosted-user.md`):
+### 1.5 Mini-Tutorial Prático do Scion CLI + Tmux + Web Dashboard via IAP
 
 ```bash
-# 1. Conectar seu CLI a um Hub (ou subir local com 'scion server start')
-scion hub add gecx-hub http://127.0.0.1:8080
-scion hub auth login --hub gecx-hub
-scion use --hub gecx-hub
+# 1. Conectar o CLI ao Hub (apos abrir tunel IAP em 127.0.0.1:8080 — veja HANDS_ON_WALKTHROUGH.md Etapa E2)
+scion hub add fde-hub http://127.0.0.1:8080
+scion hub auth login --hub fde-hub
+scion use --hub fde-hub
 
-# 2. Inicializar e linkar um repositorio Git ao Hub (ou criar direto por URL Git)
-cd ~/src/meu-agente-gecx
+# 2. Inicializar e linkar um repositorio Git ao Hub (ou criar 100% remoto por URL Git)
+cd ~/src/meu-repo-cliente
 scion init
 scion hub link
-# Alternativa 100% remota (sem clone local):
-# scion hub project create https://github.com/org/meu-agente-gecx.git --slug meu-agente-gecx
-# scion hub secret set --project=meu-agente-gecx GITHUB_TOKEN ghp_xxxx
+# Alternativa remota:
+# scion hub project create https://github.com/org/meu-repo-cliente.git --slug meu-repo
+# scion hub secret set --project=meu-repo GITHUB_TOKEN ghp_xxxx
+scion use meu-repo
 
-# 3. Trabalhar de qualquer diretorio sem repetir --project
-scion use meu-agente-gecx
-
-# 4. Disparar um agente simples e acompanhar sem bloquear o terminal
-scion start teste-1 "Liste a estrutura de cxas_app/ e crie um resumo em docs/mapa.md"
+# 3. Disparar um agente simples e acompanhar sem bloquear o terminal
+scion start teste-1 "Liste os servicos de entrada e crie um resumo em docs/mapa.md"
 scion list
 scion look teste-1 -n 40 --plain
 scion logs teste-1
 
-# 5. Entrar no terminal ao vivo do agente (tmux) e sair sem matar o processo
+# 4. Entrar no terminal ao vivo do agente (tmux) e sair sem matar o processo
 scion attach teste-1
 # Dentro do tmux:
 #   Ctrl-b d   -> desconecta mantendo o agente rodando (NUNCA use Ctrl-c para sair!)
 #   Ctrl-b [   -> modo scroll com setas (aperte 'q' para voltar)
-#   Ctrl-b m   -> liga/desliga scroll do mouse (no Web Terminal, segure Shift para copiar texto)
 
-# 6. Limpar preservando o branch Git (por padrao 'scion delete' apaga o branch local!)
+# 5. Limpar preservando o branch Git local (por padrao 'scion delete' apaga o branch local!)
 scion delete teste-1 --preserve-branch
 ```
 
 > [!TIP]
-> **Usando Scion dentro do Google Cloud Shell ou de outro `tmux`?** O prefixo padrão `Ctrl-b` será capturado pelo seu `tmux` externo (`local/tmux.md`). Edite `.scion/templates/default/home/.tmux.conf` adicionando `set -g prefix C-a` / `unbind C-b` / `bind C-a send-prefix` para usar `Ctrl-a` dentro dos agentes.
+> **Scion dentro do Cloud Shell ou de outro `tmux`?** O prefixo `Ctrl-b` será capturado pelo `tmux` externo (`local/tmux.md`). Edite `.scion/templates/default/home/.tmux.conf` trocando o prefixo para `Ctrl-a`.
 
-![Mapa Visual do Scion v0.4 Web Dashboard](assets/scion_web_dashboard_map.png)
+![Scion Web Dashboard & Perímetro IAP](assets/scion_web_dashboard_map.png)
 
-**Atalhos e recursos de ouro no Web Dashboard (`workstation/dashboard.md` e `hosted/user/messaging.md`):**
-- **Mode Switcher (`Ctrl+1` Console / `Ctrl+2` Native Web Chat / `Ctrl+3` Terminals, `Cmd+1/2/3` no macOS):** alternar entre Console e Chat preserva o projeto aberto.
-- **Alternância `Chat | Execution Log` e Filtros de Densidade:** veja diálogo limpo (**Conversation**), menções (**Verbose**) ou eventos internos (**Full**), e alterne para o stream bruto de execução sem sair da aba.
-- **Links clicáveis automáticos:** `/workspace/...`, `owner/repo#N` e `gs://bucket/objeto` abrem visualização direta no modal do Dashboard (no caso de `gs://`, o Hub busca o arquivo usando a própria Service Account GCP do agente remetente).
-- **Promoção de DM para Thread:** promova uma conversa 1-para-1 com `@coordinator` para uma thread compartilhada do time com um clique.
-- **Display Timezone:** configure `America/Sao_Paulo` no seu perfil (altera apenas a exibição das horas na tela, nunca o `TZ` interno dos containers).
+- **Web UI ao vivo com SAs `assign` (origem `HC-01`, reconfirmada em `HC-07`/`HC-08`):** nunca use `--dev-auth` com SAs em modo `assign`, pois `--dev-auth` força `--host 127.0.0.1` e quebra o bridge networking Docker exigido pelo metadata interceptor. Nosso `deploy/02-factory-runtime/lite-vm/cloud-init.tftpl` usa `--hosted --host 0.0.0.0 --web-port 8080` na VPC privada (`zero IP público`) + `container_hub_endpoint: "http://scion-hub.internal:8080"`. Para expor a Web UI no browser, faça deploy do proxy Cloud Run IAP localizado no **repositório upstream do Scion** (`GoogleCloudPlatform/scion`, `extras/cloudrun-iap-proxy`, fora deste repo) com `--iap` + Direct VPC Egress e `server.auth.mode: proxy` (`provider: iap`) + `federation`.
 
-### 1.6 O Que São as *Roles* dos Agentes (`--role none | readonly | baseline | full`)?
+### 1.6 Os 4 Eixos Ortogonais (`Template` × `--role` × `--service-account` × `--message-mode`)
 
-Um ponto que costuma confundir quem chega no Scion é o uso da palavra **"role"** em três camadas diferentes e totalmente independentes:
+1. **Template:** define *como o agente pensa* (`agents.md` + `system-prompt.md`), sem dar permissão na API do Hub.
+2. **Agent Authorization Role (`--role`):** define os escopos do JWT no Scion Hub (`none`, `readonly`, `baseline`, `full`).
+3. **Identidade GCP (`--service-account`):** define o que o container chama no GCP (usando os **labels do Hub**: `factory-worker`, `<pack_prefix>-deployer`, `<pack_prefix>-evaluator`).
+4. **Escopo de Mensagens (`--message-mode`):** define com quem o agente conversa no Message Plane.
 
-1. **Papel cognitivo (Template):** ex. `gecx-developer`, `gecx-eng-manager`, `gecx-code-reviewer`. Define *como o agente pensa e trabalha* (`agents.md` + `system-prompt.md`), mas **não dá nenhuma permissão na API do Hub** (o antigo campo `hubAccess.scopes` no template foi removido na v0.4).
-2. **Agent Authorization Role (`--role` no Hub):** define **o que o container pode chamar na API do Scion Hub** (traduzido para os escopos do JWT `~/.scion/scion-token`).
-3. **Identidade GCP (`--service-account`):** define **o que o container pode chamar na nuvem GCP** (Vertex AI, CX Agent Studio Sandbox). É ortogonal à role do Hub.
+| `--role` | Escopos JWT no Hub | Quem Usa na Fábrica |
+| :--- | :--- | :--- |
+| **`none`** | *(nenhum)* | Jobs batch desconectados da API do Hub. |
+| **`readonly`** | `project:read`, `agent:status:update` | Consultas curtas somente leitura (sem refresh de token). |
+| **`baseline`** | `project:read`, `agent:status:update`, `agent:token:refresh`, `project:agent:notify`, `agent:port:forward` | **Todos os especialistas** (`developer`, `code-reviewer`, `architect`, `investigator`, `security-auditor`, `test-engineer`, `deployer`, `eval-tester`, `kaizen-analyst` e apoio). |
+| **`full`** | Tudo do `baseline` + `project:agent:create`, `project:agent:sa_assign`, `project:agent:lifecycle`, `project:secret:read` | **Apenas os 2 orquestradores:** `<pack_prefix>-coordinator` e `<pack_prefix>-eng-manager`. |
 
-#### Os 4 Níveis de Agent Authorization Role (`hosted/ha/permissions.md`)
+**Regra *No-Escalation* e duas pegadinhas reais do `v0.4.0-preview.3`:**
+- **Fórmula:** humano cria com `min(--role, scion.io/max-agent-role)`; pai cria filho com `min(--role, role_do_pai, scion.io/max-agent-role)`. Tentativa de escalação retorna `403 Forbidden`.
+- **Pegadinha #1 (`default_agent_role`):** é **read-only via API `scion hub settings set`**. Por isso, o Stage 02 grava `default_agent_role: "baseline"` e `default_gcp_identity_mode: "block"` direto em `/home/scion/.scion/settings.yaml` (`cloud-init.tftpl`, `INV-14`).
+- **Pegadinha #2 (`gcp_iam_deny_unknown_policy` tem 2 controles!):** o Stage 02 grava a variável TF `gcp_iam_deny_unknown_policy` no `settings.yaml`, mas o Stage 03 (`bootstrap-hub-project.sh:514`) regrava esse campo usando `${GCP_IAM_DENY_UNKNOWN_POLICY:-fail-open}`. Se sua org concede `roles/iam.denyReviewer` e você quer `fail-closed`, **defina ambos de forma coerente** (a var TF no Stage 02 **e** `export GCP_IAM_DENY_UNKNOWN_POLICY=fail-closed` em todo `apply` do Stage 03).
 
-| `--role` | Escopos JWT Concedidos no Hub | O Que o Agente Pode Fazer na Prática | Quem Usa em `packs/gecx` |
-| :--- | :--- | :--- | :--- |
-| **`none`** | *(nenhum)* | Executa completamente desconectado da API do Hub (sem claims de autorização). | Scripts isolados ou tarefas batch sem interação com o Hub. |
-| **`readonly`** | `project:read`, `agent:status:update` | Consulta estado do projeto e reporta o próprio status. **Não** renova token, **não** abre port-forward, **não** envia notificações e **não** gerencia outros agentes. | Consultas curtas somente leitura sem necessidade de refresh de token. |
-| **`baseline`** | `project:read`, `agent:status:update`, `agent:token:refresh`, `project:agent:notify`, `agent:port:forward` | Trabalho padrão de longa duração: reporta status, renova o próprio JWT de 10 h, envia notificações e abre port-forward. **Não** pode criar sub-agentes, atribuir SAs GCP, suspender/deletar outros agentes ou ler secrets do projeto. | **14 dos 16 papéis** (`developer`, `code-reviewer`, `architect`, `investigator`, `security-auditor`, `test-engineer`, `gecx-deployer`, `gecx-eval-tester`, `gecx-kaizen-analyst` e papéis de apoio). |
-| **`full`** | Tudo do `baseline` + `project:agent:create`, `project:agent:sa_assign`, `project:agent:lifecycle`, `project:secret:read` | Controle completo de orquestração no projeto: cria filhos (`scion start`), atribui Service Accounts GCP aos filhos (`--service-account`), suspende/retoma/deleta filhos e lê secrets do projeto. | **Apenas os 2 papéis orquestradores:** `gecx-coordinator` (incluindo *Issue Owner*) e `gecx-eng-manager`. |
+#### Exemplo Concreto: Os 4 Eixos Ortogonais em Operação (`packs/gecx`)
 
-#### Regra de Teto e Anti-Escalação (*No-Escalation*, Fail-Closed)
-
-O Scion calcula a role efetiva no momento da criação sem nunca permitir que um agente escale privilégios por conta própria:
-
-- **Disparo feito por usuário humano:** `role efetiva = min(role pedida no --role, max_agent_role do projeto)`.
-- **Disparo feito por agente pai (sub-agente):** `role efetiva = min(role pedida, role do pai, max_agent_role do projeto)`.
-- **Tentativa de escalação retorna `403 Forbidden`:** um agente `baseline` nunca consegue criar filhos, e um pai nunca consegue dar ao filho uma role maior que a sua (em `scion reincarnate --role`, um agente só pode **rebaixar** a própria role, nunca subir). Se o registro do pai falhar na consulta ao banco, o Hub falha fechado para `baseline`.
-- **Re-derivação no refresh de token:** ao renovar o JWT (`RefreshAgentToken`), o Hub sempre recalcula os escopos a partir da role armazenada no banco (nunca copia escopos antigos cegamente).
-
-> [!CAUTION]
-> **Pegadinha importante da v0.4 (`default_agent_role`):** no upstream do Scion, o fallback padrão quando `--role` é omitido passou de `baseline` para **`full`**. Em ambientes corporativos, nosso `bootstrap-hub-project.sh apply` impõe automaticamente `scion hub settings set default_agent_role baseline` no Hub, reservando `--role full` somente para `<prefix>-coordinator` e `<prefix>-eng-manager`.
-
-#### Exemplo Concreto: Os 4 Eixos Ortogonais no `Telecom_Support_Center`
-
-| Agente Vivo | Template (Trabalho) | `--role` (Hub API) | `--service-account` (GCP API) | `--message-mode` (Chat) | Por Que Essa Combinação Existe |
+| Agente Vivo | Template | `--role` Hub | `--service-account` (Label no Hub) | `--message-mode` | Por Que Essa Combinação Existe |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`coordinator`** | `gecx-coordinator` | **`full`** | `factory-worker` (só Vertex) | `project` | Cria `gecx-eng-manager` e Issue Owners no Hub, mas não consegue tocar em apps do Sandbox no GCP. |
-| **`em-telecom`** | `gecx-eng-manager` | **`full`** | `factory-worker` (só Vertex) | `project` | Spawna `N` devs (`baseline`), suspende devs no review (`lifecycle`) e passa `--service-account gecx-deployer` ao deployer (`sa_assign`). |
-| **`dev-billing`** | `gecx-developer` | **`baseline`** | `factory-worker` (só Vertex) | `project` | Mesmo sofrendo prompt injection, recebe `403 Forbidden` se tentar spawnar filhos, ler secrets do projeto ou dar `cxas push`. |
-| **`dep-pr12`** | `gecx-deployer` | **`baseline`** | **`gecx-deployer`** (CES push) | `branch` | Tem poder no **GCP Sandbox** para `cxas push`, mas zero poder no **Hub** para spawnar ou alterar outros agentes. |
+| **`gecx-coordinator`** | `gecx-coordinator` | **`full`** | `factory-worker` (`vertexInferencePredict`) | `project` | Cria `eng-manager` e Issue Owners no Hub, mas recebe `403` em escrita no Sandbox ou `ReasoningEngine`. |
+| **`em-wave1`** | `gecx-eng-manager` | **`full`** | `factory-worker` (`vertexInferencePredict`) | `project` | Spawna devs (`baseline`), suspende no review e delega `--service-account gecx-deployer` (`sa_assign`). |
+| **`dev-billing`** | `gecx-developer` | **`baseline`** | `factory-worker` (`vertexInferencePredict`) | `project` | Mesmo sob prompt injection, recebe `403` ao tentar spawnar filhos, ler secrets ou dar push no Sandbox. |
+| **`dep-pr12`** | `gecx-deployer` | **`baseline`** | **`gecx-deployer`** (escrita `[CI]`) | `branch` | Tem poder no Sandbox GCP, mas zero poder no Hub para criar ou alterar outros agentes. |
 
 > [!NOTE]
-> **Roles de Usuário vs. Roles de Agente + Cadeia de Ancestralidade:** usuários humanos têm duas roles separadas — uma **Hub Role** (`admin`, `member` que pode criar projetos, ou `viewer`) e uma **Project Role** por projeto (`project-owner`, `project-admin`, `project-member`, `project-viewer`). Quando você cria o `coordinator` raiz, o Scion grava a cadeia de ancestralidade (`você → coordinator → em-telecom → dev-billing`): você ganha **acesso transitivo** para inspecionar (`scion look`), dar `attach` ou parar qualquer descendente da sua árvore, mesmo que outro membro do projeto não consiga dar `attach` nos seus agentes.
+> **Posse Humana & Ancestralidade:** um **principal do cliente** (nunca um FDE temporário) deve iniciar o `<prefix>-coordinator` raiz. A cadeia de ancestralidade concede acesso transitivo na sub-árvore; quando o criador perde acesso ao projeto, o Scion restringe os agentes dele na varredura de standing.
 
 ---
 
-## Parte 2 — Onde Ficam as Skills e Como os Agentes Se Comunicam
+## Parte 2 — Skills, Comunicação Multi-Agente, Filesystem e Primitivas Nativas (Artifacts & Decisions)
 
-### 2.1 Onde Ficam as Skills no Scion (4 Origens + Montagem no Container)
+### 2.1 Onde Ficam as Skills no Scion (4 Origens + Montagem Física)
 
-Uma **skill** segue a convenção aberta [Agent Skills](https://agentskills.io/home): uma pasta cujo nome em `kebab-case` coincide com `name:` no frontmatter de `SKILL.md`, podendo incluir arquivos de apoio (`references/`, `scripts/`).
+Uma **skill** segue a spec [Agent Skills](https://agentskills.io/home) (pasta `kebab-case` com `SKILL.md` + `references/` e `scripts/`):
 
-**No Scion v0.4, as skills existem em 4 camadas (com precedência de template sobre platform skill):**
+1. **Platform Skills:** embutidas no binário `scion` (`git-sandbox`, `scion-messaging`).
+2. **Hub Skill Bank (padrão offline):** registro versionado no Hub (`global`, `project`, `user`) com hash SHA-256 (`scion skills publish <dir>` usa o nome da pasta, não o `name:` do YAML). Dividimos em skills anexadas ao projeto (`attach_to_project: true`) e skills montadas sob demanda por papel (`skill://scion/global/<nome>`) para respeitar o teto de 1.800 linhas.
+3. **Template-mounted `skills/`:** viajam dentro da pasta do template.
+4. **Federadas (`gh://`, `gcp-skill://`):** bloqueadas no Release Kit offline (`INV-01`, `INV-05`).
 
-1. **Platform Skills (embutidas no binário `scion`):** injetadas automaticamente conforme contexto — ex.: `git-sandbox` (regras de worktree/branch) e `scion-messaging`. Não precisam ser declaradas.
-2. **Hub Skill Bank (nosso padrão corporativo offline):** registro versionado no Hub com três escopos (`global`, `project`, `user`) e deduplicação por `sha256`. Em `packs/gecx v0.4.0`, publicamos **11 skills** no Skill Bank (`18` em `packs/adk`, somando as 7 skills `google/agents-cli`) divididas em dois grupos para economizar contexto:
-   - **5 skills anexadas ao projeto inteiro (`attach_to_project: true`):** todo agente recebe `gcp-fde-guardrails`, `gcp-sandbox-contract`, `gcp-kaizen-light`, `gecx-foundry-adapter` e `gecx-domain-guardrails` via `scion project skills add`.
-   - **6 skills de processo e Kaizen montadas só nos papéis que precisam (`attach_to_project: false`):** `software-engineering-process` (470 linhas), `code-review` (416 linhas), `artifact-durability`, `agent-state-continuity`, `release-notes-daily` e `gcp-kaizen-analyst` ficam no Skill Bank e são referenciadas via `skill://scion/global/<nome>` no `scion-agent.yaml` apenas dos papéis correspondentes (assim `gecx-deployer` e `gecx-eval-tester` não desperdiçam contexto com processo de code review ou Kaizen).
-3. **Template-mounted `skills/`:** pastas commitadas dentro de `<template>/skills/<nome>/`. Viajam com o template sem precisar de Hub.
-4. **Skills Federadas (`gh://...` ou `gcp-skill://...`):** resolvidas sob demanda pelo Hub/Broker com cache em disco. **Bloqueadas no nosso Release Kit offline** para garantir funcionamento atrás de VPC-SC e firewall corporativo.
+**Caminho físico das skills montadas dentro do container:**
+- **Antigravity:** `/home/scion/.gemini/antigravity-cli/skills/<nome>/SKILL.md`
+- **Claude Code:** `/home/scion/.claude/skills/<nome>/SKILL.md`
+- **Gemini CLI:** `/home/scion/.gemini/skills/<nome>/SKILL.md`
 
-**Onde a skill aparece fisicamente DENTRO do container do agente?**
-No provisioning, o Broker baixa os arquivos verificando o hash SHA-256 e instala cada pasta dentro do diretório nativo do harness em `/home/scion/`:
+### 2.2 Comunicação Multi-Agente & Matriz `--message-mode`
 
-- **Claude Code:** `/home/scion/.claude/skills/<nome-da-skill>/SKILL.md`
-- **Gemini CLI:** `/home/scion/.gemini/skills/<nome-da-skill>/SKILL.md`
-- **Antigravity:** `/home/scion/.gemini/antigravity-cli/skills/<nome-da-skill>/SKILL.md`
+1. **Hub Message Plane (`scion message`):** coordenação assíncrona. Acima de 5 KB, use `--body-file brief.md` ou `--task-file` (até 96 KiB).
+2. **Auto-Subscription:** criar filho inscreve o pai automaticamente em `COMPLETED`, `STALLED`, `ERROR` e `ask_user`.
+3. **Storage Durável:** código → branch Git com *durability push*; estado e filas (`wave-state.jsonl`) → `/scion-volumes/scratchpad/`; specs/ADRs → Hub Artifacts.
 
-> [!IMPORTANT]
-> **Quem precisa de permissão para ler uma skill?** O Hub resolve skills do Skill Bank usando as permissões do **criador do agente** (você ou o agente pai), nunca a identidade do Runtime Broker. Se uma skill obrigatória falhar ao resolver (404, 403 ou symlink proibido), o `scion start` falha imediatamente com `skill_resolution_failed` em vez de subir um agente "cego". Use `optional: true` somente para skills auxiliares.
-
-### 2.2 Como os Agentes Se Comunicam (3 Canais + Matriz `--message-mode`)
-
-No Scion, a comunicação multi-agente combina **três canais complementares**:
-
-1. **Hub Message Plane (`scion message`):** entrega assíncrona de mensagens entre humanos e agentes (`scion message @coordinator "..."` para conversa ou `scion message dev-1 "..."` para DM). Para textos grandes (> 5 KB), passe `--body-file brief.md` ou grave no workspace compartilhado e mande o caminho — briefs enormes inline podem abortar o agente silenciosamente.
-2. **Sinais de Ciclo de Vida + Auto-Subscription (*Supervision follows creation*):** sempre que um agente pai (`coordinator` ou `eng-manager`) cria um filho via `scion start`, o Hub **inscreve automaticamente o criador** nas notificações de `COMPLETED`, `STALLED`, `ERROR` e `ask_user` daquele filho. Além disso, a cadeia de ancestralidade (`root → parent → child`) dá permissão transitiva para qualquer ancestral inspecionar (`scion look`) ou gerenciar seus descendentes.
-3. **Canais Duráveis (Git + Shared Volumes + Scratchpad):** mensagens de chat servem para coordenação, mas **não são o armazenamento do entregável**. Código vai em **branches Git enviados ao remoto** (*durability push* contínuo), arquivos compartilhados grandes ficam em `/scion-volumes/...`, e orquestradores de longa duração (`gecx-coordinator`, `gecx-eng-manager`) mantêm um arquivo de estado `.<nome-do-agente>-state.md` (skill `agent-state-continuity`) para sobreviver a reinícios sem perder memória.
-
-**Matriz de alcance de mensagens (`--message-mode`, de `reference/messaging-authorization.md`):**
-
-| Modo | Quem Pode Enviar/Receber Mensagens | Uso Recomendado |
+| `--message-mode` | Quem Fala Com Quem | Uso Recomendado |
 | :--- | :--- | :--- |
-| **`project`** *(padrão)* | Todos os agentes e membros do mesmo projeto | Padrão para times SEP em um repositório. |
-| **`branch`** | Apenas relação direta **pai ↔ filho** (ambos em `branch`) + humanos na ancestralidade | Quando você quer impedir que workers "pulem" o `eng-manager`. |
-| **`lineage`** | Apenas humanos da cadeia de ancestralidade (zero agente ↔ agente) | Agentes isolados supervisionados só por humanos. |
-| **`none`** | Selado (apenas super-admin) | Execuções batch totalmente fechadas. |
-| **`hub`** | Permite DM entre projetos no mesmo Hub (desligado por padrão, exige 3 gates) | Coordenação cross-repo controlada por admin. |
+| **`project`** *(padrão)* | Todos os agentes e humanos do projeto | Padrão para times SEP (workers continuam passando pelo `eng-manager` por regra SEP). |
+| **`branch`** | Apenas pai ↔ filho direto + ancestralidade humana | Impede workers de pular o `eng-manager` ou conversar lateralmente. |
+| **`lineage`** | Apenas humanos da cadeia de ancestralidade | Agentes isolados supervisionados só por humanos (zero agente ↔ agente). |
+| **`none`** / **`hub`** | Selado (admin) / cross-project (3 gates) | Execuções batch fechadas (`none`) ou coordenação multi-repo autorizada (`hub`). |
 
 > [!WARNING]
-> **Padrão SEP (`eng-manager/agents.md`):** mesmo quando `--message-mode project` está ativo, **workers (`developer`, `code-reviewer`) não conversam diretamente entre si**. O `eng-manager` (ou *issue owner*) lê o relatório do revisor e repassa achados objetivos com `arquivo:linha` ao desenvolvedor. Isso preserva a revisão cega e evita debates infinitos entre dois agentes sem autoridade de decisão.
+> **Padrão SEP (`eng-manager/agents.md`):** mesmo com `--message-mode project`, `developer` e `code-reviewer` não debatem entre si; o `eng-manager` (ou *Issue Owner*) media os achados objetivos (`arquivo:linha`).
 
-### 2.3 Anatomia Completa do Filesystem no Scion (Mounts, Backing Storage e Isolamento)
+### 2.3 Anatomia Completa do Filesystem no Scion
 
-Uma dúvida frequente ao operar múltiplos agentes em paralelo é: **"onde cada arquivo mora fisicamente, como o harness enxerga esses mounts e qual container consegue ler o arquivo de outro container?"**
+![Anatomia do Filesystem no Scion — Isolamento por Container](assets/scion_filesystem_anatomy.png)
 
-No Scion, **os harnesses (`claude`, `gemini`, `antigravity`) não montam nada por conta própria**. Quem monta o filesystem antes de iniciar o container é o **Runtime Broker**, combinando áreas privadas, áreas compartilhadas e proteções em modo read-only/máscara (`local/workspace.md` e `local/workspaces-and-sharing.md`).
+**Quatro regras práticas do filesystem:**
+1. **`control_path_mount`:** o Broker recusa mounts (mesmo `:ro`) que resolvam (após symlinks) para `/`, `~` ou arquivos de controle em `~/.scion/` (`hub.db`, `dev-token`, `broker-credentials.json`, `settings.yaml`, `plugins/`).
+2. **`home/` vs. `provision.py`:** arquivos em `home/` do harness-config entram só na criação (ou `scion reincarnate`); `provision.py` e `config.yaml` rodam em todo `scion start`.
+3. **Limpeza segura no Git:** use sempre `git clean -fd`, nunca `git clean -fdx`.
+4. **Onde gravar cada coisa:** código/testes → branch Git + `git push`; caches e `.<agente>-state.md` → `/scion-volumes/scratchpad`; specs/ADRs → Hub Artifacts.
 
-![Anatomia do Filesystem no Scion v0.4 — O Que Cada Container Monta, Enxerga e Isola](assets/scion_filesystem_anatomy.png)
+### 2.4 Primitivas Nativas do Hub: Artifacts e Decisions
 
-**Mapa exato do que existe dentro de cada container (exemplo com `dev-billing` e `dev-plans` rodando juntos):**
-
-| Caminho no Container | O Que Está Por Baixo (Backing Storage) | Tipos de Arquivo Que Vivem Ali | Quem Enxerga e Por Quê |
-| :--- | :--- | :--- | :--- |
-| **`/home/scion`** *(Agent Home)* | Bind-mount local no host em Docker/Workstation (`~/.scion/.../agents/<nome>/home/`). Em GKE/Cloud Run exige NFS/PVC para persistir sessões (ou RAM efêmera se `persistence: ephemeral`). | Sessão do harness (`.claude/`, `.gemini/settings.json` usada por `--continue`/`--resume`), skills montadas (`.claude/skills/`, `.gemini/skills/`), `.scion/task.md`, JWT `.scion/scion-token` (10 h), `.scion/harness/provision.py`, anexos recebidos em `.scion/inbox/<msg>/` (retenção 7 dias), `.tmux.conf`, `.gitconfig` pessoal e cache Playwright (`~/.cache/ms-playwright`). | **Somente aquele agente (`RW`).** `dev-billing` nunca acessa o token, o histórico ou o inbox de `dev-plans`. |
-| **`/workspace`** *(em `clone-per-agent`, `shared-plain` ou `empty-per-agent`)* | Em `clone-per-agent`: pasta privada por agente (`<nfs>/<proj>/agents/<nome>/workspace` ou disco do broker). O Broker impõe `nfsBindScope` para que cada container monte apenas a própria subpasta. | Código-fonte clonado via HTTPS no branch `scion/<nome>` (`depth=1` por padrão — rode `git fetch --unshallow` se precisar de histórico completo). | **Somente aquele agente (`RW`)** em `clone-per-agent` e `empty-per-agent`. **Todos os agentes (`RW`)** em `shared-plain` (sem isolamento). |
-| **`/repo-root/.scion/agents/<nome>/workspace`** *(em `worktree-per-agent`)* | Linked git worktree (`git >= 2.48`) do checkout do host ou do clone-base compartilhado no Broker. **Atenção:** `/workspace` não é montado nesse modo — scripts devem usar `$PWD` ou `git rev-parse --show-toplevel`. | Working tree isolado do agente sobre o histórico Git compartilhado. | **Working tree privado (`RW`)** por agente, mas **objetos/branches Git são compartilhados**. |
-| **`/repo-root/.git`** *(em `worktree-per-agent`)* | Diretório `.git` do repositório compartilhado, com camadas cirúrgicas de montagem. | Metadados Git. A **raiz `.git` é montada `RO`** (impede criar `.git/commondir` ou hooks maliciosos no host). Apenas `objects/`, `refs/`, `logs/`, `lfs/` e `worktrees/<agente>/` são reabertos em `RW`. Em Docker/Podman, `.git/config` é uma **cópia privada `RO` redatada** sem `credential.*`, `http.extraheader` ou senhas em URL, e com `gc.auto=0`. | **Compartilhado com proteção estrita.** Comandos que reescrevem `packed-refs` na raiz (`git gc`, `git fetch --prune`, deletar tag) falham de forma segura dentro do container. |
-| **`.scion/` e `.scion/agents/`** *(dentro do workspace)* | Pasta de configuração do projeto no repositório. | `settings.yaml`, templates locais. `.scion/` entra **`RO`** e **`.scion/agents/` é mascarado com um `tmpfs` vazio**. | **Configuração `RO` e demais agentes invisíveis.** Impede que um agente altere a configuração do projeto no host ou leia o worktree de outro agente. |
-| **`/scion-volumes/<nome>`** ou **`/workspace/.scion-volumes/<nome>`** *(Shared Directories)* | Pasta no host (Workstation/Docker), export **NFS/Filestore** (`server.project_storage.backend: nfs`) em multi-broker/Cloud Run, ou **PVC `ReadWriteMany`** em GKE. | **`scratchpad`** (criado automaticamente por padrão: anexos de threads em `.attachments/`, `.<agente>-state.md`, trocas de relatórios), além de volumes extras (`scion shared-dir create build-cache` ou `knowledge --in-workspace --read-only`). | **Todos os agentes do projeto (em TODOS os modos, inclusive `clone-per-agent`!).** Atravessam propositalmente o isolamento do workspace — trate como storage concorrente. Também visíveis na aba **Shared Directories** da Web UI. |
-
-**Quatro regras práticas do filesystem que evitam horas de debug:**
-
-1. **Bloqueio de paths de controle do Broker (`control_path_mount`):** o Runtime Broker recusa qualquer mount (`volumes:`, `--workspace` ou shared-dir), mesmo em modo `:ro`, cujo caminho real no host (após resolver symlinks) alcance `/`, `~` ou arquivos de controle em `~/.scion/` (`hub.db`, `dev-token`, `broker-credentials.json`, `hub-credentials/`, `settings.yaml`, `plugins/`, `runtime-broker-state/`).
-2. **Quando alterações de `harness-config` chegam ao `/home/scion` (`reference/harness-settings.md`):** arquivos em `home/` (ex.: `.claude/settings.json`, `.tmux.conf`) são copiados **apenas na criação** (ou em `scion reincarnate`), enquanto `provision.py` e `config.yaml` rodam de novo em todo `scion start`.
-3. **Nunca use `git clean -fdx` dentro de um agente:** use sempre **`git clean -fd`** (respeita `.gitignore` e preserva metadados `.scion/` e arquivos de estado ignorados).
-4. **Quando usar Shared Directory vs. Git vs. Hub Artifact?**
-   - **Código e testes versionados:** branch Git com *durability push* contínuo (lembre: `scion delete --preserve-branch` só preserva no clone local, não faz push!).
-   - **Caches pesados, binários intermediários ou `.<agente>-state.md`:** Shared Directory (`/scion-volumes/build-cache` ou `/scion-volumes/scratchpad`).
-   - **Specs, Design Docs, ADRs e relatórios HTML para revisão humana:** **Hub Artifacts** (seção 2.4 abaixo), que vivem no Hub fora do filesystem do container.
-
-### 2.4 Specs, Design Docs, ADRs e Decisões Nativas no Scion (`v0.4.0-preview.3`)
-
-Em vez de espalhar especificações e ADRs como blocos longos de texto solto no chat ou arquivos esquecidos em branches de container, o Scion `v0.4.0-preview.3` oferece **duas primitivas nativas do Hub** pensadas exatamente para engenharia orientada a specs e decisões arquiteturais (`hosted/user/artifacts.md` e `hosted/user/messaging.md`):
-
-![Specs, Design Docs, ADRs e Decisões Nativas no Scion v0.4.0-preview.3](assets/scion_artifacts_and_decisions.png)
-
-#### A. Native Artifacts (`hub.artifacts` + `web.artifact_review_editor`) — Specs & ADRs com Track Changes
-
-Um **Artifact** é um arquivo ou pasta (ex.: uma spec Markdown, um `ADR-001.md` ou um relatório HTML completo) armazenado no próprio **Hub** com referência imutável **`scion://artifact/<uuid>`** (versões `@1`, `@2`, `@3`). Como os bytes vivem no Hub, qualquer usuário autorizado ou agente em **outro Runtime Broker** lê o documento sem precisar montar o workspace do autor.
-
-**Fluxo real no nosso Smoke Test (`gecx-architect` ↔ Humano):**
+![Primitivas Nativas do Hub — Artifacts e Decisions](assets/scion_artifacts_and_decisions.png)
 
 ```bash
-# 1. O gecx-architect publica o ADR-001 / Spec da arquitetura Telecom_Support_Center (v1)
-scion artifact publish .design/adr-001-telecom.md \
-  --title "ADR-001: Auth Callback e Topologia Telecom_Support_Center" \
-  --key adr-001-telecom
-# Saida: scion://artifact/5f1c2d3e-... (v1)
+# A. Native Artifacts: publicar v1, revisar com Track Changes na Web UI e aplicar v2
+scion artifact publish .design/adr-001.md --title "ADR-001: Auth e Fronteiras" --key adr-001
+scion message @tech-lead "ADR-001 pronto para revisao." --artifact scion://artifact/5f1c2d3e-...
+scion artifact comments scion://artifact/5f1c2d3e-...
+scion artifact get scion://artifact/5f1c2d3e-... --accept > .design/adr-001.md
+scion artifact publish .design/adr-001.md --version-of scion://artifact/5f1c2d3e-... --note "Revisoes aplicadas"
 
-# 2. Envia no chat como chip clicavel (nao duplica copia!)
-scion message @tech-lead "ADR-001 pronto para revisao humana." \
-  --artifact scion://artifact/5f1c2d3e-...
-```
-
-3. **Você revisa na Web UI com Track Changes nativo:** abra o chip no chat e clique em **Review**. Com `web.artifact_review_editor` ligado, o editor abre em modo **Graphical** (Track Changes sempre ativo) — você edita parágrafos, tabelas e listas direto no documento renderizado e aperta `Ctrl+Alt+M` (`Cmd+Alt+M` no macOS) para comentar. O Scion salva uma versão do tipo `review` em [CriticMarkup](https://github.com/CriticMarkup/CriticMarkup-toolkit) (`{~~antigo~>novo~~}`, `{>>comentário<<}`), coloca o selo **`Review pending`** e avisa se outra pessoa já estiver revisando (`409 review_open`).
-4. **O `gecx-architect` aplica suas revisões sem parsear marcação na mão e gera a `v2`:**
-   ```bash
-   scion artifact comments scion://artifact/5f1c2d3e-...                # lista comentarios/sugestoes
-   scion artifact get scion://artifact/5f1c2d3e-... --accept > .design/adr-001-telecom.md
-   scion artifact publish .design/adr-001-telecom.md \
-     --version-of scion://artifact/5f1c2d3e-... \
-     --note "Revisoes de auth_guard e callback_tests aplicadas"
-   ```
-5. **Governança de acesso (*Stewards*):** agentes **nunca** podem compartilhar artefatos para fora do projeto. Apenas os *stewards* humanos (quem delegou o agente ou `project-owner`) criam grants (`read`, `review`, `write`, `admin`) ou links temporários (`scion artifact share <ref> --ttl 3d`). Com `hub.artifact_sponsor_review_grant`, o humano que iniciou o agente já recebe *Can review* automaticamente.
-
-#### B. Native Decisions (`web.decisions`) — ADRs Estruturados com Fila e Auditoria
-
-Na `v0.4.0-preview.3`, as antigas escolhas de chat foram promovidas a **Decisions** nativas: um sistema de perguntas estruturadas com chaves versionadas (`D1`, `D2`, `v1`/`v2`), páginas dedicadas em **Project Decisions** (`/projects/:id/decisions`) e **Profile Decisions** (agrupando todos os seus projetos), e log pesquisável de decisões tomadas (**Made**) com proveniência (`direct`, `interpreted`, `confirmed`, `overridden`).
-
-**Exemplo prático no `Telecom_Support_Center` (o agente envia 1 a 10 decisões por card):**
-
-```bash
-# Enviado pelo gecx-architect (somente agentes podem usar --decisions!)
-scion message @lead@cliente.com "Preciso de 2 decisoes antes de fechar o ADR-001:" --decisions '[
-  {
-    "id": "D1",
-    "question": "Onde impor o bloqueio de autenticacao antes de fetch_invoice?",
-    "default": "callback",
-    "choices": [
-      {"id": "callback", "label": "Callback Python auth_guard", "description": "Deterministico, 0 tokens extras"},
-      {"id": "prompt", "label": "Instrucao no prompt", "description": "Mais simples, sujeito a drift do modelo"}
-    ]
-  },
-  {
-    "id": "D2",
-    "question": "Como tratar a transferencia CCaaS no REQ-103 durante o Sandbox?",
-    "default": "flag_nv",
-    "choices": [
-      {"id": "flag_nv", "label": "Marcar not-verifiable-in-sandbox", "description": "Gera veredito honesto com revisao humana"},
-      {"id": "defer", "label": "Deixar transferencia para Fase 2", "description": "Escopo 100% live-gcp-verified agora"}
-    ]
-  }
+# B. Native Decisions (enviado por agentes; humanos consultam com --all-projects / --made)
+scion message @lead@cliente.com "Preciso de 2 decisoes:" --decisions '[
+  {"id":"D1","question":"Onde impor bloqueio de auth?","default":"callback","choices":[
+    {"id":"callback","label":"Callback Python auth_guard","description":"Deterministico, 0 tokens"},
+    {"id":"prompt","label":"Instrucao no prompt","description":"Sujeito a drift"}
+  ]}
 ]'
+scion decisions list --all-projects
+scion decisions list --made -q "auth"
 ```
-
-- **Resposta no clique ou em texto livre:** você responde clicando no card no Chat ou na aba **Decisions → Waiting on you** (`direct`). Se preferir responder em texto livre (*"vamos de callback na D1 e not-verifiable na D2"*), o agente registra formalmente com `scion decisions record --from <message-id> D1=callback D2=flag_nv` (gravado como `interpreted`, que você pode confirmar ou sobrescrever depois!).
-- **Atualização e limpeza:** o agente pode revisar uma decisão com `--update` (gera `v2` e marca `v1` como `replaced`) ou cancelar dúvidas que caducaram com `scion decisions withdraw D2 --reason "Movido para Fase 2"`.
-- **Consulta humana a qualquer momento:** `scion decisions list --all-projects` (pendentes) ou `scion decisions list --made -q "auth"` (histórico auditado de ADRs).
 
 > [!IMPORTANT]
-> **Ativando no seu Scion Hub (`v0.4.0-preview.3`):** tanto Artifacts quanto Decisions vêm **desligados por padrão** como experimentos. Para habilitá-los no Hub (via **Admin → Server Config → Experiments** ou `scion hub experiments enable`), ligue `hub.artifacts`, `web.artifact_review_editor`, `hub.artifact_sponsor_review_grant` e `web.decisions`.
+> **Ativação no Scion Hub:** tanto Artifacts quanto Decisions vêm **desligados por padrão**. Habilite em **Admin → Server Config → Experiments** (ou `scion hub experiments enable`) as flags `hub.artifacts`, `web.artifact_review_editor`, `hub.artifact_sponsor_review_grant` e `web.decisions`.
 
 ---
 
-## Parte 3 — Imagens Docker dos Agentes: Upstream, Atualizações e Tools Específicas de Projeto
+## Parte 3 — Imagens Docker, Layer 3 Custom (`Dockerfile.customer`) e Roteamento Vertex AI
 
-### 3.1 De Onde Vêm as Imagens dos Harnesses e Quando São Atualizadas?
+![Hierarquia SEP Multi-Pack & Pilha de Imagens Docker](assets/sep_hierarchy_and_images.png)
 
-Na arquitetura oficial do Scion (`local/custom-images.md` e `image-build/README.md`), as imagens de container são montadas em **3 camadas hierárquicas**:
+### 3.1 Separação de 3 Camadas de Imagens (`ADR-004`, `INV-06`, `ADR-015`)
 
-```text
-core-base         node:24-trixie-slim + Go, Python, Chainguard git >= 2.48,
-                  gh, gcloud, gcsfuse, kubectl, helm (v3.17.3), Chromium, ffmpeg, @playwright/cli
-  └── scion-base  Adiciona binarios scion + sciontool + usuario non-root scion (UID 1000)
-        ├── scion-claude       Claude Code CLI (harness)
-        ├── scion-gemini-cli   Gemini CLI (harness)
-        ├── scion-antigravity  Antigravity CLI (harness)
-        ├── scion-opencode / scion-codex / scion-pi (opt-in)
-        └── scion-hub          Servidor do Scion Hub
-```
+1. **Imagem Lean de CI (`<pack>-runtime`):** sobre `python:3.12-slim-bookworm` para Verdict Gates e Janitors no GitHub Actions (sem `sciontool`).
+2. **Imagem de Harness Scion (`<pack>-antigravity-runtime` / `<pack>-claude-runtime`):** construída por `stage-release-kit.sh --mode rebuild` via Cloud Build no `hub_project_id`, preservando Chainguard `git >= 2.48`, `sciontool` e `USER scion (UID 1000)`, carimbando `@sha256:` no `manifest.json` e `harness-configs/*/config.yaml`.
+3. **Layer 3 Condicional (`.factory/Dockerfile.customer` e `.factory/Dockerfile.customer-tester`):** para stacks específicos do cliente (`go`, `rust`, `nx`, `pnpm`, `mvn`, `sox`, `playwright`) sem tocar nas Layers 0–2.
 
-**Como o upstream publica e atualiza essas imagens (`getting-started/install.md`):**
+### 3.2 Receita Executável em 4 Passos: Construir e Ligar `.factory/Dockerfile.customer`
 
-- **Releases oficiais (tags `vX.Y.Z` / `v0.4.0-preview.3`):** o projeto upstream publica imagens pré-construídas em **`ghcr.io/homebrew-scion`** com a mesma tag do binário (ex.: `ghcr.io/homebrew-scion/scion-claude:v0.4.0-preview.3` e `ghcr.io/homebrew-scion/scion-gemini-cli:v0.4.0-preview.3`).
-- **Auto-match de versão:** todo binário de release do Scion puxa automaticamente a tag `:<sua-versao>` para imagens cujo nome começa com `scion-*` (via experimento `hub.image_tag_version_default`, ligado por padrão). Assim o `sciontool` dentro do container sempre casa com a versão do Hub/Broker.
-- **Nightlies NÃO publicam imagens prontas:** se você testar uma build `nightly-YYYYMMDD` ou precisar espelhar/construir tudo dentro do Artifact Registry privado do cliente (atrás de VPC-SC ou proxy corporativo), rode o script standalone oficial que clona a tag exata do release e gera o DAG inteiro:
-
-```bash
-# Constroi todas as imagens oficiais da tag v0.4.0-preview.3 no Cloud Build do cliente
-curl -fsSLO https://raw.githubusercontent.com/GoogleCloudPlatform/scion/v0.4.0-preview.3/image-build/scripts/build-release-images.sh
-bash build-release-images.sh v0.4.0-preview.3 -- \
-  --builder cloud-build \
-  --registry us-central1-docker.pkg.dev/SEU-HUB-PROJECT/scion-images
-
-# Atrás de proxy corporativo (local-docker / local-podman):
-# NPM_REGISTRY=https://npm.corp.local/ PIP_INDEX_URL=https://pypi.corp.local/simple/ \
-#   image-build/scripts/build-images.sh --target all --push --registry ...
-```
-
-### 3.2 Exemplo Prático: Preciso de Tools Específicas para um Tester (Sem Forkar o Upstream!)
-
-Suponha que no seu projeto GECX o **`gecx-eval-tester`** precise de **`sox`** (manipulação de áudio 8 kHz/16 kHz), **`k6`** (teste de carga em webhooks de fulfillment), **`cxas-scrapi==1.11.0`** e os schemas em `/opt/gecx-foundry` — mas você **não quer forkar** o repositório `scion-frontiers/agent-team` nem reescrever o build do Scion a cada release.
-
-**A solução limpa é criar um Dockerfile fino de ~10 linhas que herda (`FROM`) da imagem oficial/espelhada do harness:**
+`stage-release-kit.sh` constrói as imagens do **pack** (`<pack>-runtime` e `<pack>-*-runtime`). Quando seu repositório usa um `.factory/Dockerfile.customer` (ou `-tester`), construa e conecte-o em 4 passos (validado no `HC-05 M1.4`):
 
 ```dockerfile
-# Dockerfile.gecx-audio-tester — deriva do upstream SEM forkar nada!
-ARG UPSTREAM_HARNESS_IMAGE=ghcr.io/homebrew-scion/scion-gemini-cli:v0.4.0-preview.3
-FROM ${UPSTREAM_HARNESS_IMAGE}
+# .factory/Dockerfile.customer — herda da imagem do pack por @sha256:
+FROM us-central1-docker.pkg.dev/SEU-HUB/factory-images/generic-antigravity-runtime@sha256:<DIGEST_DO_PACK>
 
-# Troca temporariamente para root apenas durante a instalacao de pacotes
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      sox libsox-fmt-all \
-    && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir "cxas-scrapi==1.11.0"
+RUN apt-get update && apt-get install -y --no-install-recommends golang-go \
+    && rm -rf /var/lib/apt/lists/*
 
-# Exemplo: copiar scripts/schemas do projeto com permissao legivel pelo usuario scion
-COPY --chown=scion:scion foundry/ /opt/gecx-foundry/
-
-# OBRIGATORIO: voltar para o usuario non-root scion (UID 1000)
+# OBRIGATORIO: retornar para USER scion (UID 1000) + smoke check
 USER scion
+RUN go version && sciontool --version
 ```
-
-**Três invariantes sagrados para nunca quebrar um container Scion:**
-1. **Sempre termine com `USER scion` (`UID 1000`):** o Scion exige execução non-root (especialmente em Kubernetes) e monta `/home/scion` no start.
-2. **Nunca sobrescreva `/usr/bin/git` nem `/usr/libexec/git-core` nem `sciontool`:** o `core-base` já traz `git >= 2.48` da Chainguard (obrigatório para `git worktree add --relative-paths`). Se um `apt-get install git` voltar o git para 2.43, o worktree-per-agent quebra.
-3. **Publique com nome próprio (sem prefixo `scion-`) e fixe por `@sha256:`:** o ajuste `image_registry` só reescreve imagens começando com `scion-`. Um nome como `us-central1-docker.pkg.dev/<hub>/gecx-images/gecx-gemini-audio-tester@sha256:...` nunca é reescrito acidentalmente.
-
-**O que fazer quando o upstream lançar `v0.4.0-preview.4`?**
-Zero merge de fork! Você só atualiza a variável `UPSTREAM_HARNESS_IMAGE` para `:v0.4.0-preview.4`, dispara o Cloud Build desse Dockerfile de 10 linhas, copia o novo digest `@sha256:` para o `harness-config` e executa `scion harness-config sync`.
-
-**Como entregar essa imagem SÓ para o tester (sem inchar os containers de `developer` e `architect`)?**
-Lembre-se de que **`image:` dentro de um template é ignorado com aviso**. Use uma das **3 vias oficiais** (em ordem de recomendação):
-
-1. **Harness-Config dedicado (recomendado para uso recorrente):** crie uma variante copiando o bundle base (`cp -r ~/.scion/harness-configs/gecx-antigravity-vertex ~/.scion/harness-configs/gecx-audio-tester`), aponte `image:` em `config.yaml` para o `@sha256:` da sua imagem derivada, publique globalmente com `scion harness-config sync gecx-audio-tester --global` e spawne o tester com `--harness-config gecx-audio-tester`.
-2. **Flag `--image` no spawn (prioridade #1 da cadeia de precedência):**
-   ```bash
-   scion start eval-audio -t gecx-eval-tester \
-     --service-account gecx-evaluator \
-     --image us-central1-docker.pkg.dev/SEU-HUB/gecx-images/gecx-gemini-audio-tester@sha256:... \
-     "Execute a suite BidiRunSession e valide latencia de audio."
-   ```
-3. **Sidecar (`services:` no `scion-agent.yaml`):** quando a ferramenta do tester é um **daemon separado** (por exemplo, mock de API bancária, simulador SIP/HTTP ou Chromium headless na porta `9222`), declare-a como sidecar com `ready_check` TCP/HTTP em vez de empilhar tudo no container do agente.
-
-> [!NOTE]
-> **Separação entre imagem lean de CI (`<pack>-runtime`) e imagem de agente Scion (`<pack>-antigravity-runtime` / `<pack>-claude-runtime`):** [packs/gecx/Dockerfile](../packs/gecx/Dockerfile) compila por padrão sobre `python:3.12-slim-bookworm` para execução rápida e determinística no CI (`gecx-verdict-gate.yml`). Ao executar `stage-release-kit.sh --mode rebuild --antigravity-base-image <scion-antigravity>`, o mesmo pipeline compila automaticamente a imagem completa com `sciontool`, `git >= 2.48` e `cxas 1.11.0`, carimbando o digest `@sha256:` nos `harness-configs/*/config.yaml`.
-
----
-
-## Parte 4 — Como os 16 Agentes da Fábrica GECX São Construídos (Hierarquia SEP `v0.4.0`)
-
-Na `v0.4.0`, `packs/gecx` incorpora **100% da biblioteca `scion-frontiers/agent-team@08faf48`** (todos os 13 papéis + as 5 skills Apache-2.0 de processo SEP vendored offline em `vendor/agent-team/`), somada aos **2 especialistas split-SA do Sandbox GECX** e ao **16º papel `gecx-kaizen-analyst` (`v0.3.0+`)**, compondo **16 templates prefixados `gecx-*`** e **11 skills no Hub Skill Bank** — tudo validado sob o teto de **1.800 linhas totais por papel**.
-
-```mermaid
-flowchart LR
-    subgraph ORCH["Orquestração (--role full • factory-worker)"]
-        C["gecx-coordinator"] --> EM["gecx-eng-manager"]
-    end
-    subgraph DISC["Descoberta & Design (baseline)"]
-        INV["gecx-investigator"]
-        ARC["gecx-architect"]
-        RES["gecx-researcher"]
-    end
-    subgraph ENG["Engenharia & Revisão Cega (baseline)"]
-        DEV["gecx-developer"]
-        REV["gecx-code-reviewer"]
-        TST["gecx-test-engineer"]
-        SEC["gecx-security-auditor"]
-        SUP["qa • doc • release • web"]
-    end
-    subgraph SBX["Sandbox Split-SA (baseline)"]
-        DEP["gecx-deployer (SA deployer)"]
-        EVL["gecx-eval-tester (SA evaluator)"]
-    end
-    subgraph KZ["Kaizen Closed-Loop (weekly-kaizen --wake)"]
-        KA["gecx-kaizen-analyst (baseline)"]
-    end
-    C --> INV
-    C --> ARC
-    C --> RES
-    C --> KA
-    EM --> DEV
-    EM --> REV
-    EM --> TST
-    EM --> SEC
-    EM --> SUP
-    EM --> DEP
-    EM --> EVL
-```
-
-![Anatomia de um Agente Scion v0.4 em packs/gecx](assets/scion_template_anatomy.png)
-
-*(Ilustração de referência do baseline `v0.2.0` com 15 papéis — expandido em `v0.4.0` para 16 papéis com a inclusão de `gecx-kaizen-analyst` no diagrama acima.)*
-
-![Hierarquia SEP e Camadas de Imagem Docker](assets/preston_hierarchy_and_images.png)
-
-### 4.1 Anatomia de um Template Gerado (`build.sh --release-kit`)
-
-Cada um dos 16 diretórios em `/tmp/gecx-kit/templates/` segue estritamente a spec Scion v0.4 (`local/templates.md`):
-
-- **Nome = nome da pasta** (sem campo `name:` dentro do YAML).
-- **Chaves de ambiente proibidas no template:** zero `image`, `resources`, `volumes`, `kubernetes`, `hub`, `telemetry`.
-- **Modelo e harness fora do template:** zero `model` ou `harness_config` fixos — assim o orquestrador escolhe modelos distintos no spawn seguindo `diversity_profile` (`cross-vendor`, `cross-model` ou `single-family`).
-- **Fusão real em build-time:** `system-prompt.md` combina persona e limites de SA/Hub role. Em paralelo, `agents.md` coloca nossas regras de override do `delta.md` no topo (precedência) seguidas das instruções completas do papel upstream em `vendor/agent-team/templates/<base_role>/agents.md`.
-- **Skills 100% offline via Hub Skill Bank:** `skills:` referencia apenas `skill://scion/global/<nome>` (zero `gh://`).
-
-Veja o `gecx-eng-manager/scion-agent.yaml` gerado pelo Release Kit:
-
-```yaml
-# Composed offline Scion v0.4 template for gecx-eng-manager.
-# Base upstream role: eng-manager @ 08faf48269da7d8dd0a20c4e5ca5093afb37495d.
-# Model, harness_config, and environment keys are omitted for spawn-time diversity.
-schema_version: '1'
-description: 'gecx-eng-manager specialist (base: eng-manager, hub role: full, SA slot: worker)'
-agent_instructions: agents.md
-system_prompt: system-prompt.md
-skills:
-- uri: skill://scion/global/software-engineering-process
-- uri: skill://scion/global/agent-state-continuity
-- uri: skill://scion/global/artifact-durability
-```
-
-### 4.2 Catálogo Completo dos 16 Papéis de `packs/gecx v0.4.0`
-
-| Template no Hub | `--role` Hub | SA GCP | Skills de Papel (além das 5 do Projeto) | Linhas Totais (Teto 1800) | Função na Hierarquia SEP |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **`gecx-coordinator`** | **`full`** | `worker` | `SEP`, `state-continuity`, `artifact-durability` | 1.040 | Raiz do portfólio (2–3 issues) ou **Dedicated Issue Owner** em Depth-3. **Iniciado pelo cliente.** |
-| **`gecx-eng-manager`** | **`full`** | `worker` | `SEP`, `state-continuity`, `artifact-durability` | 954 | Decompõe o design aprovado em fases, sequencia infra compartilhada, gerencia `N` devs e reviewers em paralelo. |
-| **`gecx-architect`** | `baseline` | `worker` | `artifact-durability` | 367 | Lê os fatos do `investigator`, projeta sub-agentes/tools/callbacks CES e itera o design direto com o humano. |
-| **`gecx-investigator`** | `baseline` | `worker` | `SEP`, `artifact-durability` | 798 | Arqueologia factual do repositório (`cxas_app/`, `evals/`, schemas) sem tomar decisões de arquitetura. |
-| **`gecx-developer`** | `baseline` | `worker` | `artifact-durability` | 336 | Implementa sub-agente/tool/callbacks em branch isolado, roda Level 1 offline e faz *durability push*. |
-| **`gecx-code-reviewer`** | `baseline` | `worker` | `code-review`, `SEP` | 1.110 | Revisão **cega e limpa** em **outro vendor de modelo** (5 eixos, PII, cobertura, fronteira de telefonia). |
-| **`gecx-test-engineer`** | `baseline` | `worker` | `artifact-durability` | 374 | Escreve suites Level 1 offline (`callback_tests`, `tool_tests`, `goldens`, padrão *Prove-It*) com dados sintéticos. |
-| **`gecx-security-auditor`** | `baseline` | `worker` | `artifact-durability` | 383 | Passada única pré-PR quando há mudança em auth, entradas sem auth ou prompts/expressões de usuário. |
-| **`gecx-deployer`** | `baseline` | **`deployer`** | `artifact-durability` | 337 | Único autorizado a chamar `cxas push` / `push-eval` no app efêmero `[CI] PR-N-...` no Sandbox. |
-| **`gecx-eval-tester`** | `baseline` | **`evaluator`** | `artifact-durability` | 327 | Roda `cxas test-tools`, `cxas run --eval-type all --wait`, áudio `BidiRunSession`, lê `GET evaluationRuns` e emite Veredito. |
-| **`gecx-qa-tester`** | `baseline` | `worker` | `artifact-durability` | 319 | Validação funcional exploratória geral (base `agent-team`). |
-| **`gecx-researcher`** | `baseline` | `worker` | `artifact-durability` | 355 | Pesquisa técnica e comparação de abordagens (base `agent-team`). |
-| **`gecx-doc-writer`** | `baseline` | `worker` | `artifact-durability` | 328 | Documentação técnica, runbooks e ADRs (base `agent-team`). |
-| **`gecx-release-notes`** | `baseline` | `worker` | `artifact-durability`, `release-notes-daily` | 436 | Consolidação de changelogs e notas de versão (base `agent-team`). |
-| **`gecx-web-builder`** | `baseline` | `worker` | `artifact-durability` | 302 | Protótipos web e páginas de apoio (base `agent-team`). |
-| **`gecx-kaizen-analyst`** | `baseline` | `worker` | `gcp-kaizen-analyst`, `artifact-durability` | <= 500 | Ciclo semanal closed-loop (`weekly-kaizen`): roda `kaizen_collect.py` (0 tokens), verifica `Kaizen-Ref:` e propõe melhorias na Escada de 4 Degraus. |
-
-### 4.3 Como Criar, Importar ou Editar um Especialista
-
-- **No pack versionado (`packs/gecx`):** crie `packs/gecx/templates/<papel>/delta.md` (`<= 15` regras), declare em [packs/gecx/pack.yaml](../packs/gecx/pack.yaml), valide com `./build.sh --check packs/gecx && ./build.sh --test`, gere o kit (`./build.sh --release-kit packs/gecx --out /tmp/gecx-kit`) e aplique via `bootstrap-hub-project.sh apply`.
-- **Atalhos rápidos do Scion CLI:** `scion templates create <nome>`, `scion templates clone gecx-developer meu-dev`, ou `scion templates import .claude/agents/*.md` (também suporta `.gemini/agents/*.md`). O Scion inclui ainda a skill embutida `team-creation` para gerar conjuntos coordenados de papéis.
-
----
-
-## Parte 5 — Smoke Test Passo a Passo: Construindo um Agente GECX Complexo (Depth-3 SEP)
-
-Vamos percorrer **um cenário real de smoke test complexo**, desenhado exatamente para exercitar a hierarquia completa **Depth-3 SEP** (`coordinator → Issue Owner → investigator + architect + eng-manager → múltiplos developers + blind reviewer + test-engineer + security-auditor → deployer + eval-tester`).
-
-> **Cenário do Smoke Test (`Telecom_Support_Center` — Multi-Agente):**
-> Construir um app CX Agent Studio com **3 sub-agentes especializados**, **1 camada compartilhada de autenticação/anti-PII** e **verificação ponta a ponta**:
-> 1. **`auth_guard` (compartilhado):** callback determinístico + `app.json` exigindo `context.state["auth_status"] == "authenticated"` antes de qualquer tool sensível e bloqueando exposição de CPF/telefone nos retornos.
-> 2. **`billing_agent`:** tool `fetch_invoice(account_id)` retornando valor, vencimento e código de barras sintético + 3 tool tests + 1 golden eval.
-> 3. **`tech_support_agent`:** tool `run_line_diagnostics(line_id)` com triagem de sinal e regra explícita de escalonamento para transferência humana (sinalizando fronteira CCaaS como `not-verifiable-in-sandbox`).
-> 4. **`plan_upgrade_agent`:** tool `list_eligible_plans(segment)` + 2 tool tests + 1 golden eval.
-
-### Etapa 1 — Versionar os Requisitos no Repositório-Alvo (Spec-Driven)
-
-Crie `knowledge-plane/requirements.md` no repositório do smoke test, adicione os 4 requisitos (`REQ-101`..`REQ-104`) e **faça commit + push** (lembre: worktrees e clones só enxergam código commitado):
-
-```markdown
-- **REQ-101 (Auth & Anti-PII Compartilhado):** callback deterministico em `cxas_app/Telecom_Support_Center/` bloqueando tools sensiveis quando `context.state["auth_status"] != "authenticated"`.
-- **REQ-102 (`billing_agent`):** sub-agente + tool `fetch_invoice(account_id)` + 3 tool tests + 1 golden eval (zero PII real).
-- **REQ-103 (`tech_support_agent`):** sub-agente + tool `run_line_diagnostics(line_id)` + regra de transferencia CCaaS (declarar `not-verifiable-in-sandbox` se tocar superficie de transferencia).
-- **REQ-104 (`plan_upgrade_agent`):** sub-agente + tool `list_eligible_plans(segment)` + 2 tool tests + 1 golden eval.
-```
-
-### Etapa 2 — Disparar o `gecx-coordinator` Usando `--task-file`
-
-Como o brief de um agente complexo é detalhado, grave o pedido em `smoke-test-brief.md` e use `--task-file` (até 96 KiB, entregue em `~/.scion/task.md`):
 
 ```bash
-cat <<'EOF' > /tmp/smoke-test-brief.md
-Implemente REQ-101 a REQ-104 de knowledge-plane/requirements.md no app Telecom_Support_Center.
-Classifique o porte seguindo software-engineering-process (Depth-3 esperado por envolver
-camada compartilhada de auth + 3 sub-agentes independentes + auditoria de seguranca):
-1. Crie um dedicated issue owner (-t gecx-coordinator --role full).
-2. Execute gecx-investigator (fatos) e gecx-architect (traga o design para minha aprovacao humana).
-3. Apos minha aprovacao do design, use gecx-eng-manager (--role full) para sequenciar REQ-101
-   primeiro e depois paralelizar REQ-102, REQ-103 e REQ-104 com gecx-developer.
-4. Aplique revisao cega cross-vendor com gecx-code-reviewer, reforco de testes com gecx-test-engineer
-   e passada unica de gecx-security-auditor (pois toca autenticacao).
-5. Valide no Sandbox via gecx-deployer + gecx-eval-tester e pare no PR pronto para minha revisao humana.
+# 1. Valide o Dockerfile (advisory no Dia 0; security-auditor exige --strict no PR)
+.venv/bin/python core-gcp-fde/scripts/factory_onboard.py validate-dockerfile \
+  --dockerfile .factory/Dockerfile.customer --strict
+
+# 2. Construa e publique no Artifact Registry do Hub via Cloud Build (sem Docker local)
+AR_REPO="us-central1-docker.pkg.dev/<HUB_PROJECT>/factory-images"
+gcloud builds submit --project="<HUB_PROJECT>" --region="us-central1" \
+  --service-account="projects/<HUB_PROJECT>/serviceAccounts/<name_prefix>-builder@<HUB_PROJECT>.iam.gserviceaccount.com" \
+  --config=/dev/stdin . <<EOF
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", ".factory/Dockerfile.customer", "-t", "${AR_REPO}/<slug>-customer:v1", "."]
+images: ["${AR_REPO}/<slug>-customer:v1"]
+options:
+  logging: CLOUD_LOGGING_ONLY
 EOF
 
-# Dispare o coordinator (sempre sob principal do cliente, --role full, SA worker, tier genérico Vertex AI)
-scion start coordinator \
+# 3. Capture o digest imutavel @sha256:
+CUSTOM_DIGEST="$(gcloud artifacts docker images describe "${AR_REPO}/<slug>-customer:v1" --format='value(image_summary.digest)')"
+CUSTOM_IMAGE="${AR_REPO}/<slug>-customer@${CUSTOM_DIGEST}"
+
+# 4. Crie um harness-config dedicado e sincronize globalmente no Hub (lembre: image: no template eh ignorado!)
+cp -r /tmp/<pack>-kit/harness-configs/antigravity-vertex "/tmp/<slug>-customer"
+sed -i "s|^image:.*|image: \"${CUSTOM_IMAGE}\"|" "/tmp/<slug>-customer/config.yaml"
+scion harness-config sync "/tmp/<slug>-customer" --global
+# Use no spawn: scion start dev-1 -t sw-developer --harness-config <slug>-customer ...
+```
+
+### 3.3 Roteamento de Modelos Vertex AI (`ADR-006`, `ADR-013`, `INV-09`, `INV-10`)
+
+Todos os packs usam **Vertex AI** (`auth_selected_type: vertex-ai`, zero API keys) e tiers genéricos (`extra-large`, `large`, `medium`, `small`) + `thinking_level` (`0–100`) resolvidos por `scripts/lib/model_routing.py`:
+
+| `diversity_profile` | Padrão? | Builder / Architect | Code Reviewer / Security Auditor | Doc Writer | Pré-Requisito no GCP |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`cross-model`** | **Sim (Dia 1)** | `antigravity-vertex` · `extra-large` (`100`) | `antigravity-vertex` · `large` (`100`) | `antigravity-vertex` · `medium` (`50`) | Apenas Gemini 1P (`claude_model_garden_enabled: false`) |
+| **`cross-vendor`** | Opt-In | `antigravity-vertex` · `extra-large` (`100`) | `claude-vertex` · `large` (`75`) | `antigravity-vertex` · `medium` (`50`) | Opt-in manual de Claude no Model Garden + `claude_model_garden_enabled: true` |
+| **`single-family`** | Lab / Restrito | `antigravity-vertex` · `extra-large` (`100`) | Mesma família (aviso humano obrigatório no PR) | `antigravity-vertex` · `medium` (`50`) | Apenas Gemini 1P |
+
+- **Fail-Closed (`INV-10`):** `parse_hub_project.py` recusa `cross-vendor` ou `claude-vertex` quando `harnesses.claude_model_garden_enabled` é `false`.
+- **Quota Cross-Project (`ADR-013`, provado no `HC-02`):** Stage 03 injeta `GOOGLE_CLOUD_QUOTA_PROJECT=<inference_project_id>` nos **harness-configs** sempre que `--landing-zone` é passado, e nas **env vars do projeto no Hub** quando `SCION_HUB_TOKEN` está exportado (confirme `SET PROJECT ENV:` na saída do `apply`).
+
+---
+
+## Parte 4 — Arquitetura 4-Camadas, Catálogo Multi-Pack (`gecx`, `adk`, `generic`) e Multi-Fábrica em 1 Hub
+
+![Arquitetura em 4 Camadas & Release Kit Offline](assets/scion_template_anatomy.png)
+
+### 4.1 Comparativo dos 3 Packs Ativos (`v0.6.0 contra-filé`)
+
+| Dimensão | `packs/gecx` (`v0.5.0`) | `packs/adk` (`v0.5.0`) | `packs/generic` (`v0.6.0`) |
+| :--- | :--- | :--- | :--- |
+| **Templates & Prefixo** | **16** (`gecx-*`) | **16** (`adk-*`) | **15** (`sw-*`, sem `eval-tester`, filtrável por `roster`) |
+| **Hub Skill Bank** | **11** (5 projeto + 6 por papel) | **18** (5 projeto + 13 por papel, incl. 7 `agents-cli`) | **10** (4 projeto + 6 por papel) |
+| **Alvo / Stack** | CX Agent Studio (CES texto + áudio `BidiRunSession`) | ADK `2.15.0` (`agents-cli v1.15.0` `app/`, `ADR-014`) + `GE App` | Qualquer software (Go, TS/Node, Python, Java, Rust, monorepo) |
+| **Gate & Janitor** | `gecx-eval-runner.sh` + CES `evaluationRuns` + `sandbox_janitor.py` | `adk_sandbox_gate.py` + `ge_export.py` + `sandbox_janitor.py` | `generic_sandbox_gate.py --base-ref` + Cloud Run `sandbox_janitor.py` |
+
+### 4.2 Catálogo Unificado de Papéis SEP
+
+| Papel Base | Prefixo (`gecx` / `adk` / `sw`) | `--role` Hub | SA no Hub | Função na Hierarquia SEP |
+| :--- | :--- | :--- | :--- | :--- |
+| **`coordinator`** | `gecx-` / `adk-` / `sw-` | **`full`** | `factory-worker` | Raiz do portfólio (standby PO-gated em `v0.6.0`) ou *Dedicated Issue Owner* em Depth-3. |
+| **`eng-manager`** | `gecx-` / `adk-` / `sw-` | **`full`** | `factory-worker` | Decompõe o design aprovado em fases, sequencia base e media revisão cega. |
+| **`investigator` · `architect` · `researcher`** | `gecx-` / `adk-` / `sw-` | `baseline` | `factory-worker` | Arqueologia factual (`investigator`), design/ADRs direto ao humano (`architect`) e pesquisa (`researcher`). |
+| **`developer` · `code-reviewer` · `test-engineer`** | `gecx-` / `adk-` / `sw-` | `baseline` | `factory-worker` | Implementação isolada, revisão cega em modelo distinto (`reviewer_replicas: 2` com `max_wip >= 4`) e testes *Prove-It*. |
+| **`security-auditor`** | `gecx-` / `adk-` / `sw-` | `baseline` | `factory-worker` | Passada única pré-PR (§4 SEP): auth, secrets, PII, IAM e `validate-dockerfile --strict`. *(CodeMender: Issue `#3`.)* |
+| **`qa-tester`, `doc-writer`, `release-notes`, `web-builder`** | `gecx-` / `adk-` / `sw-` | `baseline` | `factory-worker` | Apoio opcional; papéis fora do escopo entram em `roster.disabled_roles`. |
+| **`kaizen-analyst`** | `gecx-` / `adk-` / `sw-` | `baseline` | `factory-worker` *(ou `kaizen`)* | Ciclo semanal (`weekly-kaizen`): `kaizen_collect.py` (0 tokens) + PRs de melhoria humana. |
+| **`deployer`** *(domínio)* | `gecx-deployer` / `adk-deployer` / `sw-generic-deployer` | `baseline` | **`<pack_prefix>-deployer`** | Único com escrita `[CI]` no Sandbox (omitido se `deploy_target: none` ou `mode: ci-only`). |
+| **`eval-tester`** *(domínio)* | `gecx-eval-tester` / `adk-eval-tester` *(não existe em `generic`)* | `baseline` | **`<pack_prefix>-evaluator`** | Executa evals live sob SA somente leitura/execução e emite Veredito. |
+
+### 4.3 Múltiplas Fábricas no Mesmo Scion Hub (Validado no `HC-09`)
+
+Um único Scion Hub (`lite-vm` ou `ha-gke`) hospeda **N repositórios heterogêneos simultaneamente**, isolados por `--slug`, `monorepo.subdir`, `monorepo.agent_prefix`, skill `skills/<slug>-repo-conventions/SKILL.md` e agente `<prefix>-coordinator` independente. O commit `0d5512b` trata `409 already exists` de forma idempotente quando múltiplos bootstraps rodam em paralelo no mesmo Hub.
+
+---
+
+## Parte 5 — Onboarding Brownfield Dia 0: `/grill-me` (E1), Knowledge Plane (E2) e Coordinator em Standby
+
+![Onboarding Brownfield Dia 0 & Multi-Fábrica em 1 Hub](assets/brownfield_onboarding_and_kp.png)
+
+### 5.1 Ordem Correta Sem Paradoxo: E1 (Antes do Stage 01) → Infra/Digest → E2 (Emit + Standby)
+
+1. **Fase E1 (antes do Stage 01):** rode `scan --emit-draft`, conduza o `/grill-me` de 6 pilares (`express` ~10 min ou `complete` ~25 min) e valide `check` até `"ready": true`. As decisões do PO (`deploy_target`, `mode`, `enable_sandbox_project`, `existing_hub`) geram os toggles exatos do Stage 01!
+2. **Infra & Build (Stages 01, 02 e D):** provisione Terraform + imagens `@sha256:`.
+3. **Fase E2 (após a Etapa D):** leia o digest real em `manifest.json`, rode `emit --pack-image "$PACK_IMAGE_DIGEST"` (atômico, anti-symlink, zero-clobber) e confirme `kp-check` = 0 erros.
+4. **Stage 03 (`apply`):** filtra `roster.disabled_roles`, omite `-w` no `scion start` (mantendo `.factory/` e `AGENTS.md` em `/workspace`), valida idempotência via `scion --format json list` e sobe **`<prefix>-coordinator`** em **standby PO-gated** (passe `--no-start-coordinator` em CI headless).
+
+### 5.2 Por Que Equilíbrio Cognitivo > Heurísticas Infinitas (Lição do `HC-09`)
+
+Testando 5 repos públicos brownfield em paralelo (`trigger.dev`, `ruff`, `adk-samples`, `scion`, `spring-petclinic`), firmamos a fronteira limpa: **determinismo** cobre contratos estruturais (schemas, anti-symlink, zero-clobber, `kp-check`, `409` concorrente); **raciocínio cognitivo (`/grill-me`)** interpreta regras contraditórias em `CLAUDE.md`/`.cursorrules`/hooks legados e monorepos arbitrários sem heurísticas frágeis.
+
+---
+
+## Parte 6 — 3 Walkthroughs Concretos de Ponta a Ponta (`gecx`, `adk` e `generic`)
+
+### 6.1 Cenário A (`packs/gecx`) — `Telecom_Support_Center` (Depth-3 SEP)
+
+**Requisitos versionados em `.factory/knowledge/requirements.md` (commit + push):** `REQ-101` (`auth_guard` determinístico anti-PII), `REQ-102` (`billing_agent`), `REQ-103` (`tech_support_agent` sinalizando transferência CCaaS como `not-verifiable-in-sandbox`) e `REQ-104` (`plan_upgrade_agent`).
+
+```bash
+# 1. Grave o brief em arquivo (ate 96 KiB, entregue em ~/.scion/task.md)
+cat <<'EOF' > /tmp/smoke-test-brief.md
+Implemente REQ-101 a REQ-104 de .factory/knowledge/requirements.md em Telecom_Support_Center.
+Classifique como Depth-3 (SEP):
+1. Crie Dedicated Issue Owner (-t gecx-coordinator --role full).
+2. Rode gecx-investigator (fatos) e gecx-architect (traga o ADR para minha aprovacao humana).
+3. Apos aprovacao, use gecx-eng-manager (--role full) para entregar REQ-101 primeiro e depois
+   paralelizar REQ-102..REQ-104 com gecx-developer.
+4. Aplique revisao cega com gecx-code-reviewer, testes Prove-It com gecx-test-engineer e
+   passada unica de gecx-security-auditor (§4 SEP).
+5. Valide no Sandbox via gecx-deployer + gecx-eval-tester e pare no PR para aprovacao humana.
+EOF
+
+# 2. Dispare o coordinator sob principal do cliente (label de SA no Hub = factory-worker)
+scion start gecx-coordinator \
   -t gecx-coordinator \
   --role full \
   --service-account factory-worker \
@@ -544,12 +409,10 @@ scion start coordinator \
   --wait-ready
 ```
 
-### Etapa 3 — O Que Acontece por Dentro na Árvore Depth-3
-
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Human as FDE ou Cliente
+    actor Human as PO ou Tech Lead
     participant Root as gecx-coordinator
     participant Owner as Issue Owner full
     participant Inv as gecx-investigator
@@ -560,38 +423,66 @@ sequenceDiagram
     participant Sec as gecx-security-auditor
     participant Sbx as deployer e eval-tester
 
-    Human->>Root: Entrega smoke-test-brief via task-file
+    Human->>Root: Entrega brief REQ-101 a REQ-104 via task-file
     Root->>Owner: Cria dedicated issue owner Depth-3
     Owner->>Inv: Mapeia cxas_app e /opt/gecx-foundry
     Inv-->>Owner: Entrega fatos sem decisoes de design
     Owner->>Arch: Projeta topologia e fases de gating
-    Arch-->>Human: Apresenta design direto ao humano sem code-reviewer
-    Human-->>Owner: Aprova design via Web Chat ou scion message
+    Arch-->>Human: Publica ADR via Hub Artifact e pede aprovacao direta
+    Human-->>Owner: Aprova design via Web Chat ou Decisions
     Owner->>EM: Delega execucao com design aprovado
-    EM->>Devs: Fase 1 sequencial REQ-101 app.json e auth callback
+    EM->>Devs: Fase 1 sequencial REQ-101 app.json e auth_guard
     Devs-->>EM: Branch REQ-101 pronto com Level 1 verde
     EM->>Devs: Fase 2 paralela REQ-102 REQ-103 REQ-104
     Devs-->>EM: Durability push e suspend aguardando review
-    EM->>Rev: Passada cega limpa em outro vendor Claude
+    EM->>Rev: Passada cega limpa em modelo distinto
     Rev-->>EM: Veredito APPROVE nos 5 eixos
     Owner->>Sec: Passada unica pre-PR por alterar autenticacao
     Sec-->>Owner: Zero achados Critical ou High
     EM->>Sbx: gecx-deployer push CI e gecx-eval-tester Verdict
-    Sbx-->>Human: PR pronto com Verdict Gate para revisao humana
+    Sbx-->>Human: PR pronto com Verdict Gate para aprovacao humana
 ```
 
-**Quatro detalhes finos do processo SEP que você vai observar acontecendo ao vivo nesse smoke test:**
+### 6.2 Cenário B (`packs/adk`, `ADR-014`) — Agente ADK `2.15` Nativo `agents-cli` + Dual Export `GE App`
 
-1. **O design NÃO entra em loop de `code-reviewer`:** conforme §2 do `software-engineering-process`, artefatos de arquitetura/prosa vão **direto para você** discutir e aprovar no Chat ou via `scion message @<issue-owner> "Design aprovado, pode seguir para o eng-manager."`.
-2. **Sequenciamento antes do fan-out:** o `gecx-eng-manager` não dispara 4 devs ao mesmo tempo para brigarem pelo `app.json`. Primeiro um dev entrega e valida `REQ-101` (base compartilhada + auth callback). Só depois ele abre 3 `gecx-developer` em paralelo (`dev-billing`, `dev-tech`, `dev-plans`).
-3. **Economia de recursos com `suspend`:** assim que cada `gecx-developer` faz *durability push* da branch, o `gecx-eng-manager` suspende o dev (`scion suspend`) enquanto o `gecx-code-reviewer` roda em container limpo e modelo oposto. Se houver achado bloqueante, ele apenas chama `scion resume` no dev original com o relatório `arquivo:linha`, e abre um **novo** `gecx-code-reviewer` limpo para a segunda passada cega!
-4. **Checklist humano final (2 minutos):** você confere o Status Check `GECX Verdict Gate`, revisa os novos arquivos em `evals/` e aplica a label `eval-change-approved`, valida eventuais itens em `not_verifiable_surfaces` (como a transferência CCaaS de `REQ-103`) e aprova o merge.
+1. **Level 1 Offline (flag exata `level1-only`):**
+   ```bash
+   .venv/bin/python packs/adk/scripts/adk_sandbox_gate.py \
+     --mode level1-only \
+     --repo-dir . \
+     --pr-number 12 \
+     --commit-sha "$(git rev-parse HEAD)" \
+     --verdict-out .factory/verdicts/pr-12.json
+   ```
+   Valida `pytest`, contrato `Dockerfile` (`USER appuser`, `uvicorn app.fast_api_app:app`, zero `cloudpickle`) e `packs/adk/scripts/ge_export.py` (`agent_engine` ou `a2a`).
+2. **Level 2 Split-SA (`--mode sandbox-live`):** `adk-deployer` implanta usando a SA same-project `<name_prefix>-adk-runtime@<sbx>` (`ADR-013`, compatível com `disableCrossProjectServiceAccountUsage`). `adk-eval-tester` (read-only + `sandboxEvaluatorPredict`) roda `adk eval` / smoke A2A e grava o Veredito.
+3. **CI + Janitor (`adk-verdict-gate.yml`):** valida readback via `SANDBOX_PROJECT_NUMBER` e remove ReasoningEngines, registros GE e serviços Cloud Run `factory_ci=true` (`HC-06`) em `if: always()`.
+
+### 6.3 Cenário C (`packs/generic`, `ADR-016`) — Repositório Brownfield (Cloud Run ou CLI/Lib Sem Sandbox)
+
+1. **Fase E1:** rode `factory_onboard.py scan --pack generic` + `/grill-me`. Em Stage 01, **sempre passe `enable_gecx_sandbox_roles = false`**; para biblioteca/CLI sem Sandbox use `enable_sandbox_project = false` (`deploy_target: none`, `mode: ci-only`); para API Cloud Run use `enable_generic_sandbox_roles = true`.
+2. **Fase E2 + Stage 03:** emita `.factory/`, rode `kp-check` e `bootstrap-hub-project.sh apply`. Confirme `@sw-coordinator` em standby com `scion list` e aprove a Wave-1 no Chat.
+3. **Gate Anti-Auto-Certificação:** `packs/generic/scripts/generic_sandbox_gate.py --base-ref origin/main` lê `commands` e `deploy_target` do commit base (impedindo que o PR enfraqueça seus próprios testes), executa Level 1 sem credenciais e exige `e2e` fail-closed se `deploy_target != none`.
 
 ---
 
-## Parte 6 — Dia 2: Ciclo de Vida, Triage Rápido, Teardown e Coding Agent CLI
+## Parte 7 — Topologias GCP (3 / 2 / 1 Projeto + Sem Sandbox), Split-SA e Operação Dia 2
 
-### 6.1 Ciclo de Vida (`stop` vs. `suspend` + Recuperação)
+![Landing Zone GCP & Isolamento Split-SA Zero-PII](assets/gcp_landing_zone_and_split_sa.png)
+
+### 7.1 Topologias GCP, IAM e FinOps Honesto (`INV-02`, `INV-03`, `INV-04`, `ADR-013`, `ADR-016`)
+
+| Topologia (Mesmo Terraform) | Configuração | Quando Usar |
+| :--- | :--- | :--- |
+| **3 Projetos** *(Produção)* | `hub != inf != sbx` (`enable_sandbox_project = true`) | Isolamento completo de Control Plane, cotas/budget Vertex AI e Sandbox descartável. |
+| **2 Projetos** *(Piloto Ágil)* | `hub == inf` + `sbx` separado | Menos projetos mantendo Sandbox descartável isolado. |
+| **2 ou 1 Projeto Sem Sandbox** *(Exceção CI)* | `enable_sandbox_project = false` | Fluxos `ci-only` ou libs/CLIs (`deploy_target: none`); cria só 4 SAs e move o staging bucket para o Hub. *(Nota: GitHub WIF no Stage 01 exige `enable_sandbox_project = true`.)* |
+| **1 Projeto Com Sandbox** *(Lab)* | `hub == inf == sbx` | Laboratório ou orgs sob `disableCrossProjectServiceAccountUsage`. |
+
+- **FinOps real na `v0.6.0`:** o Stage 01 (`finops.tf`) cria Budget Alerts 70%/90% publicando no tópico Pub/Sub `<name_prefix>-budget-alerts` (**sem consumidor automático no Stage 01**). O freio determinístico em runtime vem de `default_max_model_calls=150` / `default_max_turns=60` (`HC-04 M5.6`, `exitCode=10`) + cotas TPM no `inference_project_id`. Sob Domain Restricted Sharing (`DRS`), defina `enable_budget_pubsub_topic = false` (`HC-04 F2`).
+- **Regra absoluta:** `DEV / HML / PRD` nunca entram no Hub; promoções ocorrem apenas no CI/CD após PR aprovado por humano (`gcp-fde-guardrails`, Rule 3).
+
+### 7.2 Ciclo de Vida (`stop` vs. `suspend`)
 
 ```mermaid
 stateDiagram-v2
@@ -608,92 +499,98 @@ stateDiagram-v2
 
 | Aspecto | `scion stop <agente>` | `scion suspend <agente>` |
 | :--- | :--- | :--- |
-| **Fase resultante** | `stopped` | `suspended` (grava `suspendReason`: `user`, `idle` ou `stalled`) |
-| **Próximo `start`/`resume`** | Sessão **nova** (limpa) | **Continua** a conversa (`--continue` no Claude, `--resume` no Gemini CLI) |
-| **Atividade preservada** | Limpa | Mantém `completed`, `idle` ou `harness_error` (ex.: `suspended · completed (stalled)`) |
-| **Auto-wake** | Nunca acorda sozinho | Agentes suspensos por `idle`/`stalled` acordam ao receber mensagem (com `lifecycle.idle_suspend`). Suspensos por `user` não acordam sozinhos. |
+| **Fase resultante** | `stopped` | `suspended` (`user`, `idle` ou `stalled`) |
+| **Próximo `start`/`resume`** | Sessão **nova** (limpa) | **Continua** a conversa (`--continue` / `--resume`) |
+| **Auto-wake** | Nunca | Suspensos por `idle`/`stalled` acordam com mensagem *(requer experimento `lifecycle.idle_suspend` habilitado no Hub)*. Suspensos por `user` não acordam sozinhos. |
 
-> [!TIP]
-> **`start` e `resume` são conscientes da intenção:** `scion start` em um agente `suspended` faz resume implícito da conversa. `scion resume` em um agente `stopped` inicia sessão limpa. No runtime Docker (nosso `lite-vm`), o home do agente fica em bind-mount no host e preserva sessões automaticamente. Em Kubernetes/Cloud Run, session resume exige volume persistente (NFS/Filestore).
+### 7.3 Painel Rápido de Comandos (`scion v0.4.0-preview.3` & Catálogo `v0.6.0`)
 
-### 6.2 Painel Rápido de Comandos Diários (`scion v0.4.0-preview.3`)
-
-| Objetivo | Comando Verificado |
+| Objetivo | Comando (sintaxe upstream `v0.4.0-preview.3` / scripts do catálogo) |
 | :--- | :--- |
-| **Ver toda a árvore de agentes e status** | `scion list` (filtrar quem aguarda humano: `scion list --activity waiting_for_input`) |
-| **Espiar a tela sem interromper** | `scion look <agente> -n 50 --plain` ou `scion logs <agente>` |
-| **Enviar instrução ou aprovar design** | `scion message @<agente> "Design aprovado. Siga para implementacao."` |
-| **Enviar brief grande sem truncar** | `scion message @<agente> --body-file /tmp/brief.md` |
-| **Destravar prompt `y/n` no terminal** | `scion keys <agente> "Enter"` (uma tecla por chamada) |
-| **Ver e responder decisões abertas** | `scion decisions list` → `scion decisions show <id>` → `scion decisions record` |
-| **Assumir terminal tmux ao vivo** | `scion attach <agente>` (`Ctrl-b d` para sair) |
-| **Agendar um ciclo recorrente (ex. Kaizen semanal)** | `scion schedule create-recurring --name weekly-kaizen --cron "0 17 * * 5" --time-zone America/Sao_Paulo --type message --agent coordinator --wake --message "..."` |
-| **Pausar tudo no fim do expediente** | `scion suspend --all` (ou `scion suspend <agente>` num `idle` para travá-lo como `user`) |
-| **Retomar no dia seguinte** | `scion resume coordinator` |
+| **Ver árvore e descobrir nome exato do Coordinator** | `scion list` (`scion list --activity waiting_for_input` ou `scion --format json list`) |
+| **Espiar tela sem interromper** | `scion look <agente> -n 50 --plain` ou `scion logs <agente>` |
+| **Aprovar Wave-1 / design no Coordinator (`v0.6.0`)** | `scion message @<prefix>-coordinator "Wave-1 aprovada. Pode iniciar W1-01."` *(ex.: `@sw-coordinator`)* |
+| **Enviar brief grande (> 5 KB)** | `scion message @<agente> --body-file /tmp/brief.md` |
+| **Destravar prompt `y/n` no TTY** | `scion keys <agente> "Enter"` *(uma tecla por chamada; nunca `--raw`)* |
+| **Ver decisões abertas / histórico** | `scion decisions list --all-projects` · `scion decisions list --made -q "auth"` |
+| **Assumir terminal tmux ao vivo** | `scion attach <agente>` (`Ctrl-b d` para sair mantendo rodando) |
+| **Validar Knowledge Plane do repo** | `.venv/bin/python core-gcp-fde/scripts/factory_onboard.py kp-check --repo .` |
+| **Coletar telemetria Kaizen (0 tokens)** | `.venv/bin/python core-gcp-fde/scripts/kaizen_collect.py --repo . --out /tmp/kaizen.json` |
+| **Pausar / retomar o Coordinator** | `scion suspend <prefix>-coordinator` / `scion resume <prefix>-coordinator` |
 
-### 6.3 Tabela de Triage Rápido (`local/agent-lifecycle.md`)
+### 7.4 Tabela de Triage Rápido (Achados Empíricos de `HC-01`–`HC-09`)
 
 > [!IMPORTANT]
-> **Regra #1 de Triage:** nunca delete e recrie um agente travado como primeira reação (isso destrói arquivos não enviados no worktree e o histórico). Inspecione antes com `scion look <agente>` e `scion logs <agente>`.
+> **Regra #1 de Triage:** nunca delete e recrie um agente travado como primeira reação (destrói alterações não enviadas). Inspecione antes com `scion look <agente>` e `scion logs <agente>`.
 
 | Sintoma | Causa Provável | Ação Correta de Recuperação |
 | :--- | :--- | :--- |
-| **`harness error`** (`APIError 400/429`) | Vertex AI rejeitou o turno (quota, modelo ou credencial), mas o harness continua rodando. | Corrija a causa e envie `scion message <agente> "continue"`. Não recrie. |
-| **`LIMITS_EXCEEDED`** | Atingiu `default_max_turns` (`60`) ou `default_max_duration` (`2h`). | Envie `scion message <agente> "continue"` para abrir novo ciclo. |
-| **Prompt interativo travado (`y/n`)** | Ferramenta aguardou confirmação no TTY. | Envie `scion keys <agente> "Enter"` (nunca use `scion message --raw`, removido com HTTP `422 raw_input_removed`). |
+| **`403 Permission denied` no Vertex AI em 3 projetos** | Faltou `GOOGLE_CLOUD_QUOTA_PROJECT=<inference_project_id>` (`ADR-013`) ou cota/permissão `vertexInferencePredict` foi alterada manualmente. | Exporte `SCION_HUB_TOKEN`, rode `bootstrap-hub-project.sh apply --landing-zone ...` e confirme `SET PROJECT ENV:` na saída. |
+| **`403` no Cloud Run / Agent Engine ao anexar SA** | `disableCrossProjectServiceAccountUsage` bloqueou `worker@inference` no Sandbox. | Use `<name_prefix>-adk-runtime@<sandbox>` (`ADR-013`) ou topologia de 1 projeto. |
+| **`409 Conflict` em `apply` paralelo no mesmo Hub** | Dois repos inicializando skills/templates globais simultaneamente (`HC-09`). | Use `v0.6.0` (`0d5512b`, idempotente em `409`) e re-execute `apply`. |
+| **`harness error` (`APIError 400/429`)** | Vertex AI rejeitou o turno (cota TPM ou modelo). | Ajuste cota/modelo e envie `scion message <agente> "continue"`. |
+| **`LIMITS_EXCEEDED`** | Atingiu `default_max_turns` (`60`), `default_max_model_calls` (`150`) ou `default_max_duration` (`2h`). | Revise o progresso e envie `scion message <agente> "continue"`. |
+| **Prompt interativo travado (`y/n`)** | Ferramenta aguardou TTY. | Envie `scion keys <agente> "Enter"` (nunca `--raw`, removido com HTTP `422`). |
 | **`no_runtime_broker` (422)** | Reconexão temporária após reinício da VM. | Aguarde 30–60 s e confira `scion runtime-broker status`. |
-| **Fase `error (crashed)`** | Container saiu com código não-zero ou OOM (`exit 137`). | Tente `scion resume --force <agente>` ou reinicie limpo com `scion start <agente>`. |
-| **`skill_resolution_failed` (404/500)** | Skill ausente no Skill Bank, falta de permissão ou symlink dentro da pasta. | Confira `scion skills list` e rode `bootstrap-hub-project.sh apply`. |
+| **`error (crashed)` / exit `137`** | Crash ou OOM de compilação pesada. | Tente `scion resume --force <agente>` ou isole build pesado. |
+| **`skill_resolution_failed` (404/500)** | Skill ausente no Skill Bank, falta de permissão ou symlink proibido. | Confira `scion skills list` e rode `bootstrap-hub-project.sh apply`. |
 
-**Três regras de ouro para teardown *bottom-up*:**
-1. **De baixo para cima:** encerre primeiro workers (`devs`, `reviewers`, `deployer`, `eval-tester`), depois `gecx-eng-manager`, depois o Issue Owner e por último o `gecx-coordinator`.
-2. **Pergunta humana aberta bloqueia deleção:** nunca delete um agente com `ask_user` sem resposta.
-3. **Commit não é Push:** antes de `scion delete <agente> --non-interactive`, confirme que o branch já está no remoto (um commit só dentro do container morre com o container).
+**Teardown *bottom-up*:** encerre workers primeiro → `eng-manager` → Issue Owners → `<prefix>-coordinator` (sempre após confirmar `git push` e zero `ask_user` pendentes).
 
-### 6.4 Dirigindo o Scion Hub via Coding Agent Local (`SCION_HUB_TOKEN`)
-
-Para permitir que um agente no seu terminal (Claude Code, Gemini CLI ou Jetski) consulte e opere o Hub com segurança (`hosted/user/coding-agent-cli.md`):
+### 7.5 Dirigindo o Hub via Coding Agent Local (`SCION_HUB_TOKEN`)
 
 ```bash
 scion hub token create \
-  --project telecom-support-gecx \
+  --project meu-projeto-slug \
   --name "local-coding-agent" \
   --scopes project:read,project:list,agent:list,agent:read,agent:create,agent:message,skill:read,skill:list,template:read,template:list,harness_config:read,harness_config:list \
   --expires 30d
 ```
 
-- Exporte `SCION_HUB_TOKEN` em um `HOME` isolado (um login interativo salvo em `~/.scion/` tem precedência sobre o token!) e use `--format json` (`stdout` vira JSON puro e avisos vão para `stderr`).
-- **Nunca inclua `agent:delete`** nesse token nem passe `--yes` / `--non-interactive` — sem essas flags, o CLI sem TTY responde "Não" com segurança a ações destrutivas.
+Exporte `SCION_HUB_TOKEN` em um `HOME` isolado (login interativo em `~/.scion/` tem precedência), use `--format json` e **nunca inclua `agent:delete`**.
 
 ---
 
-## Parte 7 — Customização por Cliente (Overlay), Kaizen e Referências Oficiais
+## Parte 8 — Motor Kaizen Closed-Loop, Overlay, Ledger Hillclimbing (`HC-01`–`HC-09`), Roadmap e Referências
 
-### 7.1 Overlay de Skills sem Forkar o Pack
+### 8.1 Motor Kaizen Closed-Loop (`v0.3.0`–`v0.6.0`, `INV-11`, `ADR-007`)
 
-Nunca altere `packs/gecx` para regras de um único cliente (tom de voz, fluxos proprietários ou políticas comerciais). Use o **Overlay no repositório do cliente**:
+1. **Agenda padrão (`weekly-kaizen`):** Stage 03 agenda `0 17 * * 5` (`America/Sao_Paulo` — sextas 17:00 BRT) acordando o agente configurado em `kaizen.coordinator_agent` (`<prefix>-coordinator`, `--wake`) *(desabilitável via `kaizen.enabled: false`)*.
+2. **Coleta 0-Token (`kaizen_collect.py`):**
+   - **Tier A (sempre ativo):** Hub API, Git, `.factory/verdicts/`, `WORKAROUNDS.yaml` (TTL 90d), scratchpad e toolchain manifest (`schemas/kaizen-snapshot.schema.json`).
+   - **Tier B (opcional — exige 2 flags!):** ligue `enable_kaizen_gcp_obs = true` no Stage 01 **e** `kaizen.enable_gcp_obs: true` em `.factory/hub-project.yaml` para registrar `<name_prefix>-kaizen@` e consultar Cloud Monitoring/Logging read-only.
+3. **Verificação Closed-Loop (`kaizen_verifier.py`):** PRs de melhoria carregam `Kaizen-Ref: <id>`; na semana seguinte o verificador mede o resultado e marca `verified_pass` ou `rollback_triggered`.
+4. **Escada de 4 Degraus:** (1) 1ª ocorrência → PR/REQ; (2) 2ª ocorrência → **teste/linter determinístico** (nunca empilhe mais texto no prompt!); (3) ajuste cirúrgico de skill/roster (teto 1.800 linhas); (4) destilação clean-room para o catálogo com `- source:`.
 
-1. Crie `skills/regras-tom-de-voz/SKILL.md` (`scion skills create regras-tom-de-voz`).
-2. Declare em `.factory/hub-project.yaml`:
-   ```yaml
-   overlay_skills:
-     - dir: "skills/regras-tom-de-voz"
-       version: "1.0.0"
-   ```
-3. Para substituir uma skill do pack em vez de somar, adicione o nome da original em `exclude_skills:` (`./build.sh --check` bloqueia colisão de nomes).
-4. Sincronize com `bootstrap-hub-project.sh overlay-sync --kit /tmp/gecx-kit --hub http://127.0.0.1:8080 --repo /caminho/do/repo`.
+### 8.2 Overlay de Skills Sem Forkar o Pack
 
-### 7.2 Regra de Ouro de Kaizen (1ª vs. 2ª Ocorrência)
+Declare regras exclusivas do cliente em `.factory/hub-project.yaml` (`overlay_skills` + opcional `exclude_skills`) e sincronize com `bootstrap-hub-project.sh overlay-sync --kit /tmp/<pack>-kit --hub http://127.0.0.1:8080 --repo /caminho/do/repo`.
 
-- **1ª ocorrência de erro do agente:** corrija na revisão do PR ou torne `knowledge-plane/requirements.md` explícito.
-- **2ª ocorrência do mesmo erro:** não empilhe mais 20 linhas de prosa no prompt — gradue a regra para um teste determinístico em `evals/callback_tests/` ou regra de CI (custo zero de tokens).
-- **Lição generalizável:** remova identificadores do cliente, reproduza em repo sintético, adicione `- source:` e abra PR em `gcp-fde-factories`.
+### 8.3 Ledger de Qualificação Live em GCP (`HC-01`–`HC-09`, `INV-16`)
 
-### 7.3 Referências Oficiais (`GoogleCloudPlatform/scion@v0.4.0-preview.3` & `agent-team`)
+9 campanhas reais em projetos GCP efêmeros com 73 findings resolvidos e teardown verificado a `$0` ([HILLCLIMBING_CHARTER.md](HILLCLIMBING_CHARTER.md)):
 
-- **Arquitetura & Modos:** [Overview](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/overview.md), [Choosing a Mode](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/choosing-a-mode.md) e [Core Concepts & Agent State Model](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/concepts.md).
-- **Tutorial, Workspaces & Filesystem:** [Tutorial](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/getting-started/tutorial.md), [Connecting to a Hub](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/hosted-user.md), [About Workspaces & Host Git Safety](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/workspace.md), [Workspaces & Sharing Modes](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/workspaces-and-sharing.md), [Volume Source Restrictions](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/orchestrator-settings.md) e [Interactive Tmux](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/tmux.md).
-- **Specs, ADRs, Artifacts & Decisions Nativas:** [Using Artifacts & Track-Changes Reviews](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/artifacts.md), [Artifacts Reference](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/artifacts.md) e [Decisions (`web.decisions`)](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/messaging.md).
-- **Templates, Skills & Imagens:** [Templates & Roles](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/templates.md), [Agent Config Reference](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/agent-config.md), [Skills Authoring](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/skills.md), [Skill Registry & Federation](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/single-node/skill-registry.md), [Building Custom Images](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/custom-images.md) e [Harness Settings](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/harness-settings.md).
-- **Comunicação, Dashboard & Segurança:** [Web Dashboard](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/workstation/dashboard.md), [Messaging & Notifications](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/messaging.md), [Messaging Authorization](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/messaging-authorization.md), [Permissions, Roles & Ancestry (`hosted/ha/permissions.md`)](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/ha/permissions.md), [Permissions & AK1 Kernel](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/reference/permissions-policy.md), [Agent Lifecycle & Triage](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/agent-lifecycle.md) e [Coding Agent CLI](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/coding-agent-cli.md).
-- **Hierarquia SEP (`scion-frontiers/agent-team`):** [Repositório @ `08faf48`](https://github.com/scion-frontiers/agent-team/tree/08faf48269da7d8dd0a20c4e5ca5093afb37495d) e [Software Engineering Process (`SKILL.md`)](https://github.com/scion-frontiers/agent-team/blob/08faf48269da7d8dd0a20c4e5ca5093afb37495d/skills/software-engineering-process/SKILL.md).
+| Campanha | Release | Cenário Validado ao Vivo | Principais Evoluções |
+| :--- | :--- | :--- | :--- |
+| **`HC-01`** | `acém v0.4.0` | 2 sandboxes paralelos (Lite VM + GECX, GKE + ADK) | 31 findings → `vertexInferencePredict`, `container_hub_endpoint`, `docker-credential-gcloud`, lição `--dev-auth`. |
+| **`HC-02`** | `acém` | Topologia 3 projetos (`hub` + `inf` + `sbx`) VM + GKE | 14 findings → **`ADR-013`** (`GOOGLE_CLOUD_QUOTA_PROJECT`, `adk_runtime`, `gke_node`, `SANDBOX_PROJECT_NUMBER`). |
+| **`HC-03`** | `acém` | Brownfield overlays, GKE Filestore RWX, A2A/Verdict, WIF | 8 findings → staging bucket, overlay UUID, WIF commit SHA binding. |
+| **`HC-04`** | `acém` | Upgrade/rollback Hub, `max_model_calls` (`M5.6`), Tier-B Kaizen | 5 findings → `enable_budget_pubsub_topic` (DRS), `kaizen_viewer` predict+usage, prova `exitCode=10` em `max_model_calls`. |
+| **`HC-05`** | `acém` | Org Policies endurecidas + brownfield real | 6 findings → **`ADR-014`** (ADK `agents-cli`), **`ADR-015`** (onboarding cognitivo + validador advisory), build manual `Dockerfile.customer`. |
+| **`HC-06`** | `acém` | **11,68 h** endurance soak contínuo overnight (VM + ADK) | 1 finding → Janitor ADK limpando Cloud Run `factory_ci=true`. |
+| **`HC-07`** | **`bife v0.5.0`** | Dual-runtime cold-start sanity gate (VM + GKE) | `0` Showstoppers, `5/5` gates PASS, teardown `$0`. |
+| **`HC-08`** | **`contra-filé v0.6.0`** | 2 projetos **sem Sandbox** (`enable_sandbox_project=false`) + `packs/generic` | 2 findings → qualificação E2E de `sw-*`, Knowledge Plane e Coordinator standby. |
+| **`HC-09`** | **`contra-filé v0.6.0`** | **5 repos públicos brownfield em paralelo no mesmo Hub** | 4 findings → resiliência a `409` concorrente e equilíbrio cognitivo `/grill-me`. |
+
+### 8.4 Roadmap Público
+
+- **Issue `#1` — Automated Upstream Dependency Upgrades & Live Canaries** (`https://github.com/carlosmscabral/gcp-fde-factories/issues/1`): sync semanal de `scion`, `agent-team`, `agents-cli`, `cxas-scrapi` + checker live para `canaries/scion/`.
+- **Issue `#2` — Provider-Agnostic External Delta Watcher (Cloud Run + Cloud Scheduler)** (`https://github.com/carlosmscabral/gcp-fde-factories/issues/2`): evolui o protótipo `scripts/delta-watcher/watcher.py` para serviço Cloud Run 0-token (GitHub, ADO, GitLab, Jira).
+- **Issue `#3` — Integração CodeMender na Camada de Segurança** (`https://github.com/carlosmscabral/gcp-fde-factories/issues/3`): adoção opt-in do `cm` CLI (Gemini Enterprise Agent Platform — Public Preview) no `security-auditor` e CI WIF (SARIF v2.1.0), com SA dedicada preservando `INV-03`/`INV-04`.
+
+### 8.5 Referências Oficiais
+
+- **Scion `v0.4.0-preview.3`:** [Overview](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/overview.md), [Choosing a Mode](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/choosing-a-mode.md), [Core Concepts](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/concepts.md), [Workspaces](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/workspace.md), [Artifacts](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/artifacts.md), [Messaging & Decisions](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/messaging.md), [Permissions & Roles](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/ha/permissions.md), [Custom Images](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/custom-images.md), [Lifecycle & Triage](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/local/agent-lifecycle.md) e [Coding Agent CLI](https://github.com/GoogleCloudPlatform/scion/blob/v0.4.0-preview.3/docs-site/src/content/docs/hosted/user/coding-agent-cli.md).
+- **Hierarquia SEP (`scion-frontiers/agent-team`):** [Repositório @ `08faf48`](https://github.com/scion-frontiers/agent-team/tree/08faf48269da7d8dd0a20c4e5ca5093afb37495d) e [SEP `SKILL.md`](https://github.com/scion-frontiers/agent-team/blob/08faf48269da7d8dd0a20c4e5ca5093afb37495d/skills/software-engineering-process/SKILL.md).
+- **ADK & `google/agents-cli`:** [google/agents-cli](https://github.com/google/agents-cli) e [ADK Docs](https://google.github.io/adk-docs/).
+- **Documentação Normativa deste Catálogo:** [INVARIANTS.md](INVARIANTS.md), [docs/adr/README.md](adr/README.md), [deploy/ENTERPRISE_PREREQUISITES.md](../deploy/ENTERPRISE_PREREQUISITES.md) e [HILLCLIMBING_CHARTER.md](HILLCLIMBING_CHARTER.md).
