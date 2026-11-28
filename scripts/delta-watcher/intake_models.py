@@ -6,7 +6,17 @@ strictly on pure policy evaluation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any
+
+HTML_COMMENT_RE = re.compile(r"<!--(?:.*?-->|.*$)", re.DOTALL)
+INVISIBLE_UNICODE_RE = re.compile(r"[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff\U000e0000-\U000e007f]")
+
+
+def sanitize_untrusted_text(text: str) -> str:
+    """Removes hidden HTML comments and invisible Unicode characters before prompt forwarding."""
+    cleaned = INVISIBLE_UNICODE_RE.sub("", HTML_COMMENT_RE.sub(" ", text or ""))
+    return " ".join(cleaned.split())
 
 DEFAULT_BOT_LOGINS = (
     "github-actions",
@@ -16,6 +26,7 @@ DEFAULT_BOT_LOGINS = (
     "scion-bot",
     "scion-factory[bot]",
 )
+DEFAULT_ALLOWED_AUTHOR_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
 MAX_SEEN_COMMENT_IDS = 2000
 
 
@@ -32,6 +43,7 @@ class IntakePolicy:
     paused: bool = False
     bot_logins: tuple[str, ...] = DEFAULT_BOT_LOGINS
     echo_marker: str = "<!-- scion-factory -->"
+    allowed_author_associations: tuple[str, ...] = DEFAULT_ALLOWED_AUTHOR_ASSOCIATIONS
 
     def normalized_capacity(self) -> int:
         """Clamps portfolio concurrency to the SEP empirical ceiling of 1 to 3 issues."""

@@ -1,4 +1,4 @@
-# Harness configuration for Antigravity via Vertex AI (aligned to Scion v0.4.0-preview.3).
+# Harness configuration for Antigravity via Vertex AI (aligned to Scion v0.4.0-preview.4).
 # Uses Scion's generic model tier (`extra-large`) without hardcoding model_aliases so every
 # upstream Scion release automatically upgrades the concrete flagship Gemini model.
 # Override per agent at spawn via `scion start --harness-config ... --model <tier-or-id> --thinking-level <0-100>`.

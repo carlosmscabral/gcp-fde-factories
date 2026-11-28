@@ -1,6 +1,8 @@
-# Harness configuration for Claude Code via Vertex AI Model Garden (aligned to Scion v0.4.0-preview.3).
+# Harness configuration for Claude Code via Vertex AI Model Garden (aligned to Scion v0.4.0-preview.4).
 # Uses Scion's generic model tier (`large`) without hardcoding model_aliases so upstream Scion
 # updates the concrete Opus model over time. ANTHROPIC_MODEL is omitted from env: so `--model` works.
+# Passes --setting-sources user and --strict-mcp-config so Claude keeps Scion's ~/.claude/settings.json
+# sciontool hooks while ignoring untrusted repo .claude/settings*.json and .mcp.json (CVE-2025-59536/CVE-2026-21852).
 # Prerequisite: enable Anthropic Claude manually in Vertex AI Model Garden on inference_project_id
 # and set harnesses.claude_model_garden_enabled: true in .factory/hub-project.yaml.
 schema_version: "1"
@@ -9,6 +11,10 @@ harness: claude
 auth_selected_type: vertex-ai
 image: "us-central1-docker.pkg.dev/REPLACE_HUB_PROJECT/factory-images/REPLACE_PACK_RUNTIME@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 model: "large"
+args:
+  - "--setting-sources"
+  - "user"
+  - "--strict-mcp-config"
 env:
   CLAUDE_CODE_USE_VERTEX: "1"
   GOOGLE_CLOUD_LOCATION: "global"

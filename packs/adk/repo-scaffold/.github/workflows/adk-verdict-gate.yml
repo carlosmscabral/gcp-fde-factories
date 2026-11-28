@@ -34,8 +34,16 @@ jobs:
 
       - name: Enforce AGENTS.md, CLAUDE.md, and GEMINI.md parity
         run: |
-          cmp -s AGENTS.md CLAUDE.md
-          cmp -s AGENTS.md GEMINI.md
+          for sibling in CLAUDE.md GEMINI.md; do
+            if [[ ! -f "$sibling" ]]; then
+              echo "::error::Missing required AI instruction file: $sibling"
+              exit 1
+            fi
+            if ! cmp -s AGENTS.md "$sibling" && ! grep -qx '@AGENTS\.md' "$sibling"; then
+              echo "::error::$sibling must either match AGENTS.md or include an @AGENTS.md bridge."
+              exit 1
+            fi
+          done
 
       - name: Block unapproved evals/ edits without human label
         env:

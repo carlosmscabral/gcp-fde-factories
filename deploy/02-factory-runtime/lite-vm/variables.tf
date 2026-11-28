@@ -163,9 +163,27 @@ variable "delta_watcher_scion_project_id" {
 }
 
 variable "delta_watcher_coordinator_agent" {
-  description = "Scion coordinator agent slug notified by the External Delta Watcher."
+  description = "Scion coordinator agent slug notified by the External Delta Watcher. Must match kaizen.coordinator_agent in .factory/hub-project.yaml (for example adk-coordinator, gecx-coordinator, or sw-coordinator)."
   type        = string
   default     = "coordinator"
+}
+
+variable "delta_watcher_paused" {
+  description = "If true, pauses new issue dispatches while still forwarding human replies and PR action signals."
+  type        = bool
+  default     = false
+}
+
+variable "delta_watcher_github_graphql_url" {
+  description = "Optional custom GitHub GraphQL endpoint for GitHub Enterprise Server or GHEC data residency."
+  type        = string
+  default     = ""
+}
+
+variable "delta_watcher_allowed_associations" {
+  description = "Optional comma-separated GitHub authorAssociation allowlist for Delta Watcher comments and PR signals (defaults to OWNER,MEMBER,COLLABORATOR)."
+  type        = string
+  default     = ""
 }
 
 variable "delta_watcher_cadence_cron" {

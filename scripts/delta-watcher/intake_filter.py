@@ -15,6 +15,7 @@ from intake_models import (
     TickDecision,
     WakeupEvent,
     WatcherState,
+    sanitize_untrusted_text,
 )
 
 DEPENDS_ON_RE = re.compile(r"\bdepends\s+on\s+#(\d+)\b", re.IGNORECASE)
@@ -38,7 +39,17 @@ __all__ = [
     "WatcherState",
     "evaluate_tick",
     "parse_dependencies",
+    "sanitize_untrusted_text",
 ]
+
+
+def _is_trusted_association(author_association: str, policy: IntakePolicy) -> bool:
+    """Allows trusted repo roles and rejects untrusted drive-by actors on public or inner-source repos."""
+    assoc = author_association.strip().upper()
+    if not assoc:
+        return True
+    allowed = {a.strip().upper() for a in policy.allowed_author_associations if a.strip()}
+    return assoc in allowed
 
 
 def parse_dependencies(body: str) -> set[int]:
@@ -146,14 +157,15 @@ def evaluate_tick(
             "updated_at": item.updated_at,
         }
         dispatched_now.append(item.number)
+        clean_title = sanitize_untrusted_text(item.title)
         events.append(
             WakeupEvent(
                 kind="new_issue",
                 issue_number=item.number,
                 pr_number=None,
-                title=item.title,
+                title=clean_title,
                 url=item.url,
-                summary=f"Newly eligible issue #{item.number}: {item.title}",
+                summary=f"Newly eligible issue #{item.number}: {clean_title}",
                 author=item.author,
             )
         )
@@ -172,23 +184,29 @@ def evaluate_tick(
         if _is_echo_comment(comment, policy):
             _bump("bot_or_echo_comment")
             continue
-        snippet = " ".join(comment.body.split())[:180]
+        if not _is_trusted_association(comment.author_association, policy):
+            _bump("untrusted_author_association")
+            continue
+        snippet = sanitize_untrusted_text(comment.body)[:180]
         events.append(
             WakeupEvent(
                 kind="human_comment",
                 issue_number=comment.item_number,
                 pr_number=None,
-                title=open_by_num[comment.item_number].title,
+                title=sanitize_untrusted_text(open_by_num[comment.item_number].title),
                 url=comment.url,
                 summary=f"Human comment by @{comment.author} on {comment.target_kind} for #{comment.item_number}: {snippet}",
                 author=comment.author,
             )
         )
 
-    # 3. Forward actionable linked PR signals (CI/Verdict failure or human Changes Requested).
+    # 3. Forward actionable linked PR signals from trusted PR authors only (CI/Verdict failure or Changes Requested).
     for pr in open_prs:
         linked_active = sorted(n for n in pr.linked_issue_numbers if n in active_nums)
         if not linked_active:
+            continue
+        if not _is_trusted_association(pr.author_association, policy):
+            _bump("untrusted_pr_author")
             continue
         needs_ci = pr.checks_state.upper() in ("FAILURE", "ERROR")
         needs_review = pr.review_decision.upper() == "CHANGES_REQUESTED"
@@ -201,14 +219,15 @@ def evaluate_tick(
             continue
         next_pr_signals[pr_key] = signal
         reasons = [r for r in (f"checks={pr.checks_state.upper()}" if needs_ci else "", "review=CHANGES_REQUESTED" if needs_review else "") if r]
+        clean_pr_title = sanitize_untrusted_text(pr.title)
         events.append(
             WakeupEvent(
                 kind="pr_action_needed",
                 issue_number=linked_active[0],
                 pr_number=pr.number,
-                title=pr.title,
+                title=clean_pr_title,
                 url=pr.url,
-                summary=f"PR #{pr.number} ({', '.join(reasons)}) for issue #{linked_active[0]}",
+                summary=f"PR #{pr.number} ({', '.join(reasons)}) for issue #{linked_active[0]}: {clean_pr_title}",
                 author=pr.author,
             )
         )

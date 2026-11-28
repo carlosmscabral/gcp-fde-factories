@@ -82,15 +82,22 @@ def run_tick(
         prev_state = WatcherState.from_dict(raw_state)
 
         open_items = adapter.list_open_items()
+        open_nums = {item.number for item in open_items}
+        active_prev_nums = {int(k) for k in prev_state.dispatched_issues if k.isdigit()}
+        missing_active = active_prev_nums - open_nums
+        # Preserve still-open dispatched issues even if their release label was removed (H2).
+        if missing_active and hasattr(adapter, "get_open_items_by_numbers"):
+            extra_open = adapter.get_open_items_by_numbers(missing_active)
+            open_items.extend(extra_open)
+            open_nums.update(item.number for item in extra_open)
+
         open_prs = adapter.list_open_prs()
 
         referenced_deps: set[int] = set()
         for item in open_items:
             referenced_deps.update(parse_dependencies(item.body))
-        open_nums = {item.number for item in open_items}
         closed_deps = adapter.get_closed_item_numbers(referenced_deps - open_nums)
 
-        active_prev_nums = {int(k) for k in prev_state.dispatched_issues if k.isdigit()}
         comments = adapter.list_comments(active_prev_nums | open_nums)
 
         decision = evaluate_tick(

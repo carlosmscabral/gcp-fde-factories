@@ -31,3 +31,9 @@ description: Core Google Cloud FDE factory guardrails overriding periodic sweeps
 ## Rule 5 — Respect Hard FinOps Bounds
 - If the Inference Project budget guard revokes `roles/aiplatform.user`, halt all retries immediately and escalate to the customer operator.
 - source: https://cloud.google.com/billing/docs/how-to/budgets-programmatic-notifications
+
+## Rule 6 — Read Root `AGENTS.md` and Protect Container Trust Boundaries
+- Read root `AGENTS.md` and `.factory/` before editing code, even when running Claude Code with `--setting-sources user`.
+- Do not enable unvetted workspace hooks or project `.mcp.json` servers inside agent containers.
+- If a repository tracks files with Git LFS, run `git lfs push origin <branch>` before `git push` because `core.hooksPath` is neutralized at `/dev/null`.
+- source: https://agents.md/

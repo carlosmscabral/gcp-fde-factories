@@ -13,7 +13,12 @@ import urllib.request
 from typing import Any, Callable
 
 from adapters.base import CommentEvent, PullRequestEvent, WorkItem
-from adapters.github_queries import OPEN_ISSUES_QUERY, OPEN_PRS_QUERY
+from adapters.github_queries import (
+    OPEN_ISSUES_QUERY,
+    OPEN_PRS_QUERY,
+    build_closed_items_query,
+    build_open_issues_by_numbers_query,
+)
 
 DEFAULT_GRAPHQL_URL = "https://api.github.com/graphql"
 ISSUE_REF_RE = re.compile(r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?)\s+#(\d+)", re.IGNORECASE)
@@ -70,10 +75,35 @@ def _parse_comments(nodes: list[Any], item_number: int, target_kind: str) -> lis
             body=str(c.get("body") or ""),
             url=str(c.get("url") or ""),
             created_at=str(c.get("createdAt") or ""),
+            author_association=str(c.get("authorAssociation") or "").upper(),
         )
         for c in nodes
         if isinstance(c, dict) and c.get("id")
     ]
+
+
+def _parse_issue_node(node: dict[str, Any]) -> tuple[WorkItem, list[CommentEvent]]:
+    """Normalizes one GraphQL Issue node into a WorkItem and its recent CommentEvent list."""
+    num = int(node["number"])
+    labels = tuple(
+        str(lbl["name"])
+        for lbl in ((node.get("labels") or {}).get("nodes") or [])
+        if isinstance(lbl, dict) and lbl.get("name")
+    )
+    item = WorkItem(
+        id=str(node.get("id") or f"issue-{num}"),
+        number=num,
+        title=str(node.get("title") or ""),
+        body=str(node.get("body") or ""),
+        state=str(node.get("state") or "OPEN").upper(),
+        labels=labels,
+        author=str(((node.get("author") or {}).get("login")) or ""),
+        url=str(node.get("url") or ""),
+        updated_at=str(node.get("updatedAt") or ""),
+        author_association=str(node.get("authorAssociation") or "").upper(),
+    )
+    comments = _parse_comments((node.get("comments") or {}).get("nodes") or [], num, "issue")
+    return item, comments
 
 
 class GitHubTrackerAdapter:
@@ -87,6 +117,7 @@ class GitHubTrackerAdapter:
         max_pages: int = 5,
         timeout: float = 20.0,
         http_post: HttpPostFn | None = None,
+        filter_labels: tuple[str, ...] = (),
     ) -> None:
         parts = repo_slug.strip().split("/")
         if len(parts) != 2 or not parts[0] or not parts[1]:
@@ -97,6 +128,7 @@ class GitHubTrackerAdapter:
         self._max_pages = max(1, max_pages)
         self._timeout = timeout
         self._http_post = http_post or _default_http_post
+        self._filter_labels = tuple(lbl.strip() for lbl in filter_labels if lbl and lbl.strip())
         self._cached_issue_comments: dict[int, list[CommentEvent]] = {}
         self._cached_pr_comments: dict[int, list[CommentEvent]] = {}
 
@@ -121,32 +153,20 @@ class GitHubTrackerAdapter:
         self._cached_issue_comments.clear()
         cursor: str | None = None
         for _ in range(self._max_pages):
-            data = self._graphql(OPEN_ISSUES_QUERY, {"owner": self._owner, "name": self._name, "cursor": cursor})
+            variables: dict[str, Any] = {
+                "owner": self._owner,
+                "name": self._name,
+                "cursor": cursor,
+                "labels": list(self._filter_labels) or None,
+            }
+            data = self._graphql(OPEN_ISSUES_QUERY, variables)
             conn = (data.get("repository") or {}).get("issues") or {}
             for node in conn.get("nodes") or []:
                 if not isinstance(node, dict):
                     continue
-                num = int(node["number"])
-                labels = tuple(
-                    str(lbl["name"])
-                    for lbl in ((node.get("labels") or {}).get("nodes") or [])
-                    if isinstance(lbl, dict) and lbl.get("name")
-                )
-                items.append(
-                    WorkItem(
-                        id=str(node.get("id") or f"issue-{num}"),
-                        number=num,
-                        title=str(node.get("title") or ""),
-                        body=str(node.get("body") or ""),
-                        state=str(node.get("state") or "OPEN").upper(),
-                        labels=labels,
-                        author=str(((node.get("author") or {}).get("login")) or ""),
-                        url=str(node.get("url") or ""),
-                        updated_at=str(node.get("updatedAt") or ""),
-                    )
-                )
-                raw_comments = (node.get("comments") or {}).get("nodes") or []
-                self._cached_issue_comments[num] = _parse_comments(raw_comments, num, "issue")
+                item, node_comments = _parse_issue_node(node)
+                items.append(item)
+                self._cached_issue_comments[item.number] = node_comments
             page = conn.get("pageInfo") or {}
             if not page.get("hasNextPage") or not page.get("endCursor"):
                 break
@@ -177,6 +197,7 @@ class GitHubTrackerAdapter:
                         linked_issue_numbers=linked,
                         checks_state=_extract_checks_state(node),
                         review_decision=str(node.get("reviewDecision") or "").upper(),
+                        author_association=str(node.get("authorAssociation") or "").upper(),
                     )
                 )
                 raw_comments = (node.get("comments") or {}).get("nodes") or []
@@ -198,21 +219,32 @@ class GitHubTrackerAdapter:
         result.sort(key=lambda c: (c.created_at, c.id))
         return result
 
+    def get_open_items_by_numbers(self, numbers: set[int]) -> list[WorkItem]:
+        """Fetches currently open tracked issues by number regardless of labels so active slots and comments never drop (H2)."""
+        if not numbers:
+            return []
+        sorted_nums = sorted(numbers)[:50]
+        data = self._graphql(build_open_issues_by_numbers_query(sorted_nums), {"owner": self._owner, "name": self._name})
+        repo = data.get("repository") or {}
+        found: list[WorkItem] = []
+        for n in sorted_nums:
+            node = repo.get(f"i{n}")
+            if not isinstance(node, dict) or str(node.get("state") or "").upper() != "OPEN":
+                continue
+            item, node_comments = _parse_issue_node(node)
+            found.append(item)
+            self._cached_issue_comments[item.number] = node_comments
+        return found
+
     def get_closed_item_numbers(self, numbers: set[int]) -> set[int]:
         """Queries GitHub in one aliased GraphQL batch to check which dependencies are closed."""
         if not numbers:
             return set()
         sorted_nums = sorted(numbers)[:50]
-        aliases = "\n".join(
-            f"i{n}: issueOrPullRequest(number: {n}) {{ ... on Issue {{ number state }} }}"
-            for n in sorted_nums
-        )
-        query = f"query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ {aliases} }} }}"
-        data = self._graphql(query, {"owner": self._owner, "name": self._name})
+        data = self._graphql(build_closed_items_query(sorted_nums), {"owner": self._owner, "name": self._name})
         repo = data.get("repository") or {}
-        closed: set[int] = set()
-        for n in sorted_nums:
-            node = repo.get(f"i{n}")
-            if isinstance(node, dict) and str(node.get("state") or "").upper() == "CLOSED":
-                closed.add(n)
-        return closed
+        return {
+            n
+            for n in sorted_nums
+            if isinstance(repo.get(f"i{n}"), dict) and str(repo[f"i{n}"].get("state") or "").upper() == "CLOSED"
+        }

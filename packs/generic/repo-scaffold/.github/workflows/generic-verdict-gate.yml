@@ -1,0 +1,224 @@
+# Contract 3 & 5 server-side anti-forgery PR verification workflow for packs/generic (sw-*).
+# Splits untrusted PR code execution (Job 1: zero WIF permissions, --network none, no creds file)
+# from PR Verdict provenance verification and always() Janitor teardown (Job 2: reads Verdict
+# strictly from git commit history via git show so PR code can never forge or steal tokens).
+name: Generic Software Anti-Forgery Verdict Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  l1-offline-gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: read
+    env:
+      EVALUATOR_SA: "${{ vars.GENERIC_EVALUATOR_SA_EMAIL }}"
+      WIF_PROVIDER: "${{ vars.GCP_WIF_PROVIDER }}"
+      GENERIC_RUNTIME_IMAGE: "${{ vars.GENERIC_RUNTIME_IMAGE_DIGEST }}"
+
+    steps:
+      - name: Checkout PR head with base history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Block unapproved verification profile, workflow, or evals/ edits without human label
+        env:
+          BASE_SHA: "${{ github.event.pull_request.base.sha }}"
+          PR_HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
+          PR_LABELS: "${{ join(github.event.pull_request.labels.*.name, ',') }}"
+        run: |
+          CHANGED="$(git diff --no-renames --name-only "$BASE_SHA" "$PR_HEAD_SHA")"
+          if grep -Eq '(^|.*/)(evals/|\.factory/(factory-profile|hub-project|factory)\.yaml$|\.factory/Dockerfile\.customer|\.github/workflows/)' <<< "$CHANGED"; then
+            if ! tr ',' '\n' <<< "$PR_LABELS" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -qx 'eval-change-approved'; then
+              echo "::error::PR modifies evals/, .factory/ verification profile, customer Dockerfile, or workflows without human label 'eval-change-approved'."
+              exit 1
+            fi
+          fi
+
+      - name: Fail closed if digest-pinned generic runtime image is missing
+        run: |
+          if [[ -z "$GENERIC_RUNTIME_IMAGE" || "$GENERIC_RUNTIME_IMAGE" != *"@sha256:"* ]]; then
+            echo "::error::vars.GENERIC_RUNTIME_IMAGE_DIGEST must be set to a digest-pinned image from Stage 03."
+            exit 1
+          fi
+
+      - name: Pull pinned runtime image before running untrusted PR code (no credential file written)
+        if: env.WIF_PROVIDER != '' && env.EVALUATOR_SA != ''
+        id: auth-pull
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: "${{ env.WIF_PROVIDER }}"
+          service_account: "${{ env.EVALUATOR_SA }}"
+          token_format: access_token
+          create_credentials_file: false
+
+      - name: Run isolated server-side Level 1 gate (--network none, zero cloud credentials)
+        env:
+          PULL_TOKEN: "${{ steps.auth-pull.outputs.access_token }}"
+          BASE_SHA: "${{ github.event.pull_request.base.sha }}"
+          PR_LABELS: "${{ join(github.event.pull_request.labels.*.name, ',') }}"
+        run: |
+          if [[ -n "$PULL_TOKEN" ]]; then
+            REG="${GENERIC_RUNTIME_IMAGE%%/*}"
+            printf '%s' "$PULL_TOKEN" | docker login -u oauth2accesstoken --password-stdin "https://${REG}" >/dev/null
+            docker pull "$GENERIC_RUNTIME_IMAGE" >/dev/null
+            docker logout "https://${REG}" >/dev/null || true
+          fi
+          BASE_REF_ARGS=(--base-ref "$BASE_SHA")
+          # Allow initial onboarding PR when base branch lacks .factory/factory-profile.yaml and human approved via label.
+          if ! git cat-file -e "${BASE_SHA}:.factory/factory-profile.yaml" 2>/dev/null; then
+            if tr ',' '\n' <<< "$PR_LABELS" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -qx 'eval-change-approved'; then
+              BASE_REF_ARGS=()
+            else
+              echo "::error::Base branch lacks .factory/factory-profile.yaml. Add label 'eval-change-approved' for initial onboarding PR."
+              exit 1
+            fi
+          fi
+          docker run --rm --network none --entrypoint "" --user "$(id -u):$(id -g)" \
+            -v "$PWD:/workspace" -w /workspace \
+            "$GENERIC_RUNTIME_IMAGE" \
+            python3 /opt/generic-factory/generic_sandbox_gate.py \
+              --repo /workspace \
+              --level 1 \
+              "${BASE_REF_ARGS[@]}"
+
+  verify-verdict:
+    needs: l1-offline-gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: read
+    env:
+      VERDICT_FILE: ".factory/verdicts/pr-${{ github.event.pull_request.number }}.json"
+      SANDBOX_PROJECT: "${{ vars.GENERIC_SANDBOX_PROJECT_ID }}"
+      SANDBOX_PROJECT_NUMBER: "${{ vars.GENERIC_SANDBOX_PROJECT_NUMBER }}"
+      EVALUATOR_SA: "${{ vars.GENERIC_EVALUATOR_SA_EMAIL }}"
+      JANITOR_SA: "${{ vars.GENERIC_JANITOR_SA_EMAIL }}"
+      WIF_PROVIDER: "${{ vars.GCP_WIF_PROVIDER }}"
+      GENERIC_RUNTIME_IMAGE: "${{ vars.GENERIC_RUNTIME_IMAGE_DIGEST }}"
+
+    steps:
+      - name: Checkout clean PR head with base history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Inspect PR diff, deploy_target, and required Verdict (fail closed)
+        env:
+          BASE_SHA: "${{ github.event.pull_request.base.sha }}"
+          PR_HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
+          PR_LABELS: "${{ join(github.event.pull_request.labels.*.name, ',') }}"
+        run: |
+          CHANGED="$(git diff --no-renames --name-only "$BASE_SHA" "$PR_HEAD_SHA")"
+          NON_DOCS="$(grep -Ev '^(README\.md|docs/.*|.*\.md|\.factory/.*)$' <<< "$CHANGED" || true)"
+          PROFILE_REF="$BASE_SHA"
+          if ! git cat-file -e "${BASE_SHA}:.factory/factory-profile.yaml" 2>/dev/null; then
+            PROFILE_REF="$PR_HEAD_SHA"
+          fi
+          DEPLOY_TARGET="$(git show "${PROFILE_REF}:.factory/factory-profile.yaml" 2>/dev/null | awk -F: '/^deploy_target:/{gsub(/[[:space:]"'"'"']/, "", $2); print $2; exit}' || true)"
+          DEPLOY_TARGET="${DEPLOY_TARGET:-none}"
+          if [[ -n "$NON_DOCS" && "$DEPLOY_TARGET" != "none" ]]; then
+            echo "REQUIRE_LIVE=true" >> "$GITHUB_ENV"
+          else
+            echo "REQUIRE_LIVE=false" >> "$GITHUB_ENV"
+          fi
+          if git cat-file -e "${PR_HEAD_SHA}:${VERDICT_FILE}" 2>/dev/null; then
+            mkdir -p /tmp/verdict-check
+            git show "${PR_HEAD_SHA}:${VERDICT_FILE}" > /tmp/verdict-check/verdict.json
+            echo "SKIP_VERDICT=false" >> "$GITHUB_ENV"
+          else
+            if ! tr ',' '\n' <<< "$PR_LABELS" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -qx 'no-verdict-approved'; then
+              echo "::error::Missing required PR Verdict '${VERDICT_FILE}' (add label 'no-verdict-approved' for docs-only PRs)."
+              exit 1
+            fi
+            echo "SKIP_VERDICT=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Authenticate to Evaluator SA via WIF (no credentials file in workspace)
+        if: env.SKIP_VERDICT != 'true' && env.WIF_PROVIDER != '' && env.EVALUATOR_SA != ''
+        id: auth-eval
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: "${{ env.WIF_PROVIDER }}"
+          service_account: "${{ env.EVALUATOR_SA }}"
+          token_format: access_token
+          create_credentials_file: false
+
+      - name: Verify PR Verdict provenance inside digest-pinned runtime image
+        if: env.SKIP_VERDICT != 'true'
+        env:
+          EVAL_ACCESS_TOKEN: "${{ steps.auth-eval.outputs.access_token }}"
+          PR_HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
+          PR_NUM: "${{ github.event.pull_request.number }}"
+        run: |
+          if [[ -n "$EVAL_ACCESS_TOKEN" ]]; then
+            REG="${GENERIC_RUNTIME_IMAGE%%/*}"
+            printf '%s' "$EVAL_ACCESS_TOKEN" | docker login -u oauth2accesstoken --password-stdin "https://${REG}" >/dev/null
+          fi
+          export EXPECTED_CODE_SHA="$(git log -n 1 --format=%H "$PR_HEAD_SHA" -- . ':(exclude).factory/verdicts/')"
+          if [[ -z "${SANDBOX_PROJECT_NUMBER:-}" && "${WIF_PROVIDER:-}" == projects/* ]]; then
+            CAND_NUM="$(echo "$WIF_PROVIDER" | awk -F/ '{print $2}')"
+            if [[ "$CAND_NUM" =~ ^[0-9]+$ ]]; then
+              export SANDBOX_PROJECT_NUMBER="$CAND_NUM"
+            fi
+          fi
+          docker run --rm --entrypoint "" --user "$(id -u):$(id -g)" \
+            -v "$PWD:/workspace:ro" -v "/tmp/verdict-check:/verdict:ro" -w /workspace \
+            -e EVAL_ACCESS_TOKEN -e EXPECTED_CODE_SHA -e PR_NUM \
+            -e SANDBOX_PROJECT -e SANDBOX_PROJECT_NUMBER -e EVALUATOR_SA -e REQUIRE_LIVE \
+            "$GENERIC_RUNTIME_IMAGE" bash -euo pipefail -c '
+              EXTRA_ARGS=()
+              if [[ "$REQUIRE_LIVE" == "true" ]]; then
+                EXTRA_ARGS+=(--require-live)
+              fi
+              if [[ -n "${SANDBOX_PROJECT:-}" ]]; then
+                EXTRA_ARGS+=(--sandbox-project "$SANDBOX_PROJECT")
+              fi
+              if [[ -n "${SANDBOX_PROJECT_NUMBER:-}" ]]; then
+                EXTRA_ARGS+=(--sandbox-project-number "$SANDBOX_PROJECT_NUMBER")
+              fi
+              if [[ -n "${EVALUATOR_SA:-}" ]]; then
+                EXTRA_ARGS+=(--expected-evaluator-sa "$EVALUATOR_SA")
+              fi
+              python3 /opt/gcp-fde/verify-verdict.py \
+                --schema /opt/gcp-fde/schemas/verdict.schema.json \
+                --verdict /verdict/verdict.json \
+                --expected-pack generic \
+                --expected-pr-number "$PR_NUM" \
+                --expected-commit "$EXPECTED_CODE_SHA" \
+                --evals-dir evals \
+                "${EXTRA_ARGS[@]}"
+            '
+
+      - name: Authenticate to Janitor SA for always() sandbox teardown
+        if: always() && env.WIF_PROVIDER != '' && env.JANITOR_SA != '' && env.SANDBOX_PROJECT != ''
+        id: auth-janitor
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: "${{ env.WIF_PROVIDER }}"
+          service_account: "${{ env.JANITOR_SA }}"
+          token_format: access_token
+          create_credentials_file: false
+
+      - name: Clean up expired ephemeral CI Cloud Run services (if always)
+        if: always() && steps.auth-janitor.outputs.access_token != ''
+        env:
+          JANITOR_TOKEN: "${{ steps.auth-janitor.outputs.access_token }}"
+        run: |
+          REG="${GENERIC_RUNTIME_IMAGE%%/*}"
+          printf '%s' "$JANITOR_TOKEN" | docker login -u oauth2accesstoken --password-stdin "https://${REG}" >/dev/null || true
+          docker run --rm --entrypoint "" --user "$(id -u):$(id -g)" \
+            -e JANITOR_TOKEN -e SANDBOX_PROJECT \
+            "$GENERIC_RUNTIME_IMAGE" bash -euo pipefail -c '
+              python3 /opt/generic-factory/sandbox_janitor.py --project "$SANDBOX_PROJECT" --region us-central1 || true
+            '

@@ -74,6 +74,25 @@ resource "google_cloud_run_v2_service" "delta_watcher" {
         name  = "DELTA_WATCHER_MAX_CONCURRENT_ISSUES"
         value = tostring(var.delta_watcher_max_concurrent_issues)
       }
+      env {
+        name  = "DELTA_WATCHER_PAUSED"
+        value = tostring(var.delta_watcher_paused)
+      }
+
+      dynamic "env" {
+        for_each = length(trimspace(var.delta_watcher_github_graphql_url)) > 0 ? [1] : []
+        content {
+          name  = "DELTA_WATCHER_GITHUB_GRAPHQL_URL"
+          value = var.delta_watcher_github_graphql_url
+        }
+      }
+      dynamic "env" {
+        for_each = length(trimspace(var.delta_watcher_allowed_associations)) > 0 ? [1] : []
+        content {
+          name  = "DELTA_WATCHER_ALLOWED_ASSOCIATIONS"
+          value = var.delta_watcher_allowed_associations
+        }
+      }
 
       dynamic "env" {
         for_each = length(trimspace(var.delta_watcher_token_secret_id)) > 0 ? [1] : []

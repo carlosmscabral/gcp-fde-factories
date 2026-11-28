@@ -11,17 +11,25 @@ USER root
 ARG FINAL_USER=scion
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    HUSKY=0 \
     GCP_FDE_DIR=/opt/gcp-fde \
     UV_PYTHON_INSTALL_DIR=/opt/gcp-fde/python \
     VIRTUAL_ENV=/opt/gcp-fde/.venv \
     PATH="/opt/gcp-fde/.venv/bin:${PATH}"
 
-# Install baseline CLI dependencies without overwriting an already newer git from a Scion base image.
+# Install baseline CLI dependencies (gh for code-review/Kaizen, git-lfs for LFS smudge/clean checkout)
+# without overwriting an already newer git from a Scion base image. Neutralize repo-level Git hooks via
+# core.hooksPath=/dev/null (note: LFS smudge/clean filters remain active; run `git lfs push` before `git push`
+# when committing new LFS objects). Keep npm scripts enabled by default so pretest/prisma/esbuild builds succeed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
+      gh \
+      git-lfs \
       jq \
     && (command -v git >/dev/null 2>&1 || apt-get install -y --no-install-recommends git) \
+    && git config --system core.hooksPath /dev/null \
+    && git lfs install --system --skip-repo \
     && rm -rf /var/lib/apt/lists/*
 
 # Ensure the non-root scion user (UID 1000) exists when built on top of a plain Debian Python image.
@@ -46,6 +54,6 @@ COPY WORKAROUNDS.yaml "${GCP_FDE_DIR}/WORKAROUNDS.yaml"
 RUN chmod 0555 "${GCP_FDE_DIR}/kaizen_collect.py" "${GCP_FDE_DIR}/factory_onboard.py" "${GCP_FDE_DIR}/verify-verdict.py" \
     && chown -R root:root "${GCP_FDE_DIR}" \
     && chmod -R a+rX,go-w "${GCP_FDE_DIR}" \
-    && su -s /bin/sh scion -c 'PATH="/opt/gcp-fde/.venv/bin:$PATH" python3 /opt/gcp-fde/kaizen_collect.py --help >/dev/null && PATH="/opt/gcp-fde/.venv/bin:$PATH" python3 /opt/gcp-fde/factory_onboard.py --help >/dev/null'
+    && su -s /bin/sh scion -c 'gh --version >/dev/null && git lfs version >/dev/null && PATH="/opt/gcp-fde/.venv/bin:$PATH" python3 /opt/gcp-fde/kaizen_collect.py --help >/dev/null && PATH="/opt/gcp-fde/.venv/bin:$PATH" python3 /opt/gcp-fde/factory_onboard.py --help >/dev/null'
 
 USER ${FINAL_USER}

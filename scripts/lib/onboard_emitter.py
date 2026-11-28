@@ -15,8 +15,10 @@ import yaml
 
 from scripts.lib.dockerfile_recipes import render_conditional_dockerfile
 from scripts.lib.io_utils import assert_no_symlink_escape, atomic_write_bytes
+from scripts.lib.onboard_git_ops import compute_unified_diffs
 from scripts.lib.onboard_hub_config import build_hub_project_overlay, merge_modernization_backlog
 from scripts.lib.onboard_kp import plan_knowledge_plane
+from scripts.lib.onboard_security import compute_hazard_digests, detect_hooks_and_ai_divergence
 from scripts.lib.schema_validator import validate_against_schema
 
 START_MARKER = "<!-- gcp-fde-factory:start -->"
@@ -104,7 +106,11 @@ def _render_conventions_skill(profile: dict[str, Any]) -> str:
     cmds = profile["commands"]
     ai_list = ", ".join(profile.get("ai_files_detected") or []) or "none"
     absorbed = profile.get("absorbed_conventions") or []
-    absorbed_lines = "".join(f"- {rule}\n" for rule in absorbed) if absorbed else "- Follow pre-existing repository AI instructions.\n"
+    absorbed_lines = (
+        "".join(f"- {rule}\n" for rule in absorbed)
+        if absorbed
+        else "- Reconcile pre-existing repository AI files against SEP guardrails before execution. If a repo rule conflicts with PR-only workflow or Verification Gates, SEP guardrails win.\n"
+    )
     return (
         f"---\nname: {slug}-repo-conventions\n"
         f"description: Repository commands, Git Flow rules, and absorbed conventions for {slug}.\n---\n\n"
@@ -151,8 +157,10 @@ def emit_layer3_overlay(
     profile_schema_path: pathlib.Path,
     *,
     force_knowledge: bool = False,
+    dry_run: bool = False,
+    acknowledge_hazards: bool = False,
 ) -> dict[str, Any]:
-    """Pre-validates all paths and symlinks, then atomically emits Layer 3 files and Knowledge Plane."""
+    """Pre-validates security hazards, paths, and symlinks, then emits or previews Layer 3 files."""
     repo = repo_dir.resolve()
     if not repo.is_dir():
         raise ValueError(f"Target repository directory does not exist: {repo}")
@@ -160,6 +168,22 @@ def emit_layer3_overlay(
     gate = check_readiness(profile, profile_schema_path)
     if not gate["ready"]:
         raise ValueError("Readiness Gate failed: " + " | ".join(gate["missing_or_weak"]))
+
+    detected_hazards, _, _ = detect_hooks_and_ai_divergence(repo)
+    hazard_digests = compute_hazard_digests(repo, detected_hazards)
+    acknowledged = set(str(h) for h in (profile.get("acknowledged_workspace_hazards") or []))
+    unacknowledged_hazards = [
+        h
+        for h in detected_hazards
+        if hazard_digests[h] not in acknowledged and h not in acknowledged
+    ]
+    if unacknowledged_hazards and not acknowledge_hazards and not dry_run:
+        expected_tokens = [hazard_digests[h] for h in unacknowledged_hazards]
+        raise ValueError(
+            "Blocking untrusted workspace hazards detected: "
+            + ", ".join(expected_tokens)
+            + ". Review them and pass --acknowledge-workspace-hazards or list exact path@sha256 digests in profile.acknowledged_workspace_hazards."
+        )
 
     slug = profile["slug"]
     core_df_text = render_conditional_dockerfile(pack_image_ref, profile.get("missing_binaries") or [], tester_only=False)
@@ -257,9 +281,41 @@ def emit_layer3_overlay(
     writes.append((agents_path, merged_agents_bytes, "AGENTS.md"))
     if updated_gi_bytes is not None:
         writes.append((gitignore_path, updated_gi_bytes, ".gitignore"))
+    skipped_bridges: list[str] = []
     if mirror_siblings:
         for sib in ("CLAUDE.md", "GEMINI.md"):
             writes.append((assert_no_symlink_escape(repo, repo / sib), merged_agents_bytes, sib))
+    else:
+        # Bridge standalone pre-existing CLAUDE.md strictly as raw UTF-8 bytes preserving CRLF/LF (BG-H6, H5).
+        claude_path = repo / "CLAUDE.md"
+        if claude_path.is_file() and not claude_path.is_symlink():
+            claude_raw_bytes = claude_path.read_bytes()
+            if existing_agents_raw is not None and claude_raw_bytes == existing_agents_raw:
+                writes.append((assert_no_symlink_escape(repo, claude_path), merged_agents_bytes, "CLAUDE.md"))
+            else:
+                try:
+                    claude_raw = claude_raw_bytes.decode("utf-8", errors="strict")
+                except UnicodeDecodeError:
+                    skipped_bridges.append("CLAUDE.md (non-UTF-8 encoding preserved untouched)")
+                else:
+                    if "@AGENTS.md" not in claude_raw:
+                        bridged_claude = compute_merged_agents_md(claude_raw, "@AGENTS.md").encode("utf-8")
+                        writes.append((assert_no_symlink_escape(repo, claude_path), bridged_claude, "CLAUDE.md"))
+
+    if dry_run:
+        diffs = compute_unified_diffs(repo, writes, unlinks)
+        return {
+            "dry_run": True,
+            "would_emit_files": [rel for _, _, rel in writes],
+            "would_unlink_files": [p.relative_to(repo).as_posix() for p in unlinks],
+            "blocking_hazards": unacknowledged_hazards,
+            "hazard_digests": hazard_digests,
+            "skipped_bridges": skipped_bridges,
+            "preserved_knowledge_files": kp_plan["preserved"],
+            "preserved_custom_dockerfiles": preserved_custom_dockerfiles,
+            "coordinator_agent": coordinator_name,
+            "diffs": diffs,
+        }
 
     # Phase 2: All checks passed. Commit atomically via temp-file rename.
     created: list[str] = []
@@ -273,6 +329,9 @@ def emit_layer3_overlay(
         "emitted_files": created,
         "preserved_knowledge_files": kp_plan["preserved"],
         "preserved_custom_dockerfiles": preserved_custom_dockerfiles,
+        "acknowledged_hazards": detected_hazards,
+        "hazard_digests": hazard_digests,
+        "skipped_bridges": skipped_bridges,
         "coordinator_agent": coordinator_name,
         "custom_dockerfile": core_df_rel,
         "tester_dockerfile": tester_df_rel,

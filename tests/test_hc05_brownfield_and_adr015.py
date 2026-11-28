@@ -86,15 +86,22 @@ def test_hc05_f3_f4_f5_scanner_hooks_divergence_schema_and_gitignore(tmp_path: p
     report = check_readiness(profile, PROFILE_SCHEMA)
     assert report["ready"] is True, report
 
-    # HC05-F5: emit_layer3_overlay adds .scion/agents/ to .gitignore idempotently.
+    # Wave 1 BG-C2: untrusted workspace hazards now fail closed until explicitly acknowledged.
     img = "us-central1-docker.pkg.dev/demo/repo/gecx-runtime@sha256:" + ("c" * 64)
-    res = emit_layer3_overlay(repo, profile, img, PROFILE_SCHEMA)
+    try:
+        emit_layer3_overlay(repo, profile, img, PROFILE_SCHEMA)
+        raise AssertionError("Expected emit_layer3_overlay to block on unacknowledged workspace hazards")
+    except ValueError as exc:
+        assert "Blocking untrusted workspace hazards" in str(exc)
+
+    # HC05-F5: once hazards are acknowledged, emit_layer3_overlay adds .scion/agents/ to .gitignore idempotently.
+    res = emit_layer3_overlay(repo, profile, img, PROFILE_SCHEMA, acknowledge_hazards=True)
     assert ".gitignore" in res["emitted_files"]
     gi = (repo / ".gitignore").read_text(encoding="utf-8")
     assert ".scion/agents/" in gi
 
     # Second emit is idempotent and does not duplicate .scion/agents/.
-    res2 = emit_layer3_overlay(repo, profile, img, PROFILE_SCHEMA)
+    res2 = emit_layer3_overlay(repo, profile, img, PROFILE_SCHEMA, acknowledge_hazards=True)
     assert ".gitignore" not in res2["emitted_files"]
     assert (repo / ".gitignore").read_text(encoding="utf-8").count(".scion/agents/") == 1
 

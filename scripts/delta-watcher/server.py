@@ -20,9 +20,10 @@ if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
 
 from adapters.base import TrackerAdapter  # noqa: E402
-from adapters.github import GitHubTrackerAdapter  # noqa: E402
+from adapters.github import DEFAULT_GRAPHQL_URL, GitHubTrackerAdapter  # noqa: E402
 from hub_notifier import DEFAULT_OIDC_AUDIENCE, HubNotifier  # noqa: E402
 from intake_filter import DEFAULT_BOT_LOGINS, IntakePolicy  # noqa: E402
+from intake_models import DEFAULT_ALLOWED_AUTHOR_ASSOCIATIONS  # noqa: E402
 from state_store import ConcurrencyConflictError, GcsStateStore, LocalFileStateStore, StateStore  # noqa: E402
 from watcher import run_tick  # noqa: E402
 
@@ -62,6 +63,11 @@ def build_runtime_from_env() -> WatcherRuntime:
         for b in os.environ.get("DELTA_WATCHER_BOT_LOGINS", "").split(",")
         if b.strip()
     ]
+    raw_assocs = [
+        a.strip().upper()
+        for a in os.environ.get("DELTA_WATCHER_ALLOWED_ASSOCIATIONS", "").split(",")
+        if a.strip()
+    ]
     policy = IntakePolicy(
         enabled=_env_bool("DELTA_WATCHER_ENABLED", True),
         provider=provider,
@@ -71,9 +77,18 @@ def build_runtime_from_env() -> WatcherRuntime:
         hold_label=os.environ.get("DELTA_WATCHER_HOLD_LABEL", "factory:hold").strip(),
         paused=_env_bool("DELTA_WATCHER_PAUSED", False),
         bot_logins=tuple(dict.fromkeys([*DEFAULT_BOT_LOGINS, *extra_bots])),
+        allowed_author_associations=tuple(raw_assocs) if raw_assocs else DEFAULT_ALLOWED_AUTHOR_ASSOCIATIONS,
     )
 
-    adapter: TrackerAdapter = GitHubTrackerAdapter(repo_slug=repo_slug)
+    # Filter open issues server-side strictly on release_label (never scope_label, because GitHub
+    # GraphQL labels:[...] uses OR semantics that would re-introduce pagination overflow, H2/BG-H9).
+    server_labels = (policy.release_label,) if policy.release_label else ()
+    graphql_url = os.environ.get("DELTA_WATCHER_GITHUB_GRAPHQL_URL", DEFAULT_GRAPHQL_URL).strip() or DEFAULT_GRAPHQL_URL
+    adapter: TrackerAdapter = GitHubTrackerAdapter(
+        repo_slug=repo_slug,
+        api_url=graphql_url,
+        filter_labels=server_labels,
+    )
     bucket = os.environ.get("DELTA_WATCHER_STATE_BUCKET", "").strip()
     obj_name = os.environ.get("DELTA_WATCHER_STATE_OBJECT", "delta-watcher/cursor.json").strip()
     if bucket:

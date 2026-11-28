@@ -11,6 +11,8 @@ import re
 import tomllib
 from typing import Any
 
+from scripts.lib.onboard_security import detect_hooks_and_ai_divergence
+
 MAKE_TARGET_RE = re.compile(r"^([A-Za-z0-9_.-]+)\s*:(?!=)", re.MULTILINE)
 
 
@@ -218,71 +220,6 @@ def detect_knowledge_sources(repo: pathlib.Path) -> list[str]:
         if d.is_dir():
             found.extend(md.relative_to(repo).as_posix() for md in sorted(d.rglob("*.md"))[:25])
     return sorted(set(found))
-
-
-def detect_hooks_and_ai_divergence(repo: pathlib.Path) -> tuple[list[str], list[str], list[dict[str, str]]]:
-    """Detects untrusted workspace hooks and diverging AI instruction files for Day-0 advisory reporting."""
-    hooks: list[str] = []
-    advisory: list[dict[str, str]] = []
-
-    # Check harness settings files for workspace-level command hooks.
-    for rel in (
-        ".claude/settings.json",
-        ".claude/settings.local.json",
-        ".gemini/settings.json",
-        ".gemini/settings.local.json",
-    ):
-        p = repo / rel
-        if p.is_file():
-            raw = read_text_safe(p)
-            if '"hooks"' in raw or "'hooks'" in raw:
-                hooks.append(rel)
-
-    # Check repository-managed Git hook directories.
-    for hook_dir in (".githooks", ".husky"):
-        d = repo / hook_dir
-        if d.is_dir():
-            for child in sorted(d.iterdir()):
-                if child.is_file() and not child.name.startswith("."):
-                    hooks.append(child.relative_to(repo).as_posix())
-
-    # Check whether co-existing AGENTS.md, CLAUDE.md, and GEMINI.md files diverge.
-    # Treat single-line @AGENTS.md / @CLAUDE.md / @GEMINI.md include directives as parity (HC-09 F3).
-    ai_present: dict[str, bytes] = {}
-    for fname in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
-        p = repo / fname
-        if p.is_file() and not p.is_symlink():
-            norm = p.read_bytes().replace(b"\r\n", b"\n").strip()
-            ai_present[fname] = norm
-    resolved_contents: set[bytes] = set()
-    for fname, norm in ai_present.items():
-        if norm.startswith(b"@") and b"\n" not in norm:
-            target_name = norm[1:].decode("utf-8", errors="ignore").strip()
-            if target_name in ai_present:
-                resolved_contents.add(ai_present[target_name])
-                continue
-        resolved_contents.add(norm)
-    diverged: list[str] = []
-    if len(ai_present) >= 2 and len(resolved_contents) > 1:
-        diverged = sorted(ai_present.keys())
-
-    if hooks:
-        advisory.append({
-            "code": "UNTRUSTED_WORKSPACE_HOOKS",
-            "severity": "medium",
-            "blocking": False,
-            "paths": hooks,
-            "message": f"Detected workspace hook definitions ({', '.join(hooks)}). Review before trusting in automated runs.",
-        })
-    if diverged:
-        advisory.append({
-            "code": "AI_INSTRUCTION_DIVERGENCE",
-            "severity": "low",
-            "blocking": False,
-            "paths": diverged,
-            "message": f"Pre-existing AI instruction files diverge ({', '.join(diverged)}). Consolidate key rules into absorbed_conventions.",
-        })
-    return sorted(set(hooks)), diverged, advisory
 
 
 def detect_modernization_gaps(

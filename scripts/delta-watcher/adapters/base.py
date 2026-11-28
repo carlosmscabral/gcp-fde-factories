@@ -22,6 +22,7 @@ class WorkItem:
     author: str
     url: str
     updated_at: str
+    author_association: str = ""
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class CommentEvent:
     body: str
     url: str
     created_at: str
+    author_association: str = ""
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,7 @@ class PullRequestEvent:
     linked_issue_numbers: tuple[int, ...]
     checks_state: str
     review_decision: str
+    author_association: str = ""
 
 
 class TrackerAdapter(Protocol):

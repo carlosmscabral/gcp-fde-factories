@@ -22,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.lib.dockerfile_recipes import validate_customer_dockerfile
 from scripts.lib.io_utils import load_yaml
 from scripts.lib.onboard_emitter import check_readiness, emit_layer3_overlay
+from scripts.lib.onboard_git_ops import open_onboarding_pr
 from scripts.lib.onboard_kp import check_knowledge_plane
 from scripts.lib.onboard_questions import build_draft_profile
 from scripts.lib.onboard_scanner import detect_repo_drift, scan_repository_facts
@@ -67,6 +68,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p_emit.add_argument("--profile", type=pathlib.Path, required=True)
     p_emit.add_argument("--pack-image", required=True)
     p_emit.add_argument("--force-knowledge", action="store_true", help="Overwrite existing .factory/knowledge/* files.")
+    p_emit.add_argument("--dry-run", action="store_true", help="Preview unified diffs without writing any files.")
+    p_emit.add_argument("--pr", action="store_true", help="Commit emitted files on a branch, push origin, and open a PR via gh.")
+    p_emit.add_argument(
+        "--acknowledge-workspace-hazards",
+        action="store_true",
+        help="Confirm untrusted workspace hooks/MCP were reviewed and neutralized.",
+    )
     p_emit.add_argument("--json", action="store_true", help="Emit JSON output (default behavior).")
     p_emit.add_argument("--schema", type=pathlib.Path, default=REPO_ROOT / "schemas" / "factory-profile.schema.json")
 
@@ -134,8 +142,17 @@ def main(argv: list[str] | None = None) -> int:
             args.pack_image,
             args.schema,
             force_knowledge=args.force_knowledge,
+            dry_run=args.dry_run,
+            acknowledge_hazards=args.acknowledge_workspace_hazards,
         )
+        if args.pr and args.dry_run:
+            result["pr_landing"] = {"status": "skipped", "reason": "dry_run"}
+        elif args.pr:
+            base_branch = str((profile.get("git_flow") or {}).get("base_branch") or "main")
+            result["pr_landing"] = open_onboarding_pr(args.repo.resolve(), str(profile["slug"]), base_branch, result["emitted_files"])
         print(json.dumps(result, indent=2))
+        if args.dry_run and result.get("blocking_hazards") and not args.acknowledge_workspace_hazards:
+            return 2
         return 0
     except (OSError, ValueError, yaml.YAMLError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2))

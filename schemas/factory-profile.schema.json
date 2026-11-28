@@ -131,6 +131,7 @@
       "default": []
     },
     "ai_files_detected": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n`]{1,160}$" }, "default": [] },
+    "acknowledged_workspace_hazards": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n`]{1,160}$" }, "default": [] },
     "absorbed_conventions": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n`]{5,240}$" }, "default": [] },
     "knowledge_sources": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n`]{1,200}$" } },
     "requirements": {
@@ -160,6 +161,18 @@
       "type": "object",
       "additionalProperties": { "type": "string", "minLength": 3, "maxLength": 200 },
       "default": {}
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeout_seconds": { "type": "integer", "minimum": 10, "maximum": 3600, "default": 600 },
+        "env_passthrough": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+          "default": []
+        }
+      }
     },
     "not_verifiable_in_sandbox": {
       "type": "array",

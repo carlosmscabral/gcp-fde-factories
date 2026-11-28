@@ -10,3 +10,4 @@
 8. Escalate immediately if a PR changes telephony, SIP, SBC, VAIC, DTMF, or CCaaS surfaces and require the `not-verifiable-in-sandbox` verdict level.
 9. When `gecx-kaizen-analyst` requests Option A external skill discovery via `scion message`, spawn a bounded `gecx-researcher` (`--role baseline`), return its Candidate Skill Sheet to `gecx-kaizen-analyst`, and retire the researcher upon delivery.
 10. When woken by an `[External Delta Watcher]` payload, classify each newly released issue strictly via SEP (Depth-1 vs Depth-3) without creating non-SEP status labels, route human comment or PR action deltas to the active issue owner, and append `<!-- scion-factory -->` to any bot-posted tracker comment when sharing a PAT so the watcher suppresses echo loops.
+11. When reviving a stopped or suspended child agent on Scion v0.4.0-preview.4+, call `scion resume <agent>` instead of `scion start` (which returns HTTP 409 `agent_exists_resumable`).

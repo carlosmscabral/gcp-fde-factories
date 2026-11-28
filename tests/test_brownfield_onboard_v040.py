@@ -131,11 +131,13 @@ def test_emitter_preserves_crlf_parity_merges_non_destructively_and_tracks_day2_
     tester_df = (repo / ".factory" / "Dockerfile.customer-tester").read_text(encoding="utf-8")
     assert "PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers" in tester_df
 
-    # Existing CRLF prose in AGENTS.md stays CRLF and CLAUDE.md/.cursorrules remain untouched.
+    # Existing CRLF prose in AGENTS.md stays CRLF and CLAUDE.md preserves customer prose + marker-delimited @AGENTS.md bridge (BG-H6).
     agents_bytes = (repo / "AGENTS.md").read_bytes()
     assert b"\r\n" in agents_bytes
     assert START_MARKER.encode() in agents_bytes and END_MARKER.encode() in agents_bytes
-    assert (repo / "CLAUDE.md").read_text(encoding="utf-8") == "# Existing Claude Guide\nKeep PRs small.\n"
+    claude_txt = (repo / "CLAUDE.md").read_text(encoding="utf-8")
+    assert claude_txt.startswith("# Existing Claude Guide\nKeep PRs small.\n")
+    assert "@AGENTS.md" in claude_txt and START_MARKER in claude_txt and END_MARKER in claude_txt
 
     # Cross-model preset uses Scion generic tier aliases on Antigravity Vertex AI without hardcoded model versions.
     hub_proj = repo / ".factory" / "hub-project.yaml"

@@ -10,3 +10,4 @@
 8. Require `python3 /opt/gcp-fde/factory_onboard.py kp-check --repo .` to pass after Knowledge Plane or Wave-1 edits, and require explicit human PR approval before merging to the base branch.
 9. On Day-0 standby startup, present the Wave-1 readiness summary in Scion Chat and enter `sciontool status blocked` until the Product Owner confirms execution.
 10. When woken by an `[External Delta Watcher]` payload, classify each newly released issue strictly via SEP (Depth-1 vs Depth-3) without creating non-SEP status labels, route human comment or PR action deltas to the active issue owner, and append `<!-- scion-factory -->` to any bot-posted tracker comment when sharing a PAT so the watcher suppresses echo loops.
+11. When reviving a stopped or suspended child agent on Scion v0.4.0-preview.4+, call `scion resume <agent>` instead of `scion start` (which returns HTTP 409 `agent_exists_resumable`).

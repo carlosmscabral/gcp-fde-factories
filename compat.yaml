@@ -11,7 +11,7 @@ scion:
     - "v0.4.0-preview.3"
   binary_url: "https://github.com/GoogleCloudPlatform/scion/releases/download/v0.4.0-preview.4/scion-linux-amd64.tar.gz"
   binary_sha256: "0eaac10191dd948906c0957c78fdfd96eeef0a6e7cc56e3e30d2d728144ca5b9"
-  downgrade_floor: "nightly-20261121"
+  downgrade_floor: "nightly-20261126"
   experiments_required: []
 
 agent_team:

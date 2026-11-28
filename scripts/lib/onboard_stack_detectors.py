@@ -103,9 +103,13 @@ def _detect_monorepo(repo: pathlib.Path) -> dict[str, Any]:
 
 
 def _detect_deploy_signals(repo: pathlib.Path, frontend_frameworks: list[str]) -> tuple[list[str], str]:
-    """Detects container, Kubernetes, and Cloud Run deployment signals and suggests a deploy_target."""
+    """Detects container, Kubernetes, and Cloud Run deployment signals without misclassifying devcontainers."""
     signals: set[str] = set()
-    if (repo / "Dockerfile").is_file() or any(repo.glob("*/Dockerfile")):
+    ignored_df_dirs = {".devcontainer", ".factory", ".git", "node_modules", ".venv"}
+    has_app_dockerfile = (repo / "Dockerfile").is_file() or any(
+        p.parent.name not in ignored_df_dirs for p in repo.glob("*/Dockerfile") if p.is_file()
+    )
+    if has_app_dockerfile:
         signals.add("dockerfile")
     if (repo / "docker-compose.yml").is_file() or (repo / "docker-compose.yaml").is_file():
         signals.add("docker-compose")

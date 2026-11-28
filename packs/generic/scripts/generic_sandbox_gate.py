@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import pathlib
+import signal
 import subprocess
 import tempfile
 from typing import Any
@@ -18,6 +19,18 @@ from typing import Any
 import yaml
 
 PLACEHOLDER_MARKER = "configure lint command"
+DEFAULT_STEP_TIMEOUT_SECONDS = 600
+FORBIDDEN_L1_ENV_PREFIXES = (
+    "GOOGLE_",
+    "CLOUDSDK_",
+    "GCP_",
+    "GCLOUD_",
+    "AWS_",
+    "ANTHROPIC_",
+    "OPENAI_",
+    "SCION_",
+)
+FORBIDDEN_L1_ENV_EXACT = frozenset({"GITHUB_TOKEN", "GH_TOKEN"})
 L1_ENV_ALLOWLIST = frozenset({
     "PATH",
     "HOME",
@@ -33,18 +46,41 @@ L1_ENV_ALLOWLIST = frozenset({
     "PYTHONUNBUFFERED",
     "GOPATH",
     "GOCACHE",
+    "GOPROXY",
+    "GOPRIVATE",
     "CARGO_HOME",
     "RUSTUP_HOME",
+    "JAVA_HOME",
     "NODE_OPTIONS",
+    "HUSKY",
+    "PLAYWRIGHT_BROWSERS_PATH",
+    "SSL_CERT_FILE",
+    "REQUESTS_CA_BUNDLE",
+    "NODE_EXTRA_CA_CERTS",
 })
 
 
-def build_l1_offline_env(base_env: dict[str, str], empty_gcloud_dir: pathlib.Path) -> dict[str, str]:
-    """Builds a scrubbed Level 1 environment allowlist blocking GCP tokens and metadata probes."""
+def _is_forbidden_l1_env(key: str) -> bool:
+    """Returns True when an environment variable could leak cloud, LLM, or Git credentials."""
+    upper = key.upper()
+    return upper in FORBIDDEN_L1_ENV_EXACT or upper.startswith(FORBIDDEN_L1_ENV_PREFIXES)
+
+
+def build_l1_offline_env(
+    base_env: dict[str, str],
+    empty_gcloud_dir: pathlib.Path,
+    extra_passthrough: list[str] | None = None,
+) -> dict[str, str]:
+    """Builds a scrubbed Level 1 environment allowlist blocking cloud/LLM/Git secrets while preserving proxies and runtimes."""
+    allowed = set(L1_ENV_ALLOWLIST)
+    for name in extra_passthrough or []:
+        clean = str(name).strip()
+        if clean and not _is_forbidden_l1_env(clean):
+            allowed.add(clean)
     env = {
         k: v
         for k, v in base_env.items()
-        if k in L1_ENV_ALLOWLIST and not k.startswith(("GOOGLE_", "CLOUDSDK_", "GCP_", "GCLOUD_"))
+        if k in allowed and not _is_forbidden_l1_env(k)
     }
     env["CLOUDSDK_CONFIG"] = str(empty_gcloud_dir)
     env["GCE_METADATA_HOST"] = "127.0.0.1:1"
@@ -81,21 +117,60 @@ def _load_profile(repo: pathlib.Path, base_ref: str) -> dict[str, Any]:
     return raw
 
 
-def _run_step(name: str, command: str, cwd: pathlib.Path, env: dict[str, str]) -> dict[str, Any]:
-    """Executes one PO-confirmed verification command from factory-profile.yaml."""
+def _run_step(
+    name: str,
+    command: str,
+    cwd: pathlib.Path,
+    env: dict[str, str],
+    timeout_seconds: int = DEFAULT_STEP_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """Executes one PO-confirmed verification command in its own process group so timeouts kill grandchildren."""
     # Commands come strictly from PO-confirmed .factory/factory-profile.yaml (prefer --base-ref in CI).
-    proc = subprocess.run(command, shell=True, cwd=str(cwd), env=env, capture_output=True, text=True, check=False)
+    proc = subprocess.Popen(
+        command,
+        shell=True,
+        cwd=str(cwd),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        stdout_s, stderr_s = proc.communicate(timeout=max(1, int(timeout_seconds)))
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        stdout_s, stderr_s = proc.communicate()
+        return {
+            "step": name,
+            "command": command,
+            "returncode": 124,
+            "ok": False,
+            "timed_out": True,
+            "timeout_seconds": int(timeout_seconds),
+            "stdout_tail": (stdout_s or "")[-1200:],
+            "stderr_tail": ((stderr_s or "") + f"\nStep '{name}' exceeded timeout ({timeout_seconds}s).")[-1200:],
+        }
     return {
         "step": name,
         "command": command,
         "returncode": proc.returncode,
         "ok": proc.returncode == 0,
-        "stdout_tail": proc.stdout[-1200:],
-        "stderr_tail": proc.stderr[-1200:],
+        "timed_out": False,
+        "stdout_tail": (stdout_s or "")[-1200:],
+        "stderr_tail": (stderr_s or "")[-1200:],
     }
 
 
-def run_generic_gate(repo_dir: pathlib.Path, level: int = 1, base_ref: str = "") -> dict[str, Any]:
+def run_generic_gate(
+    repo_dir: pathlib.Path,
+    level: int = 1,
+    base_ref: str = "",
+    timeout_seconds: int | None = None,
+) -> dict[str, Any]:
     """Runs Level 1 scrubbed offline checks or Level 2 sandbox E2E checks declared in factory-profile.yaml."""
     repo = repo_dir.resolve()
     commit_sha = _git_head_sha(repo)
@@ -105,6 +180,13 @@ def run_generic_gate(repo_dir: pathlib.Path, level: int = 1, base_ref: str = "")
         return {"ok": False, "level": level, "status": "error", "commit_sha": commit_sha, "error": str(exc), "steps": []}
 
     commands = profile.get("commands") or {}
+    verification = profile.get("verification") if isinstance(profile.get("verification"), dict) else {}
+    effective_timeout = int(
+        timeout_seconds
+        if timeout_seconds is not None
+        else (verification.get("timeout_seconds") or DEFAULT_STEP_TIMEOUT_SECONDS)
+    )
+    extra_passthrough = list(verification.get("env_passthrough") or [])
     deploy_target = str(profile.get("deploy_target") or "none")
     monorepo = profile.get("monorepo") or {}
     subdir = str(monorepo.get("subdir") or "").strip() if monorepo.get("enabled") else ""
@@ -124,11 +206,11 @@ def run_generic_gate(repo_dir: pathlib.Path, level: int = 1, base_ref: str = "")
         if not test_cmd:
             return {"ok": False, "level": 1, "status": "failed", "commit_sha": commit_sha, "error": "commands.test is empty.", "steps": []}
         with tempfile.TemporaryDirectory(prefix="generic-l1-gcloud-") as empty_gcloud:
-            env = build_l1_offline_env(dict(os.environ), pathlib.Path(empty_gcloud))
+            env = build_l1_offline_env(dict(os.environ), pathlib.Path(empty_gcloud), extra_passthrough=extra_passthrough)
             if build_cmd:
-                steps.append(_run_step("build", build_cmd, work_dir, env))
-            steps.append(_run_step("lint", lint_cmd, work_dir, env))
-            steps.append(_run_step("test", test_cmd, work_dir, env))
+                steps.append(_run_step("build", build_cmd, work_dir, env, timeout_seconds=effective_timeout))
+            steps.append(_run_step("lint", lint_cmd, work_dir, env, timeout_seconds=effective_timeout))
+            steps.append(_run_step("test", test_cmd, work_dir, env, timeout_seconds=effective_timeout))
         all_ok = all(s["ok"] for s in steps)
         return {
             "ok": all_ok,
@@ -168,7 +250,7 @@ def run_generic_gate(repo_dir: pathlib.Path, level: int = 1, base_ref: str = "")
             "steps": [],
         }
 
-    step = _run_step("e2e", e2e_cmd, work_dir, dict(os.environ))
+    step = _run_step("e2e", e2e_cmd, work_dir, dict(os.environ), timeout_seconds=effective_timeout)
     steps.append(step)
     return {
         "ok": step["ok"],
@@ -189,10 +271,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", type=pathlib.Path, default=pathlib.Path("."))
     parser.add_argument("--level", type=int, choices=(1, 2), default=1)
     parser.add_argument("--base-ref", default="", help="Read commands from git ref (e.g. origin/main) to prevent PR self-certification.")
+    parser.add_argument("--timeout-seconds", type=int, default=None, help="Override per-step subprocess timeout in seconds.")
     parser.add_argument("--out", type=pathlib.Path, default=None)
     args = parser.parse_args(argv)
 
-    result = run_generic_gate(args.repo, level=args.level, base_ref=args.base_ref)
+    result = run_generic_gate(args.repo, level=args.level, base_ref=args.base_ref, timeout_seconds=args.timeout_seconds)
     encoded = json.dumps(result, indent=2) + "\n"
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)

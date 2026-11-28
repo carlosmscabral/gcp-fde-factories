@@ -17,6 +17,7 @@ BACKUP_DIR=""
 HARNESS_IMAGE_ANTIGRAVITY=""
 HARNESS_IMAGE_CLAUDE=""
 START_COORDINATOR="auto"
+ALLOW_UNPUSHED_FACTORY="false"
 TMP_CLEANUP_DIRS=()
 PROJ_FLAGS=()
 
@@ -37,7 +38,7 @@ Usage: bootstrap-hub-project.sh <preflight|plan|backup|apply|rollback|overlay-sy
   --kit <release-kit-dir> --hub <https-or-loopback-url> \
   [--landing-zone <landing-zone-outputs.json>] [--repo <target-repo-dir>] [--backup-dir <dir>] \
   [--harness-image-antigravity <digest-or-registry-ref>] [--harness-image-claude <digest-or-registry-ref>] \
-  [--start-coordinator | --no-start-coordinator]
+  [--start-coordinator | --no-start-coordinator] [--allow-unpushed-factory]
 EOF
   exit 2
 }
@@ -55,6 +56,7 @@ while [[ $# -gt 0 ]]; do
     --harness-image-claude) HARNESS_IMAGE_CLAUDE="$2"; shift 2 ;;
     --start-coordinator) START_COORDINATOR="true"; shift ;;
     --no-start-coordinator) START_COORDINATOR="false"; shift ;;
+    --allow-unpushed-factory) ALLOW_UNPUSHED_FACTORY="true"; shift ;;
     *) echo "Unknown flag: $1" >&2; usage ;;
   esac
 done
@@ -231,19 +233,110 @@ resolve_project_id() {
 }
 
 warn_github_token_injection_mode() {
-  # Warns when a linked project lacks GITHUB_TOKEN with injectionMode=always (required for private git clones, HC-10 F4, L6).
+  # Checks whether the Hub project already uses an active Scion GitHub App (zero-PAT short-lived tokens)
+  # before warning about missing GITHUB_TOKEN with injectionMode=always (HC-10 F4, Scion v0.4.0-preview.4, H3).
   local proj_id="$1"
   [[ -n "$proj_id" && -n "${SCION_HUB_TOKEN:-}" ]] || return 0
   validate_uuid_or_fail "$proj_id" "warn_github_token_injection_mode" || return 0
+  local proj_json gh_install_id="" gh_app_state=""
+  proj_json="$(curl -sf -H "Authorization: Bearer ${SCION_HUB_TOKEN}" "${HUB_URL%/}/api/v1/projects/${proj_id}" 2>/dev/null || true)"
+  if [[ -n "$proj_json" ]]; then
+    gh_install_id="$(jq -r '(.githubInstallationId // .github_installation_id // .project.githubInstallationId // .project.github_installation_id // "") | tostring' <<< "$proj_json" 2>/dev/null || echo "")"
+    gh_app_state="$(jq -r '
+      (.githubAppStatus // .github_app_status // .project.githubAppStatus // .project.github_app_status // "")
+      | if type == "object" then (.state // "") else tostring end
+    ' <<< "$proj_json" 2>/dev/null || echo "")"
+    if [[ "$gh_install_id" =~ ^[1-9][0-9]*$ && "$gh_app_state" == "ok" ]]; then
+      echo "GITHUB APP ACTIVE: project ${proj_id} uses short-lived Scion GitHub App tokens (installation=${gh_install_id}; PAT not required)."
+      return 0
+    fi
+  fi
   local sec_json mode
   sec_json="$(curl -sf -H "Authorization: Bearer ${SCION_HUB_TOKEN}" "${HUB_URL%/}/api/v1/secrets?scope=project&scopeId=${proj_id}" 2>/dev/null || true)"
   [[ -n "$sec_json" ]] || return 0
   mode="$(jq -r '((.secrets // .)[]? | select(.key == "GITHUB_TOKEN") | (.injectionMode // .injection_mode)) // empty' <<< "$sec_json" | head -n 1 || true)"
   if [[ "$mode" != "always" ]]; then
-    echo "WARNING: Project secret GITHUB_TOKEN has injectionMode='${mode:-missing}' (expected 'always' for private GitHub repo clones)." >&2
-    echo "  Run: scion hub secret set --project GITHUB_TOKEN \"\$(gh auth token)\" --hub \"$HUB_URL\"" >&2
-    echo "  Run: scion hub secret update --project GITHUB_TOKEN --injection-mode always --hub \"$HUB_URL\"" >&2
+    echo "WARNING: Project has no active GitHub App (state='${gh_app_state:-unset}') and GITHUB_TOKEN has injectionMode='${mode:-missing}' (expected 'always' for private clones)." >&2
+    echo "  Recommended (zero-PAT): configure Scion GitHub App in Hub Admin UI (/admin/server-config -> GitHub App)." >&2
+    echo "  Fallback (PAT): scion hub secret set --project GITHUB_TOKEN \"\$(gh auth token)\" --hub \"$HUB_URL\"" >&2
+    echo "  Fallback (PAT): scion hub secret update --project GITHUB_TOKEN --injection-mode always --hub \"$HUB_URL\"" >&2
   fi
+}
+
+check_remote_factory_landed() {
+  # Verifies .factory/hub-project.yaml is pushed to origin/<base_branch> BEFORE mutating Hub state (UX-C1, M1).
+  # Skips cleanly for non-git fixtures or repos without an origin remote; bypass with --allow-unpushed-factory.
+  [[ -n "$TARGET_REPO" && -d "$TARGET_REPO" ]] || return 0
+  [[ "$ALLOW_UNPUSHED_FACTORY" != "true" ]] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+  git -C "$TARGET_REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  git -C "$TARGET_REPO" remote get-url origin >/dev/null 2>&1 || return 0
+
+  local remote_head base_branch=""
+  if [[ -f "$TARGET_REPO/.factory/factory-profile.yaml" ]]; then
+    base_branch="$(python3 -c 'import sys, yaml; d=yaml.safe_load(open(sys.argv[1])) or {}; print(((d.get("git_flow") or {}).get("base_branch")) or "")' "$TARGET_REPO/.factory/factory-profile.yaml" 2>/dev/null || true)"
+  fi
+  if [[ -z "$base_branch" ]]; then
+    remote_head="$(git -C "$TARGET_REPO" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+    base_branch="${remote_head#origin/}"
+  fi
+  if [[ -z "$base_branch" ]]; then
+    for cand in main master; do
+      if git -C "$TARGET_REPO" rev-parse --verify "refs/remotes/origin/${cand}" >/dev/null 2>&1; then
+        base_branch="$cand"
+        break
+      fi
+    done
+  fi
+  [[ -n "$base_branch" ]] || return 0
+
+  # Refresh remote tracking ref best-effort so recently merged PRs do not trigger stale local failures (M1).
+  git -C "$TARGET_REPO" fetch origin "$base_branch" --quiet 2>/dev/null || true
+
+  if git -C "$TARGET_REPO" rev-parse --verify "refs/remotes/origin/${base_branch}" >/dev/null 2>&1; then
+    if ! git -C "$TARGET_REPO" ls-tree -r --name-only "refs/remotes/origin/${base_branch}" -- .factory/hub-project.yaml 2>/dev/null | grep -q .; then
+      echo "APPLY FAILED: .factory/hub-project.yaml is not landed on origin/${base_branch}." >&2
+      echo "  Remote Scion containers clone from origin and will not see local-only .factory/ files." >&2
+      echo "  If you just merged the PR on GitHub, run: git -C \"$TARGET_REPO\" fetch origin ${base_branch}" >&2
+      echo "  Otherwise run: factory_onboard.py emit --pr (or pass --allow-unpushed-factory for local tests)." >&2
+      exit 1
+    fi
+    if [[ -f "$TARGET_REPO/.factory/hub-project.yaml" ]] && ! git -C "$TARGET_REPO" diff --quiet "refs/remotes/origin/${base_branch}" -- .factory/hub-project.yaml 2>/dev/null; then
+      echo "WARNING: Local .factory/hub-project.yaml differs from origin/${base_branch}. Push/merge changes so remote containers match." >&2
+    fi
+  fi
+}
+
+print_delta_watcher_alignment() {
+  # Prints copy-ready Stage 02 Delta Watcher variables synchronized with .factory/hub-project.yaml intake and coordinator_agent (UX-C2).
+  local repo_cfg="$1" pack_prefix="$2" proj_id="${3:-}"
+  local dw_enabled dw_provider dw_cap dw_rel dw_hold dw_scope dw_cron dw_tz dw_paused coord_name
+  dw_enabled="$(jq -r '(.intake.enabled // false) | tostring' <<< "$repo_cfg")"
+  [[ "$dw_enabled" == "true" ]] || return 0
+  dw_provider="$(jq -r '.intake.provider // "github"' <<< "$repo_cfg")"
+  dw_cap="$(jq -r '.intake.max_concurrent_issues // 2' <<< "$repo_cfg")"
+  dw_rel="$(jq -r '.intake.release_label // "factory:ready"' <<< "$repo_cfg")"
+  dw_hold="$(jq -r '.intake.hold_label // "factory:hold"' <<< "$repo_cfg")"
+  dw_scope="$(jq -r '.intake.scope_label // ""' <<< "$repo_cfg")"
+  dw_cron="$(jq -r '.intake.cadence_cron // "*/5 * * * *"' <<< "$repo_cfg")"
+  dw_tz="$(jq -r '.intake.time_zone // "America/Sao_Paulo"' <<< "$repo_cfg")"
+  dw_paused="$(jq -r '(.intake.paused // false) | tostring' <<< "$repo_cfg")"
+  coord_name="$(jq -r --arg p "$pack_prefix" '.kaizen.coordinator_agent // ($p + "-coordinator")' <<< "$repo_cfg")"
+  echo "=== NEXT STEP: Stage 02 External Delta Watcher Alignment (provider=${dw_provider}) ==="
+  if [[ "$dw_provider" != "github" ]]; then
+    echo "  NOTE: External Delta Watcher natively polls GitHub. For '${dw_provider}', keep enable_delta_watcher = false and trigger runs manually via Hub UI/CLI."
+    return 0
+  fi
+  echo "  enable_delta_watcher                = true"
+  echo "  delta_watcher_coordinator_agent     = \"${coord_name}\""
+  if [[ -n "$proj_id" ]]; then echo "  delta_watcher_scion_project_id      = \"${proj_id}\""; fi
+  echo "  delta_watcher_max_concurrent_issues = ${dw_cap}"
+  echo "  delta_watcher_release_label         = \"${dw_rel}\""
+  echo "  delta_watcher_hold_label            = \"${dw_hold}\""
+  if [[ -n "$dw_scope" ]]; then echo "  delta_watcher_scope_label           = \"${dw_scope}\""; fi
+  echo "  delta_watcher_cadence_cron          = \"${dw_cron}\""
+  echo "  delta_watcher_time_zone             = \"${dw_tz}\""
+  echo "  delta_watcher_paused                = ${dw_paused}"
 }
 
 ensure_delta_watcher_hub_rbac() {
@@ -349,6 +442,7 @@ print_github_ci_variables() {
   case "$pack_name" in
     adk) var_prefix="ADK" ;;
     gecx) var_prefix="GECX" ;;
+    generic) var_prefix="GENERIC" ;;
     *) return 0 ;;
   esac
   echo "=== NEXT STEP: GitHub Actions Verdict Gate Repository Variables (${pack_name}) ==="
@@ -489,7 +583,25 @@ ensure_coordinator_started() {
         ))
       | .name // .slug) // empty' <<< "$list_json" | head -n 1 || true)"
   if [[ -n "$existing_coord" ]]; then
-    echo "SKIP coordinator start: ${coord_name} already exists on Hub."
+    local existing_status
+    existing_status="$(jq -r \
+      --arg n "$coord_name" \
+      --arg pid "${SCION_HUB_PROJECT_ID:-}" \
+      --arg pslug "${PROJECT_SLUG:-}" \
+      '((if type == "array" then . else (.agents // .items // []) end)[]
+        | select((.name == $n or .slug == $n)
+          and (
+            ($pid == "" and $pslug == "")
+            or ((.projectId // .project_id // .projectSlug // .project_slug // .project // "") == "")
+            or ($pid != "" and (.projectId // .project_id // .project // "") == $pid)
+            or ($pslug != "" and (.projectSlug // .project_slug // .project // "") == $pslug)
+          ))
+        | (.phase // .status // .state // "")) // empty' <<< "$list_json" | head -n 1 | tr '[:upper:]' '[:lower:]' || true)"
+    if [[ "$existing_status" == "stopped" || "$existing_status" == "suspended" ]]; then
+      echo "EXISTING COORDINATOR (${existing_status}): ${coord_name} -> revive via 'scion resume ${coord_name} --hub \"${HUB_URL}\"' (v0.4.0-preview.4 returns 409 on start)."
+    else
+      echo "SKIP coordinator start: ${coord_name} already exists on Hub."
+    fi
     return 0
   fi
 
@@ -504,6 +616,9 @@ ensure_coordinator_started() {
 
 do_apply() {
   do_preflight
+  if [[ -n "$TARGET_REPO" ]]; then
+    check_remote_factory_landed
+  fi
   local pack_name pack_prefix repo_cfg mode max_dur max_turns max_calls auto_susp exclude_json
   pack_name="$(jq -re '.pack' "$KIT_DIR/manifest.json")"
   pack_prefix="$(jq -re '.pack_prefix // .pack' "$KIT_DIR/manifest.json")"
@@ -732,6 +847,15 @@ do_apply() {
   for _exp in web.decisions hub.artifacts web.artifact_review_editor hub.artifact_archive; do
     scion hub experiments enable "$_exp" --hub "$HUB_URL"
   done
+  # Enable hub.admin_managed_brokers on dedicated Hubs; enforce admin_managed_only explicitly when requested
+  # so split/GKE Hubs with operator-registered brokers do not fail placement silently (v0.4.0-preview.4, M6).
+  if [[ "$existing_hub" != "true" ]]; then
+    scion hub experiments enable hub.admin_managed_brokers --hub "$HUB_URL" \
+      || echo "WARNING: Could not enable hub.admin_managed_brokers on ${HUB_URL}." >&2
+    if [[ "${ENFORCE_ADMIN_MANAGED_BROKERS:-false}" == "true" ]]; then
+      scion hub settings set broker_policy.admin_managed_only true --hub "$HUB_URL"
+    fi
+  fi
 
   # Enable native Scion GCP telemetry export and Metrics Dashboard backed by hub_project_id (keyless ADC).
   if [[ -n "$LANDING_ZONE_JSON" ]]; then
@@ -745,25 +869,34 @@ do_apply() {
     fi
   fi
 
-  # Set project-scope Vertex AI env vars (injectionMode=always) so container-side harness provisioners
-  # (e.g. antigravity/provision.py) and ADC quotaProject routing receive inference_project_id on both
-  # Lite VM and GKE cross-project topologies (HC-01 F24, HC-02 F8).
-  if [[ -n "$inf_proj" && -n "${SCION_HUB_TOKEN:-}" ]]; then
+  # Set project-scope Vertex AI env vars (--always) via native Scion CLI (fallback to REST PUT only if CLI lacks --always)
+  # so container-side harness provisioners receive inference_project_id across Lite VM and GKE topologies (HC-01 F24, HC-02 F8).
+  if [[ -n "$inf_proj" ]]; then
     local proj_id="${resolved_proj_id:-}"
     if [[ -z "$proj_id" && -n "$PROJECT_SLUG" ]]; then
       proj_id="$(resolve_project_id)"
     fi
-    if [[ -n "$proj_id" ]]; then
+    local env_target="${PROJECT_SLUG:-$proj_id}"
+    if [[ -n "$env_target" ]]; then
       local kv k v
       for kv in "GOOGLE_CLOUD_PROJECT=${inf_proj}" "GOOGLE_CLOUD_QUOTA_PROJECT=${inf_proj}" "GOOGLE_CLOUD_LOCATION=${gemini_loc}" "GOOGLE_GENAI_USE_VERTEXAI=true" "AGY_ADC_AUTH=true"; do
         k="${kv%%=*}"; v="${kv#*=}"
-        curl -sf -X PUT \
-          -H "Authorization: Bearer ${SCION_HUB_TOKEN}" \
-          -H "Content-Type: application/json" \
-          "${HUB_URL%/}/api/v1/projects/${proj_id}/env/${k}" \
-          -d "{\"value\":\"${v}\",\"injectionMode\":\"always\"}" >/dev/null \
-          && echo "SET PROJECT ENV: ${k}=${v}" || true
+        if scion hub env set --project="$env_target" --always "${k}=${v}" --hub "$HUB_URL" >/dev/null 2>&1; then
+          echo "SET PROJECT ENV: ${k}=${v}"
+        elif [[ -n "$proj_id" && -n "${SCION_HUB_TOKEN:-}" ]]; then
+          curl -sf -X PUT \
+            -H "Authorization: Bearer ${SCION_HUB_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "${HUB_URL%/}/api/v1/projects/${proj_id}/env/${k}" \
+            -d "{\"value\":\"${v}\",\"injectionMode\":\"always\"}" >/dev/null \
+            && echo "SET PROJECT ENV: ${k}=${v}" \
+            || echo "WARNING: Failed to set project env ${k} via REST fallback." >&2
+        else
+          echo "WARNING: Failed to set project env ${k} via 'scion hub env set' and SCION_HUB_TOKEN is unset for REST fallback." >&2
+        fi
       done
+    fi
+    if [[ -n "$proj_id" ]]; then
       warn_github_token_injection_mode "$proj_id"
       ensure_delta_watcher_hub_rbac "$proj_id"
     fi
@@ -785,6 +918,7 @@ do_apply() {
     "$(jq -r '(.kaizen.enable_gcp_obs // false) | tostring' <<< "$repo_cfg")"
   warn_adk_ge_license_preflight "$pack_name"
   print_github_ci_variables "$pack_name"
+  print_delta_watcher_alignment "$repo_cfg" "$pack_prefix" "${resolved_proj_id:-}"
   echo "APPLY COMPLETE."
 }
 
