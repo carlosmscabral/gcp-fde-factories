@@ -52,17 +52,24 @@ COPY scripts/lib/ "${GCP_FDE_DIR}/scripts/lib/"
 COPY scripts/verify-verdict.py "${GCP_FDE_DIR}/verify-verdict.py"
 COPY schemas/ "${GCP_FDE_DIR}/schemas/"
 COPY WORKAROUNDS.yaml "${GCP_FDE_DIR}/WORKAROUNDS.yaml"
-# Persist /opt/gcp-fde/.venv/bin on PATH across login and interactive shells so /etc/profile never hides
-# PyYAML/pytest inside Scion tmux panes or bash -lc invocations (HC14-F2).
+# Persist /opt/gcp-fde/.venv/bin on PATH across bash AND zsh login/interactive shells so /etc/profile
+# and /etc/zsh/zprofile never hide PyYAML/pytest inside Scion tmux panes, zsh, or bash -lc (HC14-F2, HC15-F1).
 RUN printf 'export VIRTUAL_ENV=/opt/gcp-fde/.venv\nexport PATH="/opt/gcp-fde/.venv/bin:$PATH"\n' > /etc/profile.d/gcp-fde.sh \
     && chmod 0644 /etc/profile.d/gcp-fde.sh \
     && if [ -f /etc/bash.bashrc ] && ! grep -q '/opt/gcp-fde/.venv/bin' /etc/bash.bashrc; then \
-         printf '\n# Persist core-gcp-fde venv on interactive shells (HC14-F2)\nexport PATH="/opt/gcp-fde/.venv/bin:$PATH"\n' >> /etc/bash.bashrc; \
+         printf '\n# Persist core-gcp-fde venv on interactive bash shells (HC14-F2)\nexport PATH="/opt/gcp-fde/.venv/bin:$PATH"\n' >> /etc/bash.bashrc; \
        fi \
+    && mkdir -p /etc/zsh \
+    && for zf in /etc/zsh/zshenv /etc/zsh/zprofile; do \
+         if ! grep -qs '/opt/gcp-fde/.venv/bin' "$zf"; then \
+           printf '\n# Persist core-gcp-fde venv on zsh shells (HC15-F1)\nexport VIRTUAL_ENV=/opt/gcp-fde/.venv\nexport PATH="/opt/gcp-fde/.venv/bin:$PATH"\n' >> "$zf"; \
+         fi; \
+       done \
     && chmod 0555 "${GCP_FDE_DIR}/kaizen_collect.py" "${GCP_FDE_DIR}/factory_onboard.py" "${GCP_FDE_DIR}/verify-verdict.py" \
     && chown -R root:root "${GCP_FDE_DIR}" \
     && chmod -R a+rX,go-w "${GCP_FDE_DIR}" \
     && su -l scion -c 'gh --version >/dev/null && git lfs version >/dev/null && python3 -c "import yaml" && pytest --version >/dev/null && python3 /opt/gcp-fde/kaizen_collect.py --help >/dev/null && python3 /opt/gcp-fde/factory_onboard.py --help >/dev/null' \
+    && su -s /bin/bash -l scion -c 'python3 -c "import yaml" && pytest --version >/dev/null' \
     && su -s /bin/sh scion -c '/usr/bin/python3 -c "import yaml"'
 
 USER ${FINAL_USER}

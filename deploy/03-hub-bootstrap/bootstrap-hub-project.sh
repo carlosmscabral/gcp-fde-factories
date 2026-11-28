@@ -430,14 +430,18 @@ _build_one_customer_dockerfile() {
   fi
   [[ -f "$tmp_ctx/$df_rel" ]] || { echo "APPLY FAILED: ${df_rel} missing in archived build context." >&2; exit 1; }
 
-  # Build a network-isolated verification Dockerfile using JSON exec-form RUN as USER scion (C1).
-  python3 - "$tmp_cb/cloudbuild.yaml" "$tmp_ctx/.scion-verify.Dockerfile" "$df_rel" "$base_img" "$target_tag" "$verify_json" <<'PYEOF'
+  # Build a network-isolated verification Dockerfile (USER scion, C1) plus a metadata-only Scion PID 1
+  # wrapper (.scion-runtime.Dockerfile) restoring USER root so sciontool init remaps SCION_HOST_UID/GID
+  # on /workspace and /home/scion before dropping privileges to scion (HC15-F2, matches stage-release-kit.sh).
+  python3 - "$tmp_cb/cloudbuild.yaml" "$tmp_ctx/.scion-verify.Dockerfile" "$tmp_ctx/.scion-runtime.Dockerfile" "$df_rel" "$base_img" "$target_tag" "$verify_json" <<'PYEOF'
 import json, pathlib, re, shlex, sys, yaml
 
-cb_path, verify_df_path, df_rel, base_img, target_tag, verify_raw = sys.argv[1:7]
+cb_path, verify_df_path, runtime_df_path, df_rel, base_img, target_tag, verify_raw = sys.argv[1:8]
 VERIFY_RE = re.compile(r"^[a-z0-9][a-z0-9._+-]{0,31}( (--version|-version|version|--help|playwright --version))?$")
 verify_cmds = json.loads(verify_raw) if verify_raw else []
-lines = [f"FROM {target_tag}", "USER scion"]
+local_build_tag = "scion-customer-local:build"
+
+lines = [f"FROM {local_build_tag}", "USER scion"]
 for cmd in verify_cmds:
     s = str(cmd).strip()
     if not VERIFY_RE.fullmatch(s):
@@ -448,17 +452,28 @@ if not verify_cmds:
     lines.append('RUN ["id"]')
 pathlib.Path(verify_df_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+# Metadata-only wrapper (zero RUN instructions) matching upstream scion-antigravity/scion-claude FINAL_USER=root (HC15-F2).
+pathlib.Path(runtime_df_path).write_text(
+    f"FROM {local_build_tag}\nUSER root\n",
+    encoding="utf-8",
+)
+
 cb = {
     "steps": [
         {
             "name": "gcr.io/cloud-builders/docker",
             "id": "build-customer-runtime",
-            "args": ["build", "-f", df_rel, "--build-arg", f"BASE_IMAGE={base_img}", "-t", target_tag, "."],
+            "args": ["build", "-f", df_rel, "--build-arg", f"BASE_IMAGE={base_img}", "-t", local_build_tag, "."],
         },
         {
             "name": "gcr.io/cloud-builders/docker",
             "id": "verify-binaries-network-none",
             "args": ["build", "--network=none", "-f", ".scion-verify.Dockerfile", "."],
+        },
+        {
+            "name": "gcr.io/cloud-builders/docker",
+            "id": "wrap-scion-pid1-user-root",
+            "args": ["build", "--network=none", "-f", ".scion-runtime.Dockerfile", "-t", target_tag, "."],
         },
     ],
     "images": [target_tag],
@@ -756,8 +771,8 @@ ensure_kaizen_schedule() {
     kz_sa_hint="kaizen-viewer SA"
   fi
   sched_json="$(scion --format json schedule list --show recurring "${PROJ_FLAGS[@]}" --hub "$HUB_URL")"
-  # Reconcile idempotently matching both schedule name and target coordinator agent (H3).
-  existing_match="$(jq -r --arg sn "$sched_name" --arg coord "$kz_coord" --arg c "$kz_cron" --arg tz "$kz_tz" '((if type == "array" then . elif (.schedules | type) == "object" then (.schedules.schedules // []) elif (.schedules | type) == "array" then .schedules else (.items // []) end)[] | select(.name == $sn and ((.agent // .targetAgent // $coord) == $coord) and ((.cronExpr // $c) == $c) and ((.timeZone // $tz) == $tz)) | .id) // empty' <<< "$sched_json" | head -n 1)"
+  # Reconcile idempotently matching schedule name, target coordinator agent, cron, tz, AND active status (H3, HC15-F4).
+  existing_match="$(jq -r --arg sn "$sched_name" --arg coord "$kz_coord" --arg c "$kz_cron" --arg tz "$kz_tz" '((if type == "array" then . elif (.schedules | type) == "object" then (.schedules.schedules // []) elif (.schedules | type) == "array" then .schedules else (.items // []) end)[] | select(.name == $sn and ((.agent // .targetAgent // $coord) == $coord) and ((.cronExpr // $c) == $c) and ((.timeZone // $tz) == $tz) and ((.status // "active") == "active")) | .id) // empty' <<< "$sched_json" | head -n 1)"
   if [[ -n "$existing_match" ]]; then
     echo "SKIP schedule: ${sched_name} ($existing_match) already registered (${kz_cron} ${kz_tz} -> ${kz_coord})."
     return 0
@@ -949,7 +964,7 @@ do_apply() {
   max_dur="$(jq -re '.limits.default_max_duration' <<< "$repo_cfg")"
   max_turns="$(jq -re '.limits.default_max_turns' <<< "$repo_cfg")"
   max_calls="$(jq -re '.limits.default_max_model_calls // 150' <<< "$repo_cfg")"
-  auto_susp="$(jq -re '.limits.auto_suspend_idle' <<< "$repo_cfg")"
+  auto_susp="$(jq -re '(if .limits.auto_suspend_idle == null then true else .limits.auto_suspend_idle end) | tostring' <<< "$repo_cfg")"
   exclude_json="$(jq -c '.exclude_skills' <<< "$repo_cfg")"
 
   do_backup
