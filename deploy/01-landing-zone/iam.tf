@@ -215,24 +215,32 @@ resource "google_service_account" "scion_hub" {
   project      = var.hub_project_id
   account_id   = "${var.name_prefix}-hub"
   display_name = "Scion Hub Server Runtime"
+
+  depends_on = [google_project_service.enabled]
 }
 
 resource "google_service_account" "iap_proxy" {
   project      = var.hub_project_id
   account_id   = "${var.name_prefix}-iap"
   display_name = "Scion Cloud Run IAP Proxy (Zero Project Roles)"
+
+  depends_on = [google_project_service.enabled]
 }
 
 resource "google_service_account" "coordinator" {
   project      = var.inference_project_id
   account_id   = "${var.name_prefix}-coordinator"
   display_name = "Scion Factory Coordinator (Predict and Child-SA Assign Only)"
+
+  depends_on = [google_project_service.enabled]
 }
 
 resource "google_service_account" "worker" {
   project      = var.inference_project_id
   account_id   = "${var.name_prefix}-worker"
   display_name = "Scion SEP Workers (Inference Only)"
+
+  depends_on = [google_project_service.enabled]
 }
 
 resource "google_service_account" "sandbox_deployer" {
@@ -241,6 +249,8 @@ resource "google_service_account" "sandbox_deployer" {
   project      = var.sandbox_project_id
   account_id   = "${var.name_prefix}-deployer"
   display_name = "Factory Sandbox Ephemeral Deployer"
+
+  depends_on = [google_project_service.enabled]
 }
 
 resource "google_service_account" "sandbox_evaluator" {
@@ -249,6 +259,8 @@ resource "google_service_account" "sandbox_evaluator" {
   project      = var.sandbox_project_id
   account_id   = "${var.name_prefix}-eval"
   display_name = "Factory Sandbox Evaluator"
+
+  depends_on = [google_project_service.enabled]
 }
 
 resource "google_service_account" "sandbox_janitor" {
@@ -257,12 +269,16 @@ resource "google_service_account" "sandbox_janitor" {
   project      = var.sandbox_project_id
   account_id   = "${var.name_prefix}-janitor"
   display_name = "Factory Sandbox Hourly Janitor"
+
+  depends_on = [google_project_service.enabled]
 }
 
 resource "google_service_account" "release_builder" {
   project      = var.hub_project_id
   account_id   = "${var.name_prefix}-builder"
   display_name = "Factory Release Kit Cloud Build SA (Rebuild Mode)"
+
+  depends_on = [google_project_service.enabled]
 }
 
 resource "google_artifact_registry_repository_iam_member" "builder_ar_writer" {
@@ -281,6 +297,8 @@ resource "google_service_account" "sandbox_builder" {
   project      = var.sandbox_project_id
   account_id   = "${var.name_prefix}-sbx-builder"
   display_name = "Factory Sandbox Ephemeral PR Cloud Build SA"
+
+  depends_on = [google_project_service.enabled]
 }
 
 resource "google_artifact_registry_repository_iam_member" "sandbox_builder_ar_writer" {
@@ -339,6 +357,8 @@ resource "google_service_account" "gke_node" {
   project      = var.hub_project_id
   account_id   = "${var.name_prefix}-gke-node"
   display_name = "Scion GKE Node Pool Runtime (Least Privilege)"
+
+  depends_on = [google_project_service.enabled]
 }
 
 resource "google_project_iam_member" "gke_node_default" {
@@ -927,6 +947,8 @@ resource "google_service_account" "adk_runtime" {
   project      = var.sandbox_project_id
   account_id   = "${var.name_prefix}-adk-runtime"
   display_name = "ADK Sandbox Container Runtime (Predict-Only)"
+
+  depends_on = [google_project_service.enabled]
 }
 
 resource "google_service_account_iam_member" "deployer_adk_runtime_act_as" {
@@ -1125,6 +1147,8 @@ resource "google_service_account" "kaizen_viewer" {
   project      = var.inference_project_id
   account_id   = "${var.name_prefix}-kaizen"
   display_name = "Factory Kaizen Read-Only Telemetry Viewer"
+
+  depends_on = [google_project_service.enabled]
 }
 
 resource "google_service_account_iam_member" "hub_mint_kaizen_viewer" {

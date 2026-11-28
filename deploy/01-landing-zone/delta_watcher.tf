@@ -7,6 +7,8 @@ resource "google_service_account" "delta_watcher" {
   project      = var.hub_project_id
   account_id   = "${var.name_prefix}-delta-watcher"
   display_name = "External Delta Watcher Cloud Run Runtime"
+
+  depends_on = [google_project_service.enabled]
 }
 
 resource "google_service_account" "delta_watcher_invoker" {
@@ -15,6 +17,8 @@ resource "google_service_account" "delta_watcher_invoker" {
   project      = var.hub_project_id
   account_id   = "${var.name_prefix}-dw-invoker"
   display_name = "External Delta Watcher Cloud Scheduler OIDC Invoker"
+
+  depends_on = [google_project_service.enabled]
 }
 
 resource "google_storage_bucket" "delta_watcher_state" {
@@ -56,11 +60,26 @@ resource "google_project_iam_member" "delta_watcher_logging" {
   member  = "serviceAccount:${google_service_account.delta_watcher[0].email}"
 }
 
-resource "google_secret_manager_secret_iam_member" "delta_watcher_tracker_token" {
+# Provision the empty Secret Manager metadata container cold-start so IAM binding never hits 404 (HC13-F2).
+# Operators add secret versions out-of-band via `gcloud secrets versions add` so no token enters Terraform state.
+resource "google_secret_manager_secret" "delta_watcher_tracker_token" {
   count = var.enable_delta_watcher && length(trimspace(var.delta_watcher_token_secret_id)) > 0 ? 1 : 0
 
   project   = var.hub_project_id
   secret_id = var.delta_watcher_token_secret_id
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.enabled]
+}
+
+resource "google_secret_manager_secret_iam_member" "delta_watcher_tracker_token" {
+  count = var.enable_delta_watcher && length(trimspace(var.delta_watcher_token_secret_id)) > 0 ? 1 : 0
+
+  project   = var.hub_project_id
+  secret_id = google_secret_manager_secret.delta_watcher_tracker_token[0].secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.delta_watcher[0].email}"
 }

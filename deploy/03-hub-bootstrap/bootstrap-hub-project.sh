@@ -246,6 +246,70 @@ warn_github_token_injection_mode() {
   fi
 }
 
+ensure_delta_watcher_hub_rbac() {
+  # Pre-registers the External Delta Watcher SA as a Hub user and grants a 2-permission project role
+  # (agent.message and agent.read only) so Cloud Run OIDC wakes succeed without Hub admin rights (HC13-F7).
+  local proj_id="$1"
+  [[ -n "$proj_id" && -n "${SCION_HUB_TOKEN:-}" && -n "$LANDING_ZONE_JSON" && -f "$LANDING_ZONE_JSON" ]] || return 0
+  validate_uuid_or_fail "$proj_id" "ensure_delta_watcher_hub_rbac" || return 0
+  local dw_sa
+  dw_sa="$(jq -r '.delta_watcher_sa_email.value // empty' "$LANDING_ZONE_JSON")"
+  [[ -n "$dw_sa" ]] || return 0
+
+  # Provision user idempotently or look up an already-federated user record by email.
+  local dw_uid="" users_json=""
+  users_json="$(curl -sf -H "Authorization: Bearer ${SCION_HUB_TOKEN}" "${HUB_URL%/}/api/v1/users" 2>/dev/null || true)"
+  if [[ -n "$users_json" ]]; then
+    dw_uid="$(jq -r --arg e "$dw_sa" '(.users // .items // [])[] | select(.email == $e) | .id' <<< "$users_json" | head -n 1 || true)"
+  fi
+  if [[ -z "$dw_uid" ]]; then
+    dw_uid="$(scion hub users provision "$dw_sa" --display-name "External Delta Watcher" --json --hub "$HUB_URL" 2>/dev/null | jq -r '.id // .user.id // empty' || true)"
+  fi
+  if [[ -z "$dw_uid" ]]; then
+    echo "WARNING: Could not provision Delta Watcher user '${dw_sa}' on Hub; skipping role binding." >&2
+    return 0
+  fi
+
+  # Ensure the custom 2-permission project role exists (agent.message + agent.read only).
+  local roles_json="" role_id=""
+  roles_json="$(curl -sf -H "Authorization: Bearer ${SCION_HUB_TOKEN}" "${HUB_URL%/}/api/v1/admin/roles" 2>/dev/null || true)"
+  if [[ -n "$roles_json" ]]; then
+    role_id="$(jq -r '(.roles // .items // [])[] | select(.name == "delta-watcher-messenger") | .id' <<< "$roles_json" | head -n 1 || true)"
+  fi
+  if [[ -z "$role_id" ]]; then
+    role_id="$(curl -sf -X POST \
+      -H "Authorization: Bearer ${SCION_HUB_TOKEN}" \
+      -H "Content-Type: application/json" \
+      "${HUB_URL%/}/api/v1/admin/roles" \
+      -d '{"name":"delta-watcher-messenger","description":"Least-privilege External Delta Watcher wake-only role","scopeType":"project","permissions":["agent.message","agent.read"]}' 2>/dev/null \
+      | jq -r '.id // .role.id // empty' || true)"
+  fi
+  if [[ -z "$role_id" ]]; then
+    echo "WARNING: Hub /api/v1/admin/roles unavailable; bind delta-watcher-messenger manually for '${dw_sa}'." >&2
+    return 0
+  fi
+
+  # Bind delta-watcher-messenger strictly to this project UUID if not already present.
+  local bindings_json="" existing_binding=""
+  bindings_json="$(curl -sf -H "Authorization: Bearer ${SCION_HUB_TOKEN}" \
+    "${HUB_URL%/}/api/v1/admin/role-bindings?principalType=user&principalId=${dw_uid}" 2>/dev/null || true)"
+  if [[ -n "$bindings_json" ]]; then
+    existing_binding="$(jq -r --arg rid "$role_id" --arg pid "$proj_id" \
+      '(.bindings // .items // [])[] | select(.roleDefinitionId == $rid and .scopeType == "project" and .scopeId == $pid) | .id' \
+      <<< "$bindings_json" | head -n 1 || true)"
+  fi
+  if [[ -n "$existing_binding" ]]; then
+    echo "EXISTING DELTA WATCHER RBAC: ${dw_sa} -> delta-watcher-messenger on project ${proj_id} (${existing_binding})"
+    return 0
+  fi
+  curl -sf -X POST \
+    -H "Authorization: Bearer ${SCION_HUB_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${HUB_URL%/}/api/v1/admin/role-bindings" \
+    -d "{\"principalType\":\"user\",\"principalId\":\"${dw_uid}\",\"roleDefinitionId\":\"${role_id}\",\"scopeType\":\"project\",\"scopeId\":\"${proj_id}\"}" >/dev/null
+  echo "BOUND DELTA WATCHER RBAC: ${dw_sa} -> delta-watcher-messenger (agent.message, agent.read) on project ${proj_id}"
+}
+
 warn_adk_ge_license_preflight() {
   # Checks Discovery Engine project licenseConfigs on ADK sandboxes before waves start (HC-12 GE preflight).
   # Uses operator gcloud credentials best-effort; never fails offline tests or blocks Agent Engine deploys.
@@ -510,7 +574,14 @@ do_apply() {
   fi
 
   if [[ -d "$KIT_DIR/harness-configs" ]]; then
-    local global_hc_root="${SCION_GLOBAL_DIR:-$HOME/.scion}/harness-configs"
+    # Stage harness configs in project-local .scion/ with --scope global whenever the repo is linked
+    # so stale ~/.scion/harness-configs from another factory never leak across Hubs (HC13-F6).
+    local global_hc_root="${HOME}/.scion/harness-configs"
+    local hc_sync_flags=(--global)
+    if [[ -n "$TARGET_REPO" && -d "$TARGET_REPO/.scion" ]]; then
+      global_hc_root="${TARGET_REPO}/.scion/harness-configs"
+      hc_sync_flags=(--scope global)
+    fi
     mkdir -p "$global_hc_root"
     for hc_dir in "$KIT_DIR"/harness-configs/*; do
       [[ -d "$hc_dir" && -f "$hc_dir/config.yaml" ]] || continue
@@ -543,12 +614,20 @@ do_apply() {
         --claude-region "$claude_reg" \
         --pin-image "$img_override"
       local hc_out="" hc_rc=0
-      hc_out="$(scion harness-config sync "$hc_name" --global --hub "$HUB_URL" 2>&1)" || hc_rc=$?
+      if [[ -n "$TARGET_REPO" && -d "$TARGET_REPO/.scion" ]]; then
+        hc_out="$(cd "$TARGET_REPO" && scion harness-config sync "$hc_name" "${hc_sync_flags[@]}" --hub "$HUB_URL" 2>&1)" || hc_rc=$?
+      else
+        hc_out="$(scion harness-config sync "$hc_name" "${hc_sync_flags[@]}" --hub "$HUB_URL" 2>&1)" || hc_rc=$?
+      fi
       if [[ "$hc_rc" -eq 0 ]]; then
         printf '%s\n' "$hc_out"
       elif grep -qiE '409|conflict|already exists' <<< "$hc_out"; then
         sleep 2
-        scion harness-config sync "$hc_name" --global --hub "$HUB_URL"
+        if [[ -n "$TARGET_REPO" && -d "$TARGET_REPO/.scion" ]]; then
+          (cd "$TARGET_REPO" && scion harness-config sync "$hc_name" "${hc_sync_flags[@]}" --hub "$HUB_URL")
+        else
+          scion harness-config sync "$hc_name" "${hc_sync_flags[@]}" --hub "$HUB_URL"
+        fi
       else
         printf '%s\n' "$hc_out" >&2
         return "$hc_rc"
@@ -646,6 +725,8 @@ do_apply() {
   if [[ "$auto_susp" == "true" ]]; then
     scion hub experiments enable lifecycle.idle_suspend --hub "$HUB_URL"
   fi
+  # Enable lifecycle.never_suspend on Scion v0.4.0-preview.4+ so Coordinator --never-suspend is enforced (HC13-F5).
+  scion hub experiments enable lifecycle.never_suspend --hub "$HUB_URL" || true
 
   # Enable pilot-validated Decisions and Artifacts review experiments by default on every Hub.
   for _exp in web.decisions hub.artifacts web.artifact_review_editor hub.artifact_archive; do
@@ -684,10 +765,17 @@ do_apply() {
           && echo "SET PROJECT ENV: ${k}=${v}" || true
       done
       warn_github_token_injection_mode "$proj_id"
+      ensure_delta_watcher_hub_rbac "$proj_id"
     fi
   fi
 
-  # 6. Schedule weekly closed-loop Kaizen by default on every project.
+  if [[ -n "$TARGET_REPO" ]]; then
+    do_overlay_sync
+  fi
+  # Start Coordinator before scheduling recurring messages targeting it (Scion v0.4.0-preview.4 validates agent existence, HC13-F4).
+  ensure_coordinator_started "$pack_prefix" "$default_harness" "$repo_cfg" "${coord_sa:-$worker_sa}"
+
+  # 6. Schedule daily closed-loop Kaizen by default on every project.
   ensure_kaizen_schedule \
     "$pack_prefix" \
     "$(jq -re '.kaizen.enabled | tostring' <<< "$repo_cfg")" \
@@ -695,11 +783,6 @@ do_apply() {
     "$(jq -re '.kaizen.time_zone' <<< "$repo_cfg")" \
     "$(jq -re '.kaizen.coordinator_agent' <<< "$repo_cfg")" \
     "$(jq -r '(.kaizen.enable_gcp_obs // false) | tostring' <<< "$repo_cfg")"
-
-  if [[ -n "$TARGET_REPO" ]]; then
-    do_overlay_sync
-  fi
-  ensure_coordinator_started "$pack_prefix" "$default_harness" "$repo_cfg" "${coord_sa:-$worker_sa}"
   warn_adk_ge_license_preflight "$pack_name"
   print_github_ci_variables "$pack_name"
   echo "APPLY COMPLETE."

@@ -22,7 +22,8 @@ resource "google_cloud_run_v2_service" "delta_watcher" {
     vpc_access {
       egress = "PRIVATE_RANGES_ONLY"
       network_interfaces {
-        subnetwork = var.subnet_self_link
+        # Cloud Run v2 requires a relative subnetwork path (projects/*/regions/*/subnetworks/*), not a full compute self_link (HC13-F3).
+        subnetwork = replace(var.subnet_self_link, "https://www.googleapis.com/compute/v1/", "")
       }
     }
 
