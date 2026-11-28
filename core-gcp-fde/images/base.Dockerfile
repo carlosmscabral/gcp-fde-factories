@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       gh \
       git-lfs \
       jq \
+      python3-yaml \
     && (command -v git >/dev/null 2>&1 || apt-get install -y --no-install-recommends git) \
     && git config --system core.hooksPath /dev/null \
     && git lfs install --system --skip-repo \
@@ -51,9 +52,17 @@ COPY scripts/lib/ "${GCP_FDE_DIR}/scripts/lib/"
 COPY scripts/verify-verdict.py "${GCP_FDE_DIR}/verify-verdict.py"
 COPY schemas/ "${GCP_FDE_DIR}/schemas/"
 COPY WORKAROUNDS.yaml "${GCP_FDE_DIR}/WORKAROUNDS.yaml"
-RUN chmod 0555 "${GCP_FDE_DIR}/kaizen_collect.py" "${GCP_FDE_DIR}/factory_onboard.py" "${GCP_FDE_DIR}/verify-verdict.py" \
+# Persist /opt/gcp-fde/.venv/bin on PATH across login and interactive shells so /etc/profile never hides
+# PyYAML/pytest inside Scion tmux panes or bash -lc invocations (HC14-F2).
+RUN printf 'export VIRTUAL_ENV=/opt/gcp-fde/.venv\nexport PATH="/opt/gcp-fde/.venv/bin:$PATH"\n' > /etc/profile.d/gcp-fde.sh \
+    && chmod 0644 /etc/profile.d/gcp-fde.sh \
+    && if [ -f /etc/bash.bashrc ] && ! grep -q '/opt/gcp-fde/.venv/bin' /etc/bash.bashrc; then \
+         printf '\n# Persist core-gcp-fde venv on interactive shells (HC14-F2)\nexport PATH="/opt/gcp-fde/.venv/bin:$PATH"\n' >> /etc/bash.bashrc; \
+       fi \
+    && chmod 0555 "${GCP_FDE_DIR}/kaizen_collect.py" "${GCP_FDE_DIR}/factory_onboard.py" "${GCP_FDE_DIR}/verify-verdict.py" \
     && chown -R root:root "${GCP_FDE_DIR}" \
     && chmod -R a+rX,go-w "${GCP_FDE_DIR}" \
-    && su -s /bin/sh scion -c 'gh --version >/dev/null && git lfs version >/dev/null && PATH="/opt/gcp-fde/.venv/bin:$PATH" python3 /opt/gcp-fde/kaizen_collect.py --help >/dev/null && PATH="/opt/gcp-fde/.venv/bin:$PATH" python3 /opt/gcp-fde/factory_onboard.py --help >/dev/null'
+    && su -l scion -c 'gh --version >/dev/null && git lfs version >/dev/null && python3 -c "import yaml" && pytest --version >/dev/null && python3 /opt/gcp-fde/kaizen_collect.py --help >/dev/null && python3 /opt/gcp-fde/factory_onboard.py --help >/dev/null' \
+    && su -s /bin/sh scion -c '/usr/bin/python3 -c "import yaml"'
 
 USER ${FINAL_USER}

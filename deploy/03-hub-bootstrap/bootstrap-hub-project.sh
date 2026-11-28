@@ -62,6 +62,20 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$KIT_DIR" && -n "$HUB_URL" ]] || usage
+# Normalize CLI paths before switching cwd to TARGET_REPO so project-scoped `scion` commands
+# resolve TARGET_REPO/.scion and .git even when invoked from another directory (HC14-F1).
+KIT_DIR="$(cd "$KIT_DIR" && pwd)"
+if [[ -n "$LANDING_ZONE_JSON" && -f "$LANDING_ZONE_JSON" ]]; then
+  LANDING_ZONE_JSON="$(cd "$(dirname "$LANDING_ZONE_JSON")" && pwd)/$(basename "$LANDING_ZONE_JSON")"
+fi
+if [[ -n "$BACKUP_DIR" ]]; then
+  mkdir -p "$BACKUP_DIR"
+  BACKUP_DIR="$(cd "$BACKUP_DIR" && pwd)"
+fi
+if [[ -n "$TARGET_REPO" && -d "$TARGET_REPO" ]]; then
+  TARGET_REPO="$(cd "$TARGET_REPO" && pwd)"
+  cd "$TARGET_REPO"
+fi
 export SCION_HUB_ENDPOINT="$HUB_URL"
 if [[ -n "$PROJECT_SLUG" ]]; then
   PROJ_FLAGS=(--project "$PROJECT_SLUG")
@@ -152,7 +166,8 @@ do_plan() {
 do_backup() {
   local ts dir pulled=0
   ts="$(date -u +%Y%m%dT%H%M%SZ)"
-  dir="${BACKUP_DIR:-$(pwd)/.backups/$ts}"
+  # Store default backups outside TARGET_REPO so apply never leaves untracked .backups/ in customer repos (HC14-F1).
+  dir="${BACKUP_DIR:-${TMPDIR:-/tmp}/scion-hub-backups/$ts}"
   mkdir -p "$dir/templates"
   echo "=== BACKUP: Exporting Hub settings and existing templates to $dir ==="
   scion hub settings get --section gcp_iam --hub "$HUB_URL" > "$dir/gcp_iam.txt"

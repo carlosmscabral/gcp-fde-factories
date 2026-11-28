@@ -82,6 +82,14 @@ def build_l1_offline_env(
         for k, v in base_env.items()
         if k in allowed and not _is_forbidden_l1_env(k)
     }
+    # Preserve /opt/gcp-fde/.venv/bin ahead of system PATH when present so login-shell PATH resets
+    # never break core pytest/Python tooling inside container gates (HC14-F2).
+    venv_bin = "/opt/gcp-fde/.venv/bin"
+    if pathlib.Path(venv_bin).is_dir():
+        cur_path = env.get("PATH", "")
+        parts = [p for p in cur_path.split(":") if p]
+        if venv_bin not in parts:
+            env["PATH"] = f"{venv_bin}:{cur_path}" if cur_path else venv_bin
     env["CLOUDSDK_CONFIG"] = str(empty_gcloud_dir)
     env["GCE_METADATA_HOST"] = "127.0.0.1:1"
     env["GOOGLE_APPLICATION_CREDENTIALS"] = ""

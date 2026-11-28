@@ -151,13 +151,13 @@ def evaluate_tick(
         if len(active_dispatched) >= cap:
             _bump("capacity_full")
             continue
+        clean_title = sanitize_untrusted_text(item.title)
         active_dispatched[str(item.number)] = {
-            "title": item.title,
+            "title": clean_title,
             "url": item.url,
             "updated_at": item.updated_at,
         }
         dispatched_now.append(item.number)
-        clean_title = sanitize_untrusted_text(item.title)
         events.append(
             WakeupEvent(
                 kind="new_issue",
