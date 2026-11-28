@@ -4,6 +4,9 @@
 **Audiência:** Times de Plataforma GCP, SecOps, IAM, FinOps e Engenharia de IA do Cliente
 **Escopo:** Piloto e operação controlada de fábricas autônomas **GECX (`packs/gecx`)**, **ADK + Gemini Enterprise (`packs/adk`)** e **Software Genérico (`packs/generic`, `sw-*`)** dentro do Google Cloud do cliente
 
+> [!TIP]
+> **Walkthrough Interativo de Arquitetura GCP:** Abra [gcp-factory-architectures.html](gcp-factory-architectures.html) no navegador para inspecionar passo a passo cada serviço GCP, fronteira de projeto/IAM, VPC/IAP e fluxo de rede nos 3 setups suportados (**2-Project Generic No-Sandbox**, **3-Project Lite VM + Sandbox ADK/GECX** e **3-Project HA GKE**).
+
 ---
 
 ## 1. Visão Geral e Separação de Responsabilidades

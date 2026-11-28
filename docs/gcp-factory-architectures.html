@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-mode="slides">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GCP FDE Factories — Verified GCP Architectures</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500;700&display=swap">
+
+<style>
+  :root {
+    color-scheme: light;
+
+    --blue: #4285F4; --red: #EA4335; --yellow: #FBBC04; --green: #34A853;
+
+    --ground: #F6F8FB;
+    --panel: #FFFFFF;
+    --panel-2: #EAF0F8;
+    --rim: #DCE2EA;
+
+    --ink: #202124; --ink-2: #526071; --ink-3: #5F6368;
+
+    --sheet: #FFFFFF;
+    --sheet-ink: #202124; --sheet-ink-2: #5F6368; --sheet-line: #C8CCD1;
+    --wire: #9AA0A6; --disc: #1A73E8;
+
+    --body: "Google Sans Text", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: "Roboto Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --accent: #1A73E8;
+    --accent-paper: #1A73E8;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; overflow: hidden;
+    background: var(--ground); color: var(--ink);
+    font: 15px/1.55 var(--body);
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible { outline: 3px solid var(--yellow); outline-offset: 2px; border-radius: 4px; }
+
+  .shell { height: 100%; display: flex; flex-direction: column; padding: 0 clamp(14px, 2.4vw, 30px); }
+
+  .topbar {
+    flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px;
+    padding-block: 12px 10px; border-bottom: 1px solid var(--rim);
+  }
+  .topbar h1 { margin: 0; font-size: 15px; font-weight: 600; color: var(--ink); white-space: nowrap; }
+  .topo-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+  .topo-tab {
+    font: 500 12px var(--body); color: var(--ink-2);
+    background: var(--panel); border: 1px solid var(--rim); border-radius: 999px;
+    padding: 5px 12px; cursor: pointer; transition: background .15s, border-color .15s, color .15s;
+  }
+  .topo-tab:hover { background: var(--panel-2); color: var(--ink); }
+  .topo-tab[aria-selected="true"] {
+    background: #E8F0FE; border-color: #1A73E8; color: #174EA6; font-weight: 600;
+  }
+  .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .counter { font: 12px var(--mono); color: var(--ink-3); }
+  .notes-toggle {
+    color: var(--ink); background: var(--panel); border: 1px solid var(--rim);
+    border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer;
+  }
+  .notes-toggle:hover { background: var(--panel-2); }
+
+  .screen {
+    flex: 1; min-height: 0;
+    display: grid; grid-template-columns: minmax(260px, 23vw) 1fr;
+    gap: clamp(14px, 2vw, 24px);
+    padding-block: clamp(10px, 1.8vh, 20px);
+  }
+
+  .caption { min-width: 0; min-height: 0; display: flex; flex-direction: column; justify-content: center; gap: 10px; }
+  .topo-badge {
+    display: inline-block; align-self: flex-start;
+    font: 500 11px var(--mono); color: var(--ink-2);
+    background: var(--panel); border: 1px solid var(--rim); border-radius: 6px;
+    padding: 3px 8px;
+  }
+  .stepno { font: 400 clamp(44px, 6.5vw, 84px)/.82 var(--mono); color: var(--accent); }
+  .caption h2 { margin: 0; font-size: clamp(20px, 2.2vw, 30px); font-weight: 500; line-height: 1.15; text-wrap: balance; }
+  .caption .line { margin: 0; color: var(--ink-2); font-size: clamp(13.5px, 1.05vw, 15.5px); max-width: 42ch; }
+
+  .chips { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 7px; }
+  .chips li {
+    display: flex; flex-direction: column; gap: 1px; min-width: 0;
+    padding: 6px 10px; background: var(--panel);
+    border: 1px solid var(--rim); border-left: 3px solid var(--accent);
+    border-radius: 3px 8px 8px 3px;
+  }
+  .chips b { font: 500 12px var(--mono); color: var(--ink); overflow-wrap: anywhere; }
+  .chips span { font-size: 11px; color: var(--ink-3); }
+
+  .stagewrap { position: relative; min-width: 0; min-height: 0; }
+  .sheet {
+    position: absolute; inset: 0; padding: 14px;
+    background: var(--sheet); border-radius: 14px;
+    border: 1px solid var(--rim);
+    box-shadow: 0 8px 28px rgba(36, 51, 74, 0.06);
+  }
+  .sheet::after {
+    content: ""; position: absolute; inset: 14px; border-radius: 10px;
+    pointer-events: none; opacity: 0; transition: opacity .35s;
+    background:
+      linear-gradient(to right, #FFF, rgba(255,255,255,0) 46px),
+      linear-gradient(to left, #FFF, rgba(255,255,255,0) 46px),
+      linear-gradient(to bottom, #FFF, rgba(255,255,255,0) 32px),
+      linear-gradient(to top, #FFF, rgba(255,255,255,0) 32px);
+  }
+  .sheet.zoomed::after { opacity: 1; }
+
+  .diagram { display: block; width: 100%; height: 100%; }
+  #stage { transition: transform .55s cubic-bezier(.22,.61,.36,1); }
+
+  .box { fill: var(--sheet); stroke: var(--sheet-line); stroke-width: 1.2; rx: 6; }
+  .box-title { fill: var(--sheet-ink); font-size: 13px; font-weight: 500; }
+  .box-sub { fill: var(--sheet-ink-2); font-size: 10.5px; font-family: var(--mono); }
+  .grp { fill: var(--tint); stroke: var(--edge); stroke-width: 1.2; rx: 8; }
+  .grp-title { fill: var(--sheet-ink); font-size: 12.5px; font-weight: 500; }
+  .card { fill: var(--sheet); stroke: var(--edge); stroke-width: 1.2; rx: 5; }
+  .card-title { fill: var(--sheet-ink); font-size: 12.5px; font-weight: 500; }
+  .card-sub { fill: var(--sheet-ink-2); font-size: 10.5px; font-family: var(--mono); }
+  .gc-frame { fill: none; stroke: var(--sheet-line); stroke-width: 1.2; rx: 8; }
+  .gc-label { fill: var(--sheet-ink-2); font-size: 12.5px; font-weight: 500; }
+  .zone-label { fill: var(--sheet-ink-2); font-size: 11px; font-family: var(--mono); letter-spacing: .05em; }
+
+  .wire { stroke: var(--wire); stroke-width: 1.3; fill: none; }
+  .wire.dash { stroke-dasharray: 5 4; }
+  .wire-head { fill: var(--wire); }
+  .wire-label {
+    fill: var(--sheet-ink-2); font-size: 10px; font-family: var(--mono);
+    paint-order: stroke; stroke: var(--sheet); stroke-width: 3.5px; stroke-linejoin: round;
+  }
+  .disc { fill: var(--disc); stroke: var(--sheet); stroke-width: 2; }
+  .disc-n { fill: #FFF; font: 700 10px var(--mono); }
+
+  .unit, .wirepart { transition: opacity .4s, stroke .2s, fill .2s; }
+  .unit { cursor: pointer; }
+  .dim { opacity: .14; }
+  .unit.lit rect, .unit:hover rect { stroke: var(--accent-paper); stroke-width: 2.4; }
+  .wire.lit { stroke: var(--accent-paper); stroke-width: 2.4; }
+  .wire-head.lit { fill: var(--accent-paper); }
+  .wire-label.lit { fill: var(--sheet-ink); }
+  .disc.lit { fill: var(--accent-paper); }
+  .unit:hover { opacity: 1; }
+
+  @media (prefers-reduced-motion: reduce) { #stage, .unit, .wirepart, .sheet::after { transition: none; } }
+
+  .tip {
+    position: absolute; z-index: 6; width: 286px; max-width: calc(100% - 20px);
+    padding: 11px 13px 13px; background: var(--panel);
+    border: 1px solid var(--rim); border-left: 3px solid var(--accent);
+    border-radius: 9px; box-shadow: 0 8px 26px rgba(32,33,36,.16);
+    pointer-events: none; display: flex; flex-direction: column; gap: 3px;
+  }
+  .tip b { font-size: 13.5px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+  .tip .tip-sub { font: 11px var(--mono); color: var(--ink-3); overflow-wrap: anywhere; }
+  .tip p { margin: 4px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--ink-2); }
+  .tip .tip-why { color: #174EA6; font-size: 12px; }
+
+  .notes {
+    position: absolute; z-index: 8; inset: auto 16px 16px; padding: 14px 16px;
+    max-height: 40%; overflow: auto; color: var(--ink); background: var(--panel);
+    border: 1px solid var(--rim); border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(32,33,36,.12);
+    font-size: 12.5px; white-space: pre-wrap;
+  }
+
+  .context {
+    flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
+    font-size: 11.5px; color: var(--ink-2); padding-bottom: 4px;
+  }
+  .context p { margin: 0; }
+  .component-picker {
+    margin-left: auto; font: 12px var(--body); color: var(--ink);
+    background: var(--panel); border: 1px solid var(--rim); border-radius: 6px;
+    max-width: 100%; padding: 5px 8px;
+  }
+
+  .rail { flex: none; display: flex; align-items: center; gap: 10px; padding-block: 6px 12px; }
+  .nav {
+    flex: none; width: 36px; height: 32px; display: grid; place-items: center;
+    background: var(--panel); border: 1px solid var(--rim); border-radius: 8px;
+    color: var(--ink-2); font: 14px var(--mono); cursor: pointer;
+  }
+  .nav:hover { background: var(--panel-2); color: var(--ink); }
+  .dots { flex: 1; min-width: 0; display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; }
+  .dots::-webkit-scrollbar { display: none; }
+  .dot {
+    flex: 1 1 0; min-width: 26px; height: 32px; display: grid; place-items: center;
+    background: var(--panel); border: 1px solid var(--rim); border-bottom: 3px solid var(--rim);
+    border-radius: 4px 4px 7px 7px; color: var(--ink-3);
+    font: 500 12.5px var(--mono); cursor: pointer;
+  }
+  .dot:hover { background: var(--panel-2); color: var(--ink); }
+  .dot[aria-current="true"] { color: var(--dot); border-bottom-color: var(--dot); background: var(--panel-2); }
+
+  @media (max-width: 900px), (max-height: 520px) {
+    .screen { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); gap: 10px; }
+    .caption { justify-content: flex-start; gap: 6px; }
+    .stepno { font-size: 40px; }
+    .caption h2 { font-size: 20px; }
+  }
+  @media (max-width: 560px) {
+    .chips li:nth-child(n + 3) { display: none; }
+    .dots { gap: 3px; }
+    .dot { min-width: 19px; font-size: 11px; }
+    .nav { width: 30px; }
+  }
+  @media print {
+    body { background: #FFF !important; color: #202124 !important; }
+    .caption, .rail, .tip, .notes, .notes-toggle, .component-picker, .topo-tabs { display: none !important; }
+    .screen { display: block !important; }
+    .stagewrap { height: 78vh; }
+    .sheet { box-shadow: none !important; border: none !important; }
+    #stage { transform: none !important; }
+    .dim { opacity: 1 !important; }
+    .sheet::after { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <header class="topbar">
+    <h1 id="doc-title">GCP FDE Factories</h1>
+    <div class="topo-tabs" id="topo-tabs" role="tablist" aria-label="Deployment topologies"></div>
+    <div class="topbar-right">
+      <span class="counter" id="counter"></span>
+      <button class="notes-toggle" id="notes-toggle" type="button" aria-expanded="false" aria-controls="notes" hidden>Notes</button>
+    </div>
+  </header>
+
+  <main class="screen">
+    <aside class="caption" aria-live="polite">
+      <span class="topo-badge" id="topo-badge"></span>
+      <span class="stepno" id="stepno" hidden></span>
+      <h2 id="title"></h2>
+      <p class="line" id="line"></p>
+      <ul class="chips" id="chips" hidden></ul>
+    </aside>
+
+    <div class="stagewrap" id="stagewrap">
+      <div class="sheet" id="sheet">
+        <svg class="diagram" id="diagram" viewBox="0 0 1240 800"
+             preserveAspectRatio="xMidYMid meet" role="img" aria-label="GCP FDE Factory architecture diagram">
+          <g id="stage">
+            <g id="layer-frames"></g>
+            <g id="layer-wires"></g>
+            <g id="layer-units"></g>
+          </g>
+        </svg>
+      </div>
+      <div class="tip" id="tip" hidden>
+        <b id="tip-title"></b>
+        <span class="tip-sub" id="tip-sub"></span>
+        <p id="tip-what"></p>
+        <p class="tip-why" id="tip-why" hidden></p>
+      </div>
+      <div class="notes" id="notes" hidden></div>
+    </div>
+  </main>
+
+  <div class="context">
+    <p id="notice" hidden></p>
+    <p id="legend" hidden></p>
+    <select class="component-picker" id="component-picker" aria-label="Explore a component">
+      <option value="">Explore a component…</option>
+    </select>
+  </div>
+
+  <footer class="rail">
+    <button class="nav" id="prev" type="button" aria-label="Previous step">&#9664;</button>
+    <div class="dots" id="dots" role="group" aria-label="Steps"></div>
+    <button class="nav" id="next" type="button" aria-label="Next step">&#9654;</button>
+  </footer>
+</div>
+
+<script>
+/* Google Cloud product icons, from the Iconify gcp mirror. */
+/* The marks belong to Google. Follow cloud.google.com/icons when publishing. */
+const ICONS = {"virtual-private-cloud":{"vb":"0 0 24 24","d":"<path fill=\"#aecbfa\" d=\"M16 2h6v6h-6z\"/><path fill=\"#669df6\" d=\"M19 2h3v6h-3z\"/><path fill=\"#aecbfa\" d=\"M16 16h6v6h-6z\"/><path fill=\"#669df6\" d=\"M19 16h3v6h-3z\"/><path fill=\"#aecbfa\" d=\"M2 2h6v6H2z\"/><path fill=\"#669df6\" d=\"M5 2h3v6H5z\"/><path fill=\"#aecbfa\" d=\"M2 16h6v6H2z\"/><path fill=\"#669df6\" d=\"M5 16h3v6H5zM8 4h8v2H8zm0 14h8v2H8zM18 8h2v8h-2zM4 8h2v8H4z\"/><path fill=\"#4285f4\" d=\"M4 8h2v2H4zm14 0h2v2h-2zM8 4h2v2H8zm0 14h2v2H8z\"/>"},"cloud-nat":{"vb":"0 0 24 24","d":"<path fill=\"#4285f4\" d=\"M15.3 11.17v1.66h4.5v-1.66ZM9.86 5.89H7v1.67h3.93a10 10 0 0 0-1.07-1.67M11 16.44H7.6v1.67h2.29A10.7 10.7 0 0 0 11 16.44M12 12a8 8 0 0 0 0-.83H4.5v1.66H12a8 8 0 0 0 0-.83\"/><path fill=\"#669df6\" d=\"M3.67 12.48a.48.48 0 1 1 .47-.48a.48.48 0 0 1-.47.48m0-2.15A1.67 1.67 0 1 0 5.33 12a1.67 1.67 0 0 0-1.66-1.67m2.5 7.42a.48.48 0 1 1 .47-.48a.47.47 0 0 1-.47.48m0-2.14a1.67 1.67 0 1 0 1.66 1.66a1.67 1.67 0 0 0-1.66-1.66m0-8.41a.48.48 0 1 1 .47-.47a.47.47 0 0 1-.47.47m0-2.14a1.67 1.67 0 1 0 0 3.33a1.67 1.67 0 0 0 0-3.33\"/><path fill=\"#4285f4\" d=\"M18.67 14.5v-5L22 12zM9.5 22l-.86-1.5a10.73 10.73 0 0 0 4.19-8.5a10.89 10.89 0 0 0-4.2-8.5L9.5 2a12.53 12.53 0 0 1 5 10a12.46 12.46 0 0 1-5 10\"/>"},"compute-engine":{"vb":"0 0 24 24","d":"<path fill=\"#aecbfa\" d=\"M9 9h6v6H9z\"/><path fill=\"#669df6\" d=\"M11 2h2v4h-2zM7 2h2v4H7zm8 0h2v4h-2z\"/><path fill=\"#4285f4\" d=\"M11 18h2v4h-2zm-4 0h2v4H7zm8 0h2v4h-2zm3-5v-2h4v2zm0 4v-2h4v2zm0-8V7h4v2z\"/><path fill=\"#669df6\" d=\"M2 13v-2h4v2zm0 4v-2h4v2zm0-8V7h4v2z\"/><path fill=\"#aecbfa\" d=\"M5 5v14h14V5Zm12 12H7V7h10Z\"/><path fill=\"#669df6\" d=\"M9 15h6l-3-3z\"/><path fill=\"#4285f4\" d=\"m12 12l3 3V9z\"/>"},"identity-aware-proxy":{"vb":"0 0 24 24","d":"<path fill=\"#4285f4\" d=\"M11.85 7a5.1 5.1 0 1 0 5.1 5.1a5.1 5.1 0 0 0-5.1-5.1m0 9.08a4 4 0 1 1 4-4a4 4 0 0 1-4 4.01Z\"/><path fill=\"#669df6\" d=\"M13.77 12.71a2 2 0 0 0-.28-.22a3.11 3.11 0 0 0-2.61-.28a2.3 2.3 0 0 0-.89.47a.86.86 0 0 0-.37.65v1h4.47v-.82a1 1 0 0 0-.32-.8m-1.92-1.18a1.16 1.16 0 1 0-1.17-1.15a1.17 1.17 0 0 0 1.17 1.15\"/><path fill=\"#aecbfa\" d=\"M20.78 10.72h-1.04l.77.77H18.3v.9h2.21l-.77.78h1.04L22 11.94z\"/><path fill=\"#669df6\" d=\"m17.54 8.5l.64.64l.98-.97v1.09l.73-.74V6.79h-1.73l-.73.74h1.09zm1.62 7.33l-.98-.97l-.64.63l.98.98h-1.09l.73.73h1.73v-1.73l-.73-.73zM3.35 10.65A1.35 1.35 0 1 0 4.71 12a1.35 1.35 0 0 0-1.36-1.35m0 2.1a.76.76 0 1 1 .76-.75a.76.76 0 0 1-.76.75\"/>"},"artifact-registry":{"vb":"0 0 24 24","d":"<path fill=\"none\" d=\"M0 0h24v24H0z\"/><path fill=\"#5c85de\" fill-rule=\"evenodd\" d=\"m6 2.4l-5.2 3v13.7l5.2 3v-2.6l-3-1.7V6.7L6 5z\"/><path fill=\"#3367d6\" fill-rule=\"evenodd\" d=\"M.8 8v8.5L3 17.8V6.7z\"/><path fill=\"#3367d6\" fill-rule=\"evenodd\" d=\"M.8 8L3 7.5v-.8z\"/><path fill=\"#5c85de\" fill-rule=\"evenodd\" d=\"M18 2.4V5l3 1.7v11.1l-3 1.7v2.6l5.2-3V5.4z\"/><path fill=\"#3367d6\" fill-rule=\"evenodd\" d=\"m21 17.8l2.2-1.3V8L21 6.7z\"/><path fill=\"#3367d6\" fill-rule=\"evenodd\" d=\"m21 7.5l2.2.5L21 6.7zm0 9.6v.7l2.2-1.3z\"/><g fill-rule=\"evenodd\"><path fill=\"#5c85de\" d=\"M12 5.5L9 7.1l3 1.6l3-1.6z\"/><path fill=\"#3367d6\" d=\"m12.4 12.4l2.9-1.6V7.7l-2.9 1.6zm-.7-3.1l-3-1.6v3.1l3 1.6z\"/><path fill=\"#5c85de\" d=\"m8.56 11.376l-2.9 1.6l2.9 1.6l2.8-1.6z\"/><path fill=\"#3367d6\" d=\"m8.76 18.276l2.9-1.6v-3.2l-2.9 1.6zm-.5-3.2l-2.9-1.6v3.2l2.9 1.6z\"/><path fill=\"#5c85de\" d=\"m15.52 11.376l-2.9 1.6l2.9 1.6l2.9-1.6z\"/><path fill=\"#3367d6\" d=\"m15.82 18.276l2.9-1.6v-3.2l-2.9 1.6zm-.6-3.2l-2.9-1.6v3.2l2.9 1.6z\"/></g>"},"cloud-build":{"vb":"0 0 24 24","d":"<path fill=\"#4285f4\" d=\"m12.15 16.24l3.52-2.03v-4.06l-1.18-.69l-3.52 6.1z\"/><path fill=\"#669df6\" d=\"M8.63 10.15v4.06l1.18.68l3.53-6.09l-1.19-.69z\"/><path fill=\"#aecbfa\" d=\"m11.46 17.45l-4.22-2.44v-4.86L3.49 7.98v9.2l7.97 4.6zm-3.53-8.5l4.22-2.44l4.22 2.44l3.76-2.17l-7.98-4.61l-7.98 4.61zm9.13 6.06l-4.22 2.44v4.33l7.98-4.6v-9.2l-3.76 2.17z\"/>"},"cloud-storage":{"vb":"0 0 24 24","d":"<path fill=\"#aecbfa\" d=\"M2 4h20v7H2z\"/><path fill=\"#669df6\" d=\"M20 4h2v7h-2z\"/><path fill=\"#4285f4\" d=\"M22 4h-2v7z\"/><path fill=\"#669df6\" d=\"M2 4h2v7H2z\"/><path fill=\"#fff\" d=\"M6 7h6v1H6z\"/><rect width=\"3\" height=\"3\" x=\"15\" y=\"6\" fill=\"#fff\" rx=\"1.5\"/><path fill=\"#aecbfa\" d=\"M2 13h20v7H2z\"/><path fill=\"#669df6\" d=\"M20 13h2v7h-2z\"/><path fill=\"#4285f4\" d=\"M22 13h-2v7z\"/><path fill=\"#669df6\" d=\"M2 13h2v7H2z\"/><path fill=\"#fff\" d=\"M6 16h6v1H6z\"/><rect width=\"3\" height=\"3\" x=\"15\" y=\"15\" fill=\"#fff\" rx=\"1.5\"/>"},"cloud-monitoring":{"vb":"0 0 24 24","d":"<path fill=\"#669df6\" d=\"M10.83 15.84h2.33v2.64h-2.33z\"/><path fill=\"#4285f4\" d=\"M18.48 13.87a.56.56 0 0 1-.4-.17L14 9.47l-2.74 2.89a.57.57 0 0 1-.76.05l-2.08-1.68l-2.2 2.92a.56.56 0 0 1-.45.22H2v1.71a.75.75 0 0 0 .74.75h18.52a.75.75 0 0 0 .74-.75v-1.71Z\"/><path fill=\"#669df6\" d=\"M5.5 12.76L7.88 9.6a.55.55 0 0 1 .37-.22a.63.63 0 0 1 .42.12l2.12 1.72l2.8-2.94a.54.54 0 0 1 .4-.17a.54.54 0 0 1 .4.17l4.33 4.48H22V6a.74.74 0 0 0-.74-.74H2.74A.74.74 0 0 0 2 6v6.81Z\"/><rect width=\"6.67\" height=\".61\" x=\"8.67\" y=\"18.18\" fill=\"#4285f4\" rx=\".3\"/>"},"cloud-logging":{"vb":"0 0 24 24","d":"<path fill=\"#4285f4\" d=\"M6 11h4v2H6zm-2 7h6v2H4z\"/><path fill=\"none\" d=\"M0 0h24v24H0z\"/><path fill=\"#4285f4\" d=\"M4 18h2V6H4z\"/><path fill=\"#669df6\" d=\"M9 7h13V3H9zm0 7h13v-4H9zm0 7h13v-4H9z\"/><path fill=\"#aecbfa\" d=\"M2 8h6V2H2z\"/>"},"trace":{"vb":"0 0 24 24","d":"<path fill=\"none\" d=\"M0 0h24v24H0z\"/><path fill=\"#4285f4\" d=\"M12 14h10v-4H12zm0 8h10v-4H12z\"/><path fill=\"#669df6\" d=\"M8 22h4v-4H8zM2 2h6v4H2zm0 8h10v4H2z\"/>"},"cloud-run":{"vb":"0 0 24 24","d":"<g fill-rule=\"evenodd\"><path fill=\"#aecbfa\" d=\"M8.9 2.63L12.02 12h9.36z\"/><path fill=\"#4285f4\" d=\"M21.38 12h-9.36L8.9 21.38zM3.44 21.38l3.13-1.57L8.9 12H5.78z\"/><path fill=\"#aecbfa\" d=\"M3.44 2.63L5.78 12H8.9L6.57 4.19z\"/></g>"},"cloud-scheduler":{"vb":"0 0 24 24","d":"<path fill=\"#669df6\" d=\"M20 21a1 1 0 0 1-.7-.29l-2-2a1 1 0 0 1 1.41-1.41l2 2a1 1 0 0 1 0 1.41A1 1 0 0 1 20 21M4 21a1 1 0 0 1-.7-1.71l2-2a1 1 0 0 1 1.42 0a1 1 0 0 1 0 1.41l-2 2A1 1 0 0 1 4 21\"/><path fill=\"#4285f4\" d=\"m5.47 17.13l-1.22 1.22a11 11 0 0 0 1.42 1.41l1.22-1.22Zm14.26 1.18l-1-1a1.2 1.2 0 0 0-.23-.16l-1.34 1.34a1.2 1.2 0 0 0 .16.23l1 1a11 11 0 0 0 1.41-1.41\"/><path fill=\"none\" d=\"M0 0h24v24H0z\"/><path fill=\"#669df6\" d=\"M12 21a9 9 0 1 1 9-9a9 9 0 0 1-9 9m0-2a7 7 0 1 0-7-7a7 7 0 0 0 7 7\"/><path fill=\"#4285f4\" d=\"M12 17a5 5 0 0 0 5-5a5 5 0 0 0-5-5v5l-4.08 2.91A5 5 0 0 0 12 17\"/><path fill=\"#aecbfa\" d=\"M4 6.07a1 1 0 0 1-.71-1.71l2-2a1 1 0 0 1 1.42 0a1 1 0 0 1 0 1.41l-2 2a1 1 0 0 1-.71.3m16 0a1 1 0 0 1-.71-.3l-2-2a1 1 0 0 1 0-1.41a1 1 0 0 1 1.42 0l2 2A1 1 0 0 1 20 6.07\"/>"},"secret-manager":{"vb":"0 0 24 24","d":"<path fill=\"#4285f4\" d=\"M22 6v11.887h-3.962a.19.19 0 0 1-.189-.189v-1.132a.19.19 0 0 1 .189-.189h2.452V7.509h-2.452a.19.19 0 0 1-.189-.188V6.189c0-.105.085-.189.189-.189zM6.31 6c.103 0 .188.084.188.189V7.32a.19.19 0 0 1-.189.188h-2.8v8.868h2.783a.19.19 0 0 1 .19.189v1.132a.19.19 0 0 1-.19.189H2V6zm11.117 3.868v1.456l.06.025l1.351-.478l.28.82l-1.362.465l-.037.098l.937 1.26l-.706.514l-.912-1.26h-.085l-.913 1.26l-.705-.514l.924-1.26l-.024-.098l-1.362-.465l.28-.82l1.337.478l.073-.025V9.868zm-10.231 0v1.442l.06.024l1.351-.473l.28.812l-1.363.46l-.036.097l.937 1.248l-.706.51l-.912-1.249h-.085l-.913 1.248l-.705-.509l.924-1.248l-.024-.097l-1.362-.46l.28-.812l1.337.473l.073-.024V9.868zm5.094 0v1.442l.061.024l1.35-.473l.28.812l-1.362.46l-.037.097l.937 1.248l-.706.51l-.912-1.249h-.085l-.912 1.248l-.706-.509l.925-1.248l-.025-.097l-1.362-.46l.28-.812l1.338.473l.073-.024V9.868z\"/>"},"vertexai":{"vb":"0 0 24 24","d":"<path fill=\"#669df6\" d=\"M20 13.89a.77.77 0 0 0-1-.16l-7 5.14v.22a.72.72 0 1 1 0 1.43a.74.74 0 0 0 .45-.15l7.41-5.47a.76.76 0 0 0 .14-1.01\"/><path fill=\"#aecbfa\" d=\"M12 20.52a.72.72 0 0 1 0-1.43v-.22l-7-5.14a.76.76 0 0 0-1 .16a.74.74 0 0 0 .16 1l7.41 5.47a.73.73 0 0 0 .44.15Z\"/><path fill=\"#4285f4\" d=\"M12 18.34a1.47 1.47 0 1 0 1.47 1.47A1.47 1.47 0 0 0 12 18.34m0 2.18a.72.72 0 1 1 .72-.71a.71.71 0 0 1-.72.71\"/><path fill=\"#aecbfa\" d=\"M6 6.11a.76.76 0 0 1-.75-.75V3.48a.76.76 0 1 1 1.51 0v1.88a.76.76 0 0 1-.76.75\"/><circle cx=\"5.98\" cy=\"12\" r=\".76\" fill=\"#aecbfa\"/><circle cx=\"5.98\" cy=\"9.79\" r=\".76\" fill=\"#aecbfa\"/><circle cx=\"5.98\" cy=\"7.57\" r=\".76\" fill=\"#aecbfa\"/><path fill=\"#4285f4\" d=\"M18 8.31a.76.76 0 0 1-.75-.76V5.67a.75.75 0 1 1 1.5 0v1.88a.75.75 0 0 1-.75.76\"/><circle cx=\"18.02\" cy=\"12.01\" r=\".76\" fill=\"#4285f4\"/><circle cx=\"18.02\" cy=\"9.76\" r=\".76\" fill=\"#4285f4\"/><circle cx=\"18.02\" cy=\"3.48\" r=\".76\" fill=\"#4285f4\"/><path fill=\"#669df6\" d=\"M12 15a.76.76 0 0 1-.75-.75v-1.91a.76.76 0 0 1 1.51 0v1.89A.76.76 0 0 1 12 15\"/><circle cx=\"12\" cy=\"16.45\" r=\".76\" fill=\"#669df6\"/><circle cx=\"12\" cy=\"10.14\" r=\".76\" fill=\"#669df6\"/><circle cx=\"12\" cy=\"7.92\" r=\".76\" fill=\"#669df6\"/><path fill=\"#4285f4\" d=\"M15 10.54a.76.76 0 0 1-.75-.75V7.91a.76.76 0 1 1 1.51 0v1.88a.76.76 0 0 1-.76.75\"/><circle cx=\"15.01\" cy=\"5.69\" r=\".76\" fill=\"#4285f4\"/><circle cx=\"15.01\" cy=\"14.19\" r=\".76\" fill=\"#4285f4\"/><circle cx=\"15.01\" cy=\"11.97\" r=\".76\" fill=\"#4285f4\"/><circle cx=\"8.99\" cy=\"14.19\" r=\".76\" fill=\"#aecbfa\"/><circle cx=\"8.99\" cy=\"7.92\" r=\".76\" fill=\"#aecbfa\"/><circle cx=\"8.99\" cy=\"5.69\" r=\".76\" fill=\"#aecbfa\"/><path fill=\"#aecbfa\" d=\"M9 12.73a.76.76 0 0 1-.76-.73v-1.9a.75.75 0 1 1 1.5 0V12a.75.75 0 0 1-.74.73\"/>"},"billing":{"vb":"0 0 24 24","d":"<path fill=\"none\" d=\"M0 0h24v24H0z\"/><g fill-rule=\"evenodd\"><path fill=\"#85a4e6\" d=\"M22.5 20.2h-21c-.8 0-1.5-.7-1.5-1.5V5.2c0-.8.7-1.5 1.5-1.5h21c.8 0 1.5.7 1.5 1.5v13.5c0 .9-.7 1.5-1.5 1.5\"/><path fill=\"#5c85de\" d=\"M22.5 20.2H12V3.8h10.5c.8 0 1.5.7 1.5 1.5v13.5c0 .8-.7 1.4-1.5 1.4\"/><path fill=\"#5c85de\" d=\"M0 6h24v3H0z\"/><path fill=\"#3367d6\" d=\"M12 6h12v3H12z\"/><path fill=\"#fff\" d=\"M2.2 10.5h19.5v2.2H2.2z\"/><path fill=\"#5c85de\" d=\"M2.2 15h4.5v3H2.2z\"/><path fill=\"#fff\" d=\"M13.5 15.8H15v1.5h-1.5zm3 0H18v1.5h-1.5zm3 0H21v1.5h-1.5z\"/></g>"},"pubsub":{"vb":"0 0 24 24","d":"<defs><filter id=\"SVGrUfD7cuU\" width=\"14.73\" height=\"12.76\" x=\"4.64\" y=\"4.19\" color-interpolation-filters=\"sRGB\" filterUnits=\"userSpaceOnUse\"><feFlood flood-color=\"#fff\" result=\"bg\"/><feBlend in=\"SourceGraphic\" in2=\"bg\"/></filter><mask id=\"SVGEBkjVcqQ\" width=\"14.73\" height=\"12.76\" x=\"4.64\" y=\"4.19\" maskUnits=\"userSpaceOnUse\"><circle cx=\"12\" cy=\"12.23\" r=\"3.58\" filter=\"url(#SVGrUfD7cuU)\"/></mask></defs><circle cx=\"18.97\" cy=\"8.21\" r=\"1.72\" fill=\"#669df6\"/><circle cx=\"5.03\" cy=\"8.21\" r=\"1.72\" fill=\"#669df6\"/><circle cx=\"12\" cy=\"20.28\" r=\"1.72\" fill=\"#669df6\"/><g fill=\"#4285f4\" mask=\"url(#SVGEBkjVcqQ)\"><path d=\"m11.646 12.86l.795-1.384l6.995 4.02l-.795 1.384z\"/><path d=\"m4.633 15.573l6.963-4.02l.795 1.377l-6.963 4.02z\"/><path d=\"M11.2 4.19h1.59v8.04H11.2z\"/></g><circle cx=\"12\" cy=\"12.23\" r=\"2.78\" fill=\"#aecbfa\"/><circle cx=\"5.03\" cy=\"16.25\" r=\"2.19\" fill=\"#aecbfa\"/><circle cx=\"18.97\" cy=\"16.25\" r=\"2.19\" fill=\"#aecbfa\"/><circle cx=\"12\" cy=\"4.19\" r=\"2.19\" fill=\"#aecbfa\"/>"},"identity-and-access-management":{"vb":"0 0 24 24","d":"<g fill-rule=\"evenodd\"><path fill=\"#669df6\" d=\"M12 2L3.79 5.42v5.63c0 5.06 3.5 9.8 8.21 11c4.71-1.15 8.21-5.89 8.21-10.95V5.42Zm0 3.79a2.63 2.63 0 1 1-1.86.77A2.63 2.63 0 0 1 12 5.79m4.11 11.15A8.64 8.64 0 0 1 12 19.87a8.64 8.64 0 0 1-4.11-2.93v-2.25c0-1.67 2.74-2.52 4.11-2.52s4.11.85 4.11 2.52z\"/><path fill=\"#4285f4\" d=\"M12 2v3.79a2.63 2.63 0 1 1 0 5.26v1.12c1.37 0 4.11.85 4.11 2.52v2.25A8.64 8.64 0 0 1 12 19.87V22c4.71-1.15 8.21-5.89 8.21-10.95V5.42Z\"/></g>"},"workload-identity-pool":{"vb":"0 0 24 24","d":"<rect width=\"18\" height=\"12\" x=\"3\" y=\"6\" fill=\"none\" stroke=\"#4285f4\" stroke-miterlimit=\"10\" stroke-width=\"2\" rx=\"1\"/><path fill=\"none\" stroke=\"#669df6\" stroke-miterlimit=\"10\" d=\"M14.002 10.471h4m-4 3.041h4\"/><path fill=\"none\" stroke=\"#aecbfa\" stroke-miterlimit=\"10\" d=\"M6.492 9.49h5.007v5.007H6.492z\"/><path fill=\"#4285f4\" d=\"M8.003 11.009h2.014V13H8.003z\"/>"},"dialogflow-cx":{"vb":"0 0 24 24","d":"<g fill=\"none\"><path fill=\"#aecbfa\" d=\"m12.65 2.154l6.253 3.66c.424.232.69.674.695 1.156v8.033a1.34 1.34 0 0 1-.695 1.155L8.94 21.984a.34.34 0 0 1-.514-.284v-3.535l-3.419-2.007a1.34 1.34 0 0 1-.695-1.155V6.97c.006-.482.271-.924.695-1.156l6.254-3.66c.43-.247.96-.247 1.39 0z\"/><path fill=\"#669df6\" d=\"M8.192 9.48a.38.38 0 0 0-.382.37v3.945l.001.04a.73.73 0 0 0 .353.584l.014.008l1.924 1.098v1.54l.001.03a.382.382 0 0 0 .559.309l.014-.008l5.103-2.955l.036-.021a.73.73 0 0 0 .332-.594V9.862a.382.382 0 0 0-.56-.337l-.012.006l-3.394 1.949l-.029.016a.38.38 0 0 1-.362-.01l-.013-.006l-3.395-1.95a.4.4 0 0 0-.19-.05\"/><path fill=\"#185abc\" d=\"M12.245 5.063a.48.48 0 0 0-.459-.009l-.013.008L8.03 7.175a.382.382 0 0 0-.013.657l.01.007l3.742 2.15a.48.48 0 0 0 .465.006l.014-.008l3.684-2.15a.382.382 0 0 0 .008-.655l-.01-.006z\"/></g>"},"agent-assist":{"vb":"0 0 24 24","d":"<path fill=\"#4285f4\" d=\"m12.68 2.246l6.206 3.624c.41.24.66.675.66 1.147v7.957c0 .471-.25.907-.66 1.146L12 20.141l-.02-.011l.014.011l-2.97 1.75a.337.337 0 0 1-.506-.285l-.007-3.502l-3.397-1.984a1.33 1.33 0 0 1-.66-1.146V7.017c0-.472.25-.908.66-1.147l6.206-3.624a1.35 1.35 0 0 1 1.36 0M12 6.175c-2.273 0-4.116 1.757-4.116 3.925v3.053c0 .724.612 1.308 1.372 1.308h1.372v-3.489h-1.83v-.746a3.203 3.203 0 0 1 3.106-3.18C13.72 7 15.202 8.382 15.202 10.1v.872h-1.83v3.489h1.83v.436h-2.745v.872h2.745c.503 0 .914-.392.914-.872V10.1c0-2.168-1.843-3.925-4.116-3.925m-2.287 5.67v1.744h-.457a.45.45 0 0 1-.458-.436v-1.309zm5.489 0v1.744h-.915v-1.745z\"/>"},"google-kubernetes-engine":{"vb":"0 0 24 24","d":"<path fill=\"#4285f4\" fill-rule=\"evenodd\" d=\"m14.68 13.06l4.55 2.63v.99l-4.94-2.85z\"/><path fill=\"#669df6\" fill-rule=\"evenodd\" d=\"m9.98 13.65l-5.21 3.01l-.32-.8l5.08-2.94z\"/><path fill=\"#aecbfa\" d=\"M11.55 3.29h.86v5.78h-.86z\"/><path fill=\"#aecbfa\" fill-rule=\"evenodd\" d=\"M3.25 7v10L12 22l8.74-5V7L12 2Zm15.63 8.89L12 19.78l-6.88-3.89V8.11L12 4.22l6.87 3.89v7.78Z\"/><path fill=\"#aecbfa\" fill-rule=\"evenodd\" d=\"m11.98 11.5l3.98-2.29l-3.98-2.3l-3.97 2.3z\"/><path fill=\"#669df6\" fill-rule=\"evenodd\" d=\"m11.52 12.3l-3.86-2.29v4.59l3.86 2.29z\"/><path fill=\"#4285f4\" fill-rule=\"evenodd\" d=\"M12.48 12.3v4.59l3.86-2.29v-4.59z\"/>"},"cloud-sql":{"vb":"0 0 24 24","d":"<g fill-rule=\"evenodd\"><path fill=\"#aecbfa\" d=\"M4.67 10.44v3.01l7.33 3.9v-3.01zm0 4.65v3.01L12 22v-3.01z\"/><path fill=\"#669df6\" d=\"m12 17.35l7.33-3.9v-3.01L12 14.34zM12 22l7.33-3.9v-3.01L12 18.99z\"/><path fill=\"#4285f4\" d=\"M19.33 8.91V5.9L12 2v3.01z\"/><path fill=\"#669df6\" d=\"M12 2L4.67 5.9v3.01L12 5.01z\"/><path fill=\"#aecbfa\" d=\"M4.67 5.87v3.02l7.33 3.9V9.77z\"/><path fill=\"#669df6\" d=\"m12 12.79l7.33-3.9V5.87L12 9.77z\"/></g>"},"filestore":{"vb":"0 0 24 24","d":"<path fill=\"#4285f4\" d=\"M8 12h8l-2 2h-4z\"/><path fill=\"#aecbfa\" d=\"M7 4h10l1 2H6zM4 7h16l1 2H3z\"/><path fill=\"#669df6\" d=\"M22 20v-9h-6l-2 3h-4l-2-3H2v9z\"/>"},"cloud-load-balancing":{"vb":"0 0 24 24","d":"<path fill=\"none\" d=\"M0 0h24v24H0z\"/><path fill=\"#669df6\" d=\"M18 12h2v4h-2zm-7 0h2v4h-2zm-7 0h2v4H4z\"/><path fill=\"#4285f4\" d=\"M13 11h-2V7h2z\"/><path fill=\"#669df6\" d=\"M4 11h16v2H4z\"/><path fill=\"#aecbfa\" d=\"M6 2h12v5H6z\"/><path fill=\"#669df6\" d=\"M12 2h6v5h-6z\"/><path fill=\"#aecbfa\" d=\"M16 16h6v6h-6zM2 16h6v6H2z\"/><path fill=\"#669df6\" d=\"M5 16h3v6H5z\"/><path fill=\"#aecbfa\" d=\"M9 16h6v6H9z\"/><path fill=\"#669df6\" d=\"M12 16h3v6h-3zm7 0h3v6h-3z\"/>"},"google-cloud":{"vb":"0 0 256 206","d":"<path fill=\"#ea4335\" d=\"m170.252 56.819l22.253-22.253l1.483-9.37C153.437-11.677 88.976-7.496 52.42 33.92C42.267 45.423 34.734 59.764 30.717 74.573l7.97-1.123l44.505-7.34l3.436-3.513c19.797-21.742 53.27-24.667 76.128-6.168z\"/><path fill=\"#4285f4\" d=\"M224.205 73.918a100.25 100.25 0 0 0-30.217-48.722l-31.232 31.232a55.52 55.52 0 0 1 20.379 44.037v5.544c15.35 0 27.797 12.445 27.797 27.796c0 15.352-12.446 27.485-27.797 27.485h-55.671l-5.466 5.934v33.34l5.466 5.231h55.67c39.93.311 72.553-31.494 72.864-71.424a72.3 72.3 0 0 0-31.793-60.453\"/><path fill=\"#34a853\" d=\"M71.87 205.796h55.593V161.29H71.87a27.3 27.3 0 0 1-11.399-2.498l-7.887 2.42l-22.409 22.253l-1.952 7.574c12.567 9.489 27.9 14.825 43.647 14.757\"/><path fill=\"#fbbc05\" d=\"M71.87 61.426C31.94 61.663-.237 94.227.001 134.158a72.3 72.3 0 0 0 28.222 56.88l32.248-32.246c-13.99-6.322-20.208-22.786-13.887-36.776s22.786-20.208 36.775-13.888a27.8 27.8 0 0 1 13.887 13.888l32.248-32.248A72.22 72.22 0 0 0 71.87 61.427\"/>"}};
+
+
+const TOPOLOGIES = [{"id":"setup-1","tab":"Setup 1 · 2-Project Software Factory","badge":"packs/generic · enable_sandbox_project=false","DIAGRAM":{"title":"Setup 1 — 2-Project Software Factory (Lite VM, CI-Only)","theme":"light","mode":"slides","viewBox":[1240,800],"outsideLabel":"EXTERNAL ACTORS","cloud":{"x":256,"y":14,"w":970,"h":772,"icon":"google-cloud","label":"Google Cloud · 2-Project Topology (<hub-project> + <inference-project>)"},"notice":"Verified against deploy/01-landing-zone & deploy/02-factory-runtime/lite-vm. All project IDs are generic placeholders.","legend":["Solid numbered line = primary request/execution flow","Dashed line = optional or build/alert side path","Dashed group = optional / non-serving component","Zero static SA JSON keys (short-lived token minting only)"]},"OUTSIDE":[{"id":"operator","glyph":"person","x":16,"y":90,"w":196,"h":74,"title":"Human Operator","sub":"IAP TCP 22 / CLI","what":"Customer principal operates the Scion Hub exclusively through Identity-Aware Proxy TCP forwarding and OS Login, then approves Pull Requests in Git.","why":"Day-1 ownership requires a customer principal (never a temporary FDE) to start the coordinator so standing checks never restrict factory agents."},{"id":"git","glyph":"server","x":16,"y":290,"w":196,"h":74,"title":"Git Provider","sub":"GitHub / GitLab / ADO","what":"Hosts application source code, branch protection on main, and Pull Requests opened by factory workers over outbound Cloud NAT HTTPS.","why":"Production promotions happen strictly through customer CI/CD after mandatory human PR approval; zero prod SAs are registered on the Hub."}],"GROUPS":[{"id":"hub-vpc","tone":"blue","x":280,"y":54,"w":584,"h":318,"title":"Hub Project (<hub-project>) · Custom VPC 10.42.0.0/24"},{"id":"dw","tone":"dash","x":280,"y":400,"w":584,"h":368,"title":"Optional External Delta Watcher & Rebuild Pipeline"},{"id":"inf","tone":"green","x":956,"y":54,"w":252,"h":392,"title":"Inference (<inference-project>)"},{"id":"finops","tone":"yellow","x":956,"y":476,"w":252,"h":124,"title":"FinOps Alerting (Hub)"}],"CARDS":[{"id":"iap","group":"hub-vpc","icon":"identity-aware-proxy","x":298,"y":90,"w":226,"h":54,"title":"IAP TCP Tunnel","sub":"35.235.240.0/20 -> :22","what":"Ingress firewall allows TCP port 22 strictly from Google Cloud IAP range 35.235.240.0/20 to tagged Hub VMs with enable-oslogin=TRUE.","why":"Eliminates public SSH exposure and complies with constraints/compute.requireOsLogin and vmExternalIpAccess."},{"id":"hub-vm","group":"hub-vpc","icon":"compute-engine","x":298,"y":190,"w":226,"h":54,"title":"Scion Hub Lite VM","sub":"v0.4.0-preview.4 · no IP","what":"Shielded Compute Engine VM (Secure Boot, vTPM, Integrity Monitoring) running scion-hub.service on :8080 with gcp_iam_check_mode=enforce and default_gcp_identity_mode=block.","why":"Omits access_config intentionally so the Hub VM holds zero public IP; runs hub@ SA with TokenCreator only on assignable agent SAs."},{"id":"nat","group":"hub-vpc","icon":"cloud-nat","x":298,"y":290,"w":226,"h":54,"title":"Cloud Router & NAT","sub":"AUTO_ONLY · PGA enabled","what":"Provides outbound internet egress for Git pushes, container downloads, and package installs while Private Google Access routes GCP API calls internally.","why":"Non-default custom VPC (10.42.0.0/24) satisfies constraints/compute.skipDefaultNetworkCreation without patches."},{"id":"ar","group":"hub-vpc","icon":"artifact-registry","x":620,"y":90,"w":226,"h":54,"title":"Artifact Registry","sub":"factory-images (@sha256)","what":"Docker repository storing digest-pinned Scion harness images and pack layers. Hub VM holds artifactregistry.reader only.","why":"Separates image authoring (builder@ writer) from runtime execution (hub@ reader) and rejects unpinned or placeholder image tags."},{"id":"staging","group":"hub-vpc","icon":"cloud-storage","x":620,"y":190,"w":226,"h":54,"title":"Staging GCS Bucket","sub":"UBLA · 1-day TTL","what":"Uniform Bucket-Level Access bucket hosted in Hub Project when enable_sandbox_project=false, staging Cloud Build sources with automatic 1-day object deletion.","why":"Avoids concurrent race conditions on auto-created _cloudbuild buckets in brand-new projects."},{"id":"obs","group":"hub-vpc","icon":"cloud-monitoring","x":620,"y":290,"w":226,"h":54,"title":"Monitoring/Log/Trace","sub":"sciontool ADC telemetry","what":"Native Scion Metrics Dashboard, Cloud Logging, and Cloud Trace in Hub Project receiving keyless ADC telemetry from hub@ and assignable agent SAs.","why":"Provides full execution visibility (metricWriter, cloudtrace.agent, logWriter) without external telemetry agents or static keys."},{"id":"dw-sched","group":"dw","icon":"cloud-scheduler","x":298,"y":444,"w":226,"h":54,"title":"Cloud Scheduler","sub":"OIDC POST /tick · 120s","what":"Optional recurring job invoking the private External Delta Watcher /tick endpoint using dw-invoker@ OIDC token (roles/run.invoker only).","why":"Triggers deterministic zero-token issue polling on a fixed schedule without exposing any public webhook."},{"id":"dw-run","group":"dw","icon":"cloud-run","x":298,"y":544,"w":226,"h":54,"title":"Delta Watcher Run","sub":"INTERNAL_ONLY · DirectVPC","what":"Scale-to-zero Cloud Run v2 service (min 0, max 1) with INGRESS_TRAFFIC_INTERNAL_ONLY and Direct VPC Egress (PRIVATE_RANGES_ONLY) waking the Hub via 2-perm delta-watcher-messenger OIDC.","why":"Zero Vertex AI or Sandbox IAM grants; Hub RBAC restricts it strictly to agent.message and agent.read on its project UUID."},{"id":"dw-sec","group":"dw","icon":"secret-manager","x":620,"y":444,"w":226,"h":54,"title":"Secret Manager","sub":"Tracker PAT (out-of-band)","what":"Empty Secret Manager container provisioned cold-start by Terraform; operators add tracker token versions out-of-band via gcloud secrets versions add.","why":"Keeps tracker credentials strictly out of Terraform state while granting delta-watcher@ secretAccessor on that single secret."},{"id":"dw-gcs","group":"dw","icon":"cloud-storage","x":620,"y":544,"w":226,"h":54,"title":"DW Cursor Bucket","sub":"delta-watcher/ IAM cond.","what":"Versioned GCS bucket storing optimistic-concurrency cursor.json. delta-watcher@ holds storage.objectUser scoped by IAM Condition to the delta-watcher/ prefix.","why":"Prevents duplicate wakes across concurrent ticks via ifGenerationMatch while confining write blast radius to one prefix."},{"id":"cbuild","group":"dw","icon":"cloud-build","x":620,"y":674,"w":226,"h":54,"title":"Cloud Build (Rebuild)","sub":"builder@ -> Hub AR only","what":"Dedicated release_builder@ SA rebuilds lean pack runtime and Scion harness images from staging GCS and stamps @sha256 digests into Hub Artifact Registry.","why":"Satisfies constraints/cloudbuild.disableCreateDefaultServiceAccount and Binary Authorization rebuild requirements."},{"id":"vertex","group":"inf","icon":"vertexai","x":972,"y":112,"w":220,"h":54,"title":"Vertex AI Predict","sub":"vertexInferencePredict","what":"Dedicated Inference Project serving Gemini 1P (and opt-in Claude Model Garden) models. coordinator@ and worker@ hold custom role vertexInferencePredict (aiplatform.endpoints.predict only).","why":"Replaces roles/aiplatform.user so agents can run inference but cannot create ReasoningEngines or mutate endpoints."},{"id":"kaizen","group":"inf","icon":"identity-and-access-management","x":972,"y":218,"w":220,"h":54,"title":"Kaizen Viewer (Opt)","sub":"monitoring.viewer + pred","what":"Optional Tier-B read-only observability SA (enable_kaizen_gcp_obs=true) holding monitoring.viewer and vertexInferencePredict for daily closed-loop Kaizen analysis.","why":"Separates read-only telemetry analysis from code-editing workers and enforces least privilege."},{"id":"budget","group":"inf","icon":"billing","x":972,"y":324,"w":220,"h":54,"title":"Billing Budget Alerts","sub":"70% warn · 90% kill-sw.","what":"Cloud Billing Budget scoped to Inference Project firing alerts at 70% and 90% of monthly_budget_usd alongside hard Vertex AI TPM quotas.","why":"Establishes calculable max exposure (TPM quota x billing latency) with documented worker@ IAM revocation runbook."},{"id":"pubsub","group":"finops","icon":"pubsub","x":972,"y":518,"w":220,"h":54,"title":"Budget Alerts Topic","sub":"Hub Pub/Sub (optional)","what":"Hub-hosted Pub/Sub topic (<prefix>-budget-alerts) receiving budget threshold notifications when enable_budget_pubsub_topic=true.","why":"Optional toggle avoids Domain Restricted Sharing conflicts with billing-budget-alert@system.gserviceaccount.com."}],"EDGES":[{"id":"e1","n":"1","from":"operator","to":"iap","pts":[[212,117],[298,117]],"disc":[244,117]},{"id":"e2","n":"2","from":"iap","to":"hub-vm","pts":[[411,144],[411,190]],"disc":[411,167]},{"id":"e3","n":"3","from":"hub-vm","to":"ar","pts":[[524,206],[566,206],[566,117],[620,117]],"disc":[566,162]},{"id":"e4","n":"4","from":"hub-vm","to":"vertex","pts":[[524,217],[588,217],[588,72],[910,72],[910,139],[972,139]],"disc":[910,105],"label":"impersonated ADC","lx":780,"ly":65,"anchor":"middle"},{"id":"e5","n":"5","from":"hub-vm","to":"nat","pts":[[411,244],[411,290]],"disc":[411,267]},{"id":"e6","n":"6","from":"nat","to":"git","pts":[[298,317],[212,317]],"disc":[255,317],"label":"HTTPS PR","lx":255,"ly":340,"anchor":"middle"},{"id":"e7","n":"7","from":"hub-vm","to":"obs","pts":[[524,230],[566,230],[566,317],[620,317]],"disc":[566,274]},{"id":"s-dw1","dash":true,"from":"dw-sched","to":"dw-run","pts":[[411,498],[411,544]]},{"id":"s-dw2","dash":true,"from":"dw-run","to":"dw-sec","pts":[[524,560],[566,560],[566,471],[620,471]]},{"id":"s-dw3","dash":true,"from":"dw-run","to":"dw-gcs","pts":[[524,571],[620,571]]},{"id":"s-dw4","dash":true,"from":"dw-run","to":"hub-vm","pts":[[298,571],[272,571],[272,217],[298,217]],"label":"DirectVPC :8080","lx":266,"ly":410,"anchor":"end"},{"id":"s-cb1","dash":true,"from":"cbuild","to":"staging","pts":[[846,694],[892,694],[892,217],[846,217]]},{"id":"s-cb2","dash":true,"from":"cbuild","to":"ar","pts":[[846,710],[912,710],[912,117],[846,117]]},{"id":"s-bud","dash":true,"from":"budget","to":"pubsub","pts":[[1082,378],[1082,518]]}],"SLIDES":[{"tone":"blue","title":"2-Project Software Factory (CI-Only)","line":"Minimal production-grade footprint for packs/generic when enable_sandbox_project=false: Hub VM + Inference Project, zero public IPs, zero static keys.","facts":[["Projects","2 (Hub + Inference)"],["Sandbox","Disabled (CI-only)"],["SAs","4 base (+2 if DW, +1 Kaizen)"]],"edges":[],"units":[],"notes":"Source: deploy/01-landing-zone/{apis,network,iam,finops,delta_watcher}.tf & deploy/02-factory-runtime/lite-vm/{vm,delta_watcher}.tf.\nStaging GCS bucket automatically falls back to hub_project_id when enable_sandbox_project=false."},{"n":"1","tone":"blue","title":"IAP TCP Ingress (Zero Public IP)","line":"Operators reach the private Hub VM exclusively through Google Cloud IAP TCP forwarding with OS Login enabled.","facts":[["Source CIDR","35.235.240.0/20"],["Port","TCP 22 (IAP only)"],["VM External IP","None (access_config omitted)"]],"edges":["e1","e2"],"units":["operator","iap","hub-vm"],"notes":"Firewall rule allow_iap_ssh targets tag <prefix>-hub. VM enforces Secure Boot, vTPM, Integrity Monitoring, and enable-oslogin=TRUE."},{"n":"3","tone":"blue","title":"Digest-Pinned Harness Pull","line":"Scion Hub pulls @sha256-pinned pack images from Hub Artifact Registry while Cloud Build rebuilds remain isolated to builder@.","facts":[["Hub AR Role","artifactregistry.reader"],["Builder SA","builder@ (AR writer)"],["Staging TTL","1 day (Hub GCS)"]],"edges":["e3","s-cb1","s-cb2"],"units":["hub-vm","ar","cbuild","staging"],"notes":"stage-release-kit.sh --mode rebuild uses release_builder@ and staging GCS bucket to push immutable @sha256 digests."},{"n":"4","tone":"green","title":"Predict-Only Vertex AI Inference","line":"Hub mints short-lived tokens for coordinator@ and worker@ carrying custom role vertexInferencePredict (1 permission only).","facts":[["Custom Role","vertexInferencePredict"],["Permission","aiplatform.endpoints.predict"],["Static Keys","0 (TokenCreator impersonation)"]],"edges":["e4"],"units":["hub-vm","vertex"],"notes":"coordinator@ holds actAs on worker@ (and optional kaizen@) while leaf worker@ holds zero actAs grants. Budget alerts fire at 70% and 90%."},{"n":"5","tone":"blue","title":"Private Egress via Cloud NAT to Git","line":"Agents push feature branches and open Pull Requests through Cloud Router & NAT; humans review and merge in Git.","facts":[["VPC Subnet","10.42.0.0/24 (non-default)"],["NAT Mode","AUTO_ONLY + PGA"],["Merge Gate","Human PR approval"]],"edges":["e5","e6"],"units":["hub-vm","nat","git"],"notes":"No production SAs are registered on the Hub. CI/CD runs in the customer Git provider after human approval."},{"n":"7","tone":"yellow","title":"Native Telemetry & Optional Delta Watcher","line":"sciontool streams metrics, logs, and traces to Hub observability; optional private Delta Watcher polls trackers over Direct VPC Egress.","facts":[["DW Ingress","INGRESS_TRAFFIC_INTERNAL_ONLY"],["Hub RBAC","delta-watcher-messenger (2 perms)"],["Cursor Lock","delta-watcher/ IAM Condition"]],"edges":["e7","s-dw1","s-dw2","s-dw3","s-dw4","s-bud"],"units":["hub-vm","obs","dw-sched","dw-run","dw-sec","dw-gcs","budget","pubsub"],"notes":"Delta Watcher (enable_delta_watcher=true) holds zero Vertex AI or Sandbox grants and wakes the coordinator via OIDC with agent.message + agent.read only."},{"tone":"green","title":"Setup 1 Summary — 2-Project Clean Perimeter","line":"All compute, inference, and telemetry stay inside customer GCP projects with zero public IPs, zero static keys, and explicit FinOps guardrails.","facts":[["Org Policies","100% compatible by design"],["FinOps","TPM Quotas + 70%/90% Budget"],["Next Step","Enable Sandbox in Setup 2"]],"edges":[],"units":[],"notes":"Switch to Setup 2 in the topbar to add the Disposable Sandbox Project for ADK & GECX live verification."}]},{"id":"setup-2","tab":"Setup 2 · 3-Project Pilot + Sandbox","badge":"packs/adk & packs/gecx · Lite Single-VM","DIAGRAM":{"title":"Setup 2 — 3-Project Pilot Factory with Disposable Sandbox","theme":"light","mode":"slides","viewBox":[1280,840],"outsideLabel":"EXTERNAL ACTORS","cloud":{"x":248,"y":14,"w":1020,"h":812,"icon":"google-cloud","label":"Google Cloud · 3-Project Pilot (<hub-project> + <inference-project> + <sandbox-project>)"},"notice":"Verified against deploy/01-landing-zone/iam.tf, network.tf, finops.tf & deploy/02-factory-runtime/lite-vm. Generic placeholders only.","legend":["Solid numbered line = pilot build, deploy, verdict & janitor flow","Dashed line = secondary/optional or GECX branch","Red group = Zero-PII 403 boundary (0 Insights/Conversations perms)","Janitor SA has 0 Hub bindings (WIF CI always() only)"]},"OUTSIDE":[{"id":"operator","glyph":"person","x":16,"y":90,"w":196,"h":74,"title":"Human Operator","sub":"IAP TCP 22 / Scion CLI","what":"Customer principal connects via IAP TCP tunnel to start the coordinator, review artifacts, and approve PRs after the independent Verdict Gate passes.","why":"Enforces human-in-the-loop promotion; Hub never holds credentials for DEV/HML/PRD."},{"id":"gh-actions","glyph":"server","x":16,"y":574,"w":196,"h":80,"title":"GitHub Actions CI","sub":"Verdict + always() Jan.","what":"Runs independent PR Verdict Gate using keyless OIDC federation to evaluator@, followed by an always() cleanup job impersonating janitor@.","why":"Separates build/deploy (deployer@) from independent verification (evaluator@) and guaranteed teardown (janitor@)."}],"GROUPS":[{"id":"hub","tone":"blue","x":272,"y":54,"w":262,"h":364,"title":"Hub Project (<hub-project>)"},{"id":"inf","tone":"green","x":272,"y":442,"w":262,"h":212,"title":"Inference (<inference-project>)"},{"id":"dw","tone":"dash","x":272,"y":678,"w":262,"h":124,"title":"Optional Delta Watcher"},{"id":"sbx-iam","tone":"yellow","x":626,"y":54,"w":266,"h":748,"title":"Sandbox Split-SA (<sandbox-project>)"},{"id":"sbx-adk","tone":"blue","x":982,"y":54,"w":268,"h":356,"title":"ADK Pack Ephemeral Runtimes"},{"id":"sbx-gecx","tone":"red","x":982,"y":442,"w":268,"h":244,"title":"GECX Pack (Zero-PII 403)"}],"CARDS":[{"id":"iap","group":"hub","icon":"identity-aware-proxy","x":290,"y":92,"w":226,"h":54,"title":"IAP TCP Tunnel","sub":"35.235.240.0/20 -> :22","what":"Allows SSH/port-forwarding strictly from IAP CIDR to the private Shielded Hub VM with OS Login.","why":"Zero public IP on the Hub VM."},{"id":"hub-vm","group":"hub","icon":"compute-engine","x":290,"y":174,"w":226,"h":54,"title":"Scion Hub Lite VM","sub":"Shielded · Cloud NAT","what":"Runs Scion Hub v0.4.0-preview.4 on custom VPC 10.42.0.0/24 with TokenCreator on coordinator@, worker@, deployer@, and evaluator@ — NEVER on janitor@.","why":"Enforces gcp_iam_check_mode=enforce and Policy Troubleshooter checks before minting any short-lived agent token."},{"id":"hub-ar","group":"hub","icon":"artifact-registry","x":290,"y":256,"w":226,"h":54,"title":"Hub Artifact Registry","sub":"factory-images (RO sbx)","what":"Stores digest-pinned Scion harness images. Sandbox SAs and service agents hold artifactregistry.reader only — zero PR writes allowed here.","why":"Prevents untrusted autonomous PR builds from polluting or overwriting trusted Hub harness images."},{"id":"hub-obs","group":"hub","icon":"cloud-monitoring","x":290,"y":338,"w":226,"h":54,"title":"Hub Observability","sub":"Metrics / Logs / Trace","what":"Collects native sciontool GCP metrics, logs, and traces from Hub and assignable agent SAs.","why":"Centralizes factory health and Kaizen signals in Hub Project."},{"id":"vertex","group":"inf","icon":"vertexai","x":290,"y":484,"w":226,"h":54,"title":"Vertex AI Predict","sub":"vertexInferencePredict","what":"Serves Gemini 1P / opt-in Claude inference to coordinator@, worker@, deployer@, evaluator@, and adk_runtime@ via predict-only custom role.","why":"Centralizes LLM billing and TPM quotas in Inference Project."},{"id":"budget","group":"inf","icon":"billing","x":290,"y":574,"w":226,"h":54,"title":"Billing Budget","sub":"70% / 90% + TPM quotas","what":"FinOps budget alerts at 70% and 90% plus optional Hub Pub/Sub notifications.","why":"Bounds inference spend across autonomous waves."},{"id":"dw-run","group":"dw","icon":"cloud-run","x":290,"y":722,"w":226,"h":54,"title":"Delta Watcher + Sched","sub":"INTERNAL_ONLY · DirectVPC","what":"Optional Cloud Run + Cloud Scheduler + GCS cursor bucket waking Hub via 2-perm delta-watcher-messenger OIDC over Direct VPC Egress.","why":"Zero Vertex AI or Sandbox grants."},{"id":"deployer","group":"sbx-iam","icon":"identity-and-access-management","x":644,"y":92,"w":230,"h":54,"title":"Deployer SA","sub":"adk/gecxSandboxDeployer","what":"Holds explicit custom role (adkSandboxDeployer / gecxSandboxDeployer) plus actAs on sandbox_builder@ and adk_runtime@. Registered on Hub for sandbox-direct.","why":"Can build and deploy ephemeral [CI] runtimes in Sandbox only, never mutating Hub AR or production."},{"id":"sbx-build","group":"sbx-iam","icon":"cloud-build","x":644,"y":182,"w":230,"h":54,"title":"Sandbox Cloud Build","sub":"sbx-builder@ (0 Hub AR)","what":"Dedicated sandbox_builder@ SA isolated inside Sandbox Project with artifactregistry.writer exclusively on sandbox-images AR.","why":"Confines untrusted PR Docker builds inside the disposable Sandbox perimeter."},{"id":"sbx-ar","group":"sbx-iam","icon":"artifact-registry","x":644,"y":272,"w":230,"h":54,"title":"Sandbox AR & Staging","sub":"sandbox-images · 1d TTL","what":"Ephemeral sandbox-images Docker registry (readable by gcp-sa-aiplatform-re, gcp-sa-aiplatform, and adk_runtime@) plus 1-day TTL staging GCS bucket.","why":"Cold-start AR reader bindings prevent Attempt-1 image pull failures on Agent Engine."},{"id":"adk-rt","group":"sbx-iam","icon":"identity-and-access-management","x":644,"y":362,"w":230,"h":54,"title":"ADK Runtime SA","sub":"same-proj · adkSandboxRt","what":"Same-project Sandbox SA attached to ADK Cloud Run / Agent Engine containers: predict-only + sessions/memory/OTLP telemetry, zero engine lifecycle or IAM rights.","why":"Avoids cross-project SA attachment blocks under constraints/iam.disableCrossProjectServiceAccountUsage."},{"id":"evaluator","group":"sbx-iam","icon":"identity-and-access-management","x":644,"y":484,"w":230,"h":54,"title":"Evaluator SA","sub":"Eval + Predict (0 write)","what":"Holds adkSandboxEvaluator / gecxSandboxEvaluator + sandboxEvaluatorPredict + Agent Registry / App Hub viewer. Zero create/update/delete rights.","why":"Guarantees independent verification: the evaluator cannot silently patch the app it grades."},{"id":"wif","group":"sbx-iam","icon":"workload-identity-pool","x":644,"y":584,"w":230,"h":54,"title":"GitHub WIF Pool","sub":"OIDC -> eval@ & janitor@","what":"Keyless Workload Identity Pool & OIDC Provider (token.actions.githubusercontent.com) locked via attribute_condition to authorized owner/repo slugs.","why":"Grants workloadIdentityUser strictly to evaluator@ and janitor@ with zero static CI keys."},{"id":"janitor","group":"sbx-iam","icon":"identity-and-access-management","x":644,"y":712,"w":230,"h":54,"title":"Janitor SA (0 Hub)","sub":"always() TTL cleanup","what":"Holds adkSandboxJanitor / gecxSandboxJanitor (list & delete expired [CI] resources only). NEVER registered on the Scion Hub.","why":"Prevents compromised agents from wiping sibling Sandbox runs while ensuring deterministic CI cleanup."},{"id":"agent-eng","group":"sbx-adk","icon":"vertexai","x":1000,"y":92,"w":232,"h":54,"title":"Vertex Agent Engine","sub":"[CI] ReasoningEngine","what":"Ephemeral [CI] ADK ReasoningEngine running under adk_runtime@ with VertexAiSessionService, Memory Bank, and OTLP telemetry export.","why":"Validates real managed Agent Engine deployment and live adk eval before PR merge."},{"id":"run-a2a","group":"sbx-adk","icon":"cloud-run","x":1000,"y":182,"w":232,"h":54,"title":"Cloud Run A2A","sub":"IAM auth · OTLP trace","what":"Authenticated Cloud Run A2A service invoked via run.routes.invoke by evaluator@ for live smoke and protocol verification.","why":"Complies with constraints/run.managed.requireInvokerIam (zero unauthenticated endpoints)."},{"id":"ge-reg","group":"sbx-adk","icon":"agent-assist","x":1000,"y":272,"w":232,"h":54,"title":"Agent Reg & App Hub","sub":"+ Gemini Ent. export","what":"Registers ephemeral [CI] agents in Agent Registry, App Hub, and optional Gemini Enterprise (discoveryengine) with ge_export.py bundle validation.","why":"Verifies enterprise catalog metadata and registration contracts prior to promotion."},{"id":"ces","group":"sbx-gecx","icon":"dialogflow-cx","x":1000,"y":484,"w":232,"h":54,"title":"CX Agent Studio","sub":"[CI] App · BidiRunSession","what":"Ephemeral [CI] CES App deployed by deployer@ and tested by evaluator@ via v1beta runSession, BidiRunSession (TTS audio), and runEvaluation.","why":"Proves callbacks, tools, guardrails, and synthetic voice flows inside an isolated Sandbox."},{"id":"insights-403","group":"sbx-gecx","icon":"identity-and-access-management","x":1000,"y":584,"w":232,"h":54,"title":"Insights / Conv. 403","sub":"0 PII perms by design","what":"All 11 predefined roles/ces.* inherit 79 contactcenterinsights.* and ces.conversations.* permissions and are banned; custom roles return HTTP 403 on PII reads.","why":"Enforces provable Zero-PII isolation even if a Sandbox credential is inspected."}],"EDGES":[{"id":"e1","n":"1","from":"operator","to":"iap","pts":[[212,119],[290,119]],"disc":[250,119]},{"id":"e2","n":"2","from":"hub-vm","to":"vertex","pts":[[516,212],[564,212],[564,511],[516,511]],"disc":[564,360]},{"id":"e3","n":"3","from":"hub-vm","to":"deployer","pts":[[516,196],[588,196],[588,119],[644,119]],"disc":[588,156],"label":"impersonate","lx":580,"ly":112,"anchor":"middle"},{"id":"e4","n":"4","from":"deployer","to":"sbx-build","pts":[[759,146],[759,182]],"disc":[759,164]},{"id":"e5","n":"5","from":"deployer","to":"agent-eng","pts":[[874,119],[1000,119]],"disc":[936,119],"label":"ADK [CI]","lx":936,"ly":103,"anchor":"middle"},{"id":"e6","n":"6","from":"gh-actions","to":"wif","pts":[[212,611],[236,611],[236,666],[596,666],[596,611],[644,611]],"disc":[596,640],"label":"OIDC JWT","lx":416,"ly":659,"anchor":"middle"},{"id":"e7","n":"7","from":"wif","to":"evaluator","pts":[[759,584],[759,538]],"disc":[759,561]},{"id":"e8","n":"8","from":"wif","to":"janitor","pts":[[759,638],[759,712]],"disc":[759,675],"label":"if: always()","lx":774,"ly":678,"anchor":"start"},{"id":"s-iap","dash":true,"from":"iap","to":"hub-vm","pts":[[403,146],[403,174]]},{"id":"s-b2ar","dash":true,"from":"sbx-build","to":"sbx-ar","pts":[[759,236],[759,272]]},{"id":"s-dep-run","dash":true,"from":"deployer","to":"run-a2a","pts":[[874,132],[936,132],[936,209],[1000,209]]},{"id":"s-dep-ge","dash":true,"from":"deployer","to":"ge-reg","pts":[[874,140],[920,140],[920,299],[1000,299]]},{"id":"s-dep-ces","dash":true,"from":"deployer","to":"ces","pts":[[874,144],[904,144],[904,496],[1000,496]]},{"id":"s-eval-ces","dash":true,"from":"evaluator","to":"ces","pts":[[874,511],[1000,511]],"label":"runEvaluation","lx":936,"ly":504,"anchor":"middle"},{"id":"s-eval-adk","dash":true,"from":"evaluator","to":"agent-eng","pts":[[874,498],[954,498],[954,132],[1000,132]]},{"id":"s-dw","dash":true,"from":"dw-run","to":"hub-vm","pts":[[290,749],[258,749],[258,201],[290,201]]}],"SLIDES":[{"tone":"blue","title":"3-Project Pilot with Disposable Sandbox","line":"Adds an isolated Sandbox Project for packs/adk and packs/gecx with Split-SA separation, keyless GitHub WIF, and Zero-PII 403 boundaries.","facts":[["Projects","3 (Hub + Inf + Sandbox)"],["Sandbox SAs","deployer / eval / janitor"],["Hub AR Writes","0 from Sandbox"]],"edges":[],"units":[],"notes":"Source: deploy/01-landing-zone/iam.tf, network.tf, finops.tf. Set enable_gecx_sandbox_roles=false for pure ADK deployments to omit 65 CES permissions."},{"n":"1","tone":"blue","title":"Private Hub Control & Vertex Predict","line":"Operators enter via IAP TCP tunnel; Hub VM runs on custom VPC with Cloud NAT and mints predict-only tokens to Inference Project.","facts":[["Ingress","IAP 35.235.240.0/20:22"],["Inference Role","vertexInferencePredict"],["Telemetry","Hub Monitoring/Log/Trace"]],"edges":["e1","s-iap","e2"],"units":["operator","iap","hub-vm","vertex","hub-obs"],"notes":"hub@ holds TokenCreator strictly on coordinator@, worker@, deployer@, and evaluator@ — never on janitor@."},{"n":"3","tone":"yellow","title":"Split-SA Deployer & Isolated Sandbox Build","line":"Hub impersonates deployer@, which triggers sandbox_builder@ to push PR containers into sandbox-images AR (zero Hub AR writes).","facts":[["Builder SA","sandbox_builder@"],["PR Registry","sandbox-images (Sandbox)"],["Runtime SA","adk_runtime@ (same-proj)"]],"edges":["e3","e4","s-b2ar"],"units":["hub-vm","deployer","sbx-build","sbx-ar","adk-rt"],"notes":"Cold-start AR reader bindings on sandbox-images grant gcp-sa-aiplatform-re, gcp-sa-aiplatform, and adk_runtime@ immediate Attempt-1 pulls."},{"n":"5","tone":"blue","title":"ADK & GECX Ephemeral [CI] Runtimes","line":"Deployer provisions [CI] Vertex Agent Engine, authenticated Cloud Run A2A + Agent Registry/App Hub, or CX Agent Studio [CI] apps.","facts":[["ADK Targets","Agent Engine + Run A2A"],["Catalog","Agent Registry + App Hub"],["GECX Target","CES [CI] + BidiRunSession"]],"edges":["e5","s-dep-run","s-dep-ge","s-dep-ces"],"units":["deployer","agent-eng","run-a2a","ge-reg","ces","insights-403"],"notes":"GECX custom roles omit all 79 contactcenterinsights.* and ces.conversations.* permissions so any PII read returns HTTP 403."},{"n":"6","tone":"yellow","title":"Keyless GitHub WIF Verdict Gate","line":"GitHub Actions exchanges a repo-scoped OIDC JWT via WIF Pool to impersonate read-only evaluator@ and grade the live [CI] runtime.","facts":[["WIF Issuer","token.actions.githubusercontent.com"],["Evaluator Writes","0 (eval + predict only)"],["Zero-PII Proof","HTTP 403 on Insights"]],"edges":["e6","e7","s-eval-ces","s-eval-adk"],"units":["gh-actions","wif","evaluator","ces","agent-eng","insights-403"],"notes":"attribute_condition pins assertion.repository.lowerAscii() to customer-authorized owner/repo slugs."},{"n":"8","tone":"red","title":"Guaranteed always() Janitor (0 Hub Bindings)","line":"GitHub Actions always() step impersonates janitor@ via WIF to delete expired [CI] runtimes; janitor@ is never registered on the Hub.","facts":[["Hub Registration","Forbidden (0 bindings)"],["Cleanup Scope","[CI] engines, Run, CES"],["Staging Bucket","1-day automatic TTL"]],"edges":["e8"],"units":["gh-actions","wif","janitor"],"notes":"Even if a PR fails mid-flight, if: always() invokes sandbox_janitor.py under janitor@."},{"tone":"green","title":"Setup 2 Summary — Full Split-SA Pilot","line":"End-to-end autonomous build, live ADK/GECX sandbox verification, and deterministic teardown with zero static keys and provable Zero-PII boundaries.","facts":[["Isolation","3 GCP Projects + Split-SA"],["Auth","Impersonation + GitHub WIF"],["Next Step","Scale Hub to HA GKE (Setup 3)"]],"edges":[],"units":[],"notes":"Switch to Setup 3 in the topbar to replace the Lite Single-VM Hub with Shielded HA GKE Standard."}]},{"id":"setup-3","tab":"Setup 3 · 3-Project HA GKE Enterprise","badge":"ha-gke · enable_gke_api=true","DIAGRAM":{"title":"Setup 3 — 3-Project Enterprise HA GKE Factory","theme":"light","mode":"slides","viewBox":[1280,820],"outsideLabel":"EXTERNAL ACTORS","cloud":{"x":248,"y":14,"w":1020,"h":792,"icon":"google-cloud","label":"Google Cloud · 3-Project Enterprise HA GKE (<hub-project> + <inference-project> + <sandbox-project>)"},"notice":"Verified against deploy/02-factory-runtime/ha-gke/{main,variables}.tf & deploy/01-landing-zone/iam.tf. Generic placeholders only.","legend":["Solid numbered line = enterprise HTTPS IAP, GKE Workload Identity & CI flow","Dashed line = persistence, shared RWX storage & optional Delta Watcher","4 Workload Identity KSAs in ns:scion — strictly 0 sandbox-janitor KSA","ha-gke emits validated contract for upstream Scion Helm/Terraform stack"]},"OUTSIDE":[{"id":"operator","glyph":"person","x":16,"y":90,"w":196,"h":74,"title":"Human Operator","sub":"Corp HTTPS -> IAP","what":"Enterprise operators access the HA Scion Hub Web UI and API through an internal corporate HTTPS domain protected by Identity-Aware Proxy.","why":"Replaces SSH port-forwarding with centralized IAP authentication and org-domain access policies."},{"id":"gh-actions","glyph":"server","x":16,"y":564,"w":196,"h":80,"title":"GitHub Actions CI","sub":"Keyless WIF Verdict","what":"Runs independent PR Verdict Gate and always() Janitor teardown against the Disposable Sandbox via Workload Identity Federation.","why":"Keeps CI verification and cleanup decoupled from the GKE Hub cluster."}],"GROUPS":[{"id":"hub-in","tone":"blue","x":272,"y":54,"w":612,"h":116,"title":"Hub Ingress & IAP Proxy (<hub-project>)"},{"id":"gke","tone":"blue","x":272,"y":194,"w":612,"h":374,"title":"Shielded GKE Standard (Private Nodes · ns: scion · Custom VPC)"},{"id":"dw","tone":"dash","x":272,"y":594,"w":612,"h":190,"title":"Optional External Delta Watcher (enable_delta_watcher=true)"},{"id":"inf","tone":"green","x":968,"y":54,"w":282,"h":244,"title":"Inference (<inference-project>)"},{"id":"sbx","tone":"yellow","x":968,"y":324,"w":282,"h":460,"title":"Disposable Sandbox (<sandbox-project>)"}],"CARDS":[{"id":"iap-proxy","group":"hub-in","icon":"identity-aware-proxy","x":290,"y":94,"w":236,"h":54,"title":"IAP HTTPS Proxy","sub":"iap@ · 0 project roles","what":"Fronts https://<iap_domain> with Identity-Aware Proxy running under iap_proxy@ SA which intentionally holds zero project IAM roles.","why":"Enforces zero-trust corporate identity checks at the edge without granting backend privileges to the proxy."},{"id":"hub-tls","group":"hub-in","icon":"cloud-load-balancing","x":630,"y":94,"w":236,"h":54,"title":"Internal HTTPS Hub","sub":"in-cluster TLS · :443","what":"Internal HTTPS load balancer / service routing authenticated requests into the GKE cluster with in_cluster_hub_tls_required=true.","why":"Eliminates plaintext hub traffic inside the cluster and keeps the control plane private."},{"id":"gke-hub","group":"gke","icon":"google-kubernetes-engine","x":290,"y":236,"w":236,"h":54,"title":"Scion Hub Pods","sub":"hub-gke · gke-node@ AR","what":"Non-root scion-hub-gke Pods scheduled on Shielded Private Nodes using dedicated least-privilege gke_node@ SA (defaultNodeServiceAccount + Hub AR reader).","why":"Prevents 403 ImagePullBackOff on hardened projects where Compute Engine default SA lacks roles/editor."},{"id":"ksas","group":"gke","icon":"identity-and-access-management","x":290,"y":326,"w":236,"h":54,"title":"4 Workload Id. KSAs","sub":"coord/work/dep/eval","what":"Four annotated Kubernetes Service Accounts in namespace scion: factory-coordinator, factory-worker, pack-deployer, pack-evaluator (plus optional kaizen-viewer).","why":"Binds Pod workloads to least-privilege GCP SAs via GKE Workload Identity Federation with zero static keys."},{"id":"no-jan","group":"gke","icon":"identity-and-access-management","x":290,"y":416,"w":236,"h":54,"title":"0 Janitor KSA","sub":"forbidden in GKE ns","what":"Contract explicitly forbids creating a sandbox-janitor KSA inside GKE (forbidden_workload_identity_ksas=['sandbox-janitor']).","why":"Preserves strict separation between factory runtime pods and CI teardown privileges."},{"id":"gke-nat","group":"gke","icon":"cloud-nat","x":290,"y":496,"w":236,"h":52,"title":"Cloud NAT + PGA","sub":"private node egress","what":"Routes outbound Git and package traffic from Private GKE Nodes through Stage 01 Cloud NAT and Private Google Access.","why":"Nodes carry zero public external IPs."},{"id":"hub-db","group":"gke","icon":"cloud-sql","x":630,"y":236,"w":236,"h":54,"title":"Hub DB (SQL / PVC)","sub":"pvc-or-cloudsql-req","what":"Durable Hub state store backed by Cloud SQL or PersistentVolumeClaim (hub_db_persistence=pvc-or-cloudsql-required).","why":"Ensures HA pod restarts never lose project state, templates, schedules, or agent records."},{"id":"filestore","group":"gke","icon":"filestore","x":630,"y":326,"w":236,"h":54,"title":"Filestore RWX","sub":"standard-rwx scratchpad","what":"ReadWriteMany Filestore volume (shared_dir_storage_class=standard-rwx on custom VPC) backing multi-pod shared workspaces and scratchpads.","why":"Allows concurrent coordinator and worker pods across nodes to share artifacts safely."},{"id":"hub-ar","group":"gke","icon":"artifact-registry","x":630,"y":416,"w":236,"h":54,"title":"Hub AR & Telemetry","sub":"factory-images + OTLP","what":"Hub Artifact Registry supplying digest-pinned images plus native GCP Cloud Monitoring, Logging, and Trace export (telemetry_cloud_provider=gcp).","why":"Unified enterprise observability and immutable image supply chain."},{"id":"dw-sched","group":"dw","icon":"cloud-scheduler","x":290,"y":634,"w":236,"h":54,"title":"Cloud Scheduler","sub":"OIDC POST /tick · 120s","what":"Optional recurring tick triggering private External Delta Watcher via dw-invoker@ OIDC token.","why":"Zero inbound internet exposure."},{"id":"dw-run","group":"dw","icon":"cloud-run","x":290,"y":712,"w":236,"h":54,"title":"Delta Watcher Run","sub":"INTERNAL_ONLY · DirectVPC","what":"Private Cloud Run v2 service reaching the internal HTTPS Hub over Direct VPC Egress with 2-perm delta-watcher-messenger OIDC.","why":"Decouples external tracker polling from the GKE control plane."},{"id":"dw-store","group":"dw","icon":"cloud-storage","x":630,"y":672,"w":236,"h":54,"title":"GCS Cursor & Secret","sub":"delta-watcher/ IAM cond.","what":"Versioned GCS cursor bucket (IAM Condition scoped to delta-watcher/ prefix) plus out-of-band Secret Manager tracker token.","why":"Optimistic concurrency lock without storing secrets in Terraform state."},{"id":"vertex","group":"inf","icon":"vertexai","x":986,"y":94,"w":246,"h":54,"title":"Vertex AI Predict","sub":"vertexInferencePredict","what":"Dedicated Inference Project serving Gemini 1P and opt-in Claude Model Garden under custom role vertexInferencePredict.","why":"Isolates LLM TPM quotas and billing from GKE compute."},{"id":"budget","group":"inf","icon":"billing","x":986,"y":200,"w":246,"h":54,"title":"Billing Budget & TPM","sub":"70% / 90% + Pub/Sub","what":"Cloud Billing Budget alerts (70%/90%) paired with hard Vertex AI TPM quotas and optional Hub Pub/Sub topic.","why":"Deterministic FinOps guardrails at enterprise scale."},{"id":"sbx-dep","group":"sbx","icon":"cloud-build","x":986,"y":366,"w":246,"h":54,"title":"Deployer & Sbx Build","sub":"sandbox-images · 0 Hub","what":"pack-deployer KSA triggers sandbox_builder@ inside Sandbox Project to push PR containers to sandbox-images AR (zero Hub AR writes).","why":"Maintains strict blast-radius separation between PR builds and Hub images."},{"id":"sbx-rt","group":"sbx","icon":"vertexai","x":986,"y":462,"w":246,"h":54,"title":"ADK / GECX Runtimes","sub":"Agent Eng / Run / CES","what":"Ephemeral [CI] Vertex Agent Engine, Cloud Run A2A + Agent Registry/App Hub, and CX Agent Studio apps (Zero-PII 403 boundary).","why":"Live sandbox verification identical to Setup 2, scaled behind HA GKE."},{"id":"wif","group":"sbx","icon":"workload-identity-pool","x":986,"y":576,"w":246,"h":54,"title":"GitHub WIF Pool","sub":"OIDC -> eval@ & janitor@","what":"Keyless OIDC federation scoped to customer repositories granting workloadIdentityUser strictly to evaluator@ and janitor@.","why":"Independent PR Verdict Gate outside GKE."},{"id":"janitor","group":"sbx","icon":"identity-and-access-management","x":986,"y":706,"w":246,"h":54,"title":"Janitor SA (0 Hub)","sub":"CI always() TTL cleanup","what":"Deletes expired [CI] resources via GitHub Actions always() job; strictly excluded from GKE Workload Identity KSAs.","why":"Zero janitor credentials exist anywhere in the Hub cluster."}],"EDGES":[{"id":"e1","n":"1","from":"operator","to":"iap-proxy","pts":[[212,121],[290,121]],"disc":[250,121]},{"id":"e2","n":"2","from":"iap-proxy","to":"hub-tls","pts":[[526,121],[630,121]],"disc":[578,121]},{"id":"e3","n":"3","from":"hub-tls","to":"gke-hub","pts":[[748,148],[748,182],[408,182],[408,236]],"disc":[578,182],"label":"TLS :443","lx":510,"ly":175,"anchor":"middle"},{"id":"e4","n":"4","from":"ksas","to":"vertex","pts":[[526,342],[584,342],[584,214],[916,214],[916,121],[986,121]],"disc":[916,168],"label":"WI OIDC","lx":924,"ly":112,"anchor":"start"},{"id":"e5","n":"5","from":"ksas","to":"sbx-dep","pts":[[526,360],[584,360],[584,393],[986,393]],"disc":[916,393],"label":"pack-deployer","lx":916,"ly":376,"anchor":"middle"},{"id":"e6","n":"6","from":"gh-actions","to":"wif","pts":[[212,604],[236,604],[236,582],[928,582],[928,603],[986,603]],"disc":[928,592]},{"id":"e7","n":"7","from":"wif","to":"janitor","pts":[[1109,630],[1109,706]],"disc":[1109,668],"label":"if: always()","lx":1124,"ly":671,"anchor":"start"},{"id":"s-db","dash":true,"from":"gke-hub","to":"hub-db","pts":[[526,263],[630,263]]},{"id":"s-fs","dash":true,"from":"gke-hub","to":"filestore","pts":[[526,276],[568,276],[568,353],[630,353]]},{"id":"s-ar","dash":true,"from":"gke-hub","to":"hub-ar","pts":[[526,284],[552,284],[552,443],[630,443]]},{"id":"s-sbx","dash":true,"from":"sbx-dep","to":"sbx-rt","pts":[[1109,420],[1109,462]]},{"id":"s-eval","dash":true,"from":"wif","to":"sbx-rt","pts":[[1109,576],[1109,516]],"label":"evaluator@","lx":1124,"ly":549,"anchor":"start"},{"id":"s-dw1","dash":true,"from":"dw-sched","to":"dw-run","pts":[[408,688],[408,712]]},{"id":"s-dw2","dash":true,"from":"dw-run","to":"dw-store","pts":[[526,739],[578,739],[578,699],[630,699]]},{"id":"s-dw3","dash":true,"from":"dw-run","to":"hub-tls","pts":[[526,752],[898,752],[898,121],[866,121]]}],"SLIDES":[{"tone":"blue","title":"Enterprise HA GKE Factory","line":"Replaces the Lite Single-VM with Shielded GKE Standard (Private Nodes), 4 Workload Identity KSAs, Cloud SQL/PVC, Filestore RWX, and IAP HTTPS.","facts":[["Cluster","Shielded GKE Private"],["WI KSAs","4 (+1 opt, 0 janitor)"],["Storage","Cloud SQL/PVC + Filestore"]],"edges":[],"units":[],"notes":"Source: deploy/02-factory-runtime/ha-gke/{main,variables}.tf & deploy/01-landing-zone/iam.tf.\nha-gke emits the validated runtime contract for upstream GoogleCloudPlatform/scion Helm & Terraform stacks."},{"n":"1","tone":"blue","title":"IAP HTTPS Proxy -> In-Cluster TLS Hub","line":"Operators reach https://<iap_domain> via zero-role iap_proxy@, forwarding authenticated requests to the internal TLS Hub endpoint.","facts":[["Proxy SA","iap@ (0 project roles)"],["Hub TLS","in_cluster_hub_tls=true"],["GKE Node SA","gke-node@ (Hub AR RO)"]],"edges":["e1","e2","e3"],"units":["operator","iap-proxy","hub-tls","gke-hub"],"notes":"gke_node@ holds roles/container.defaultNodeServiceAccount and roles/artifactregistry.reader on Hub Project."},{"n":"3","tone":"blue","title":"HA State: Cloud SQL/PVC & Filestore RWX","line":"Scion Hub Pods persist state in Cloud SQL or PVC, share multi-pod workspaces on Filestore standard-rwx, and pull pinned images from Hub AR.","facts":[["Hub DB","pvc-or-cloudsql-required"],["Shared Dir","Filestore standard-rwx"],["Node Egress","Cloud NAT + PGA"]],"edges":["s-db","s-fs","s-ar"],"units":["gke-hub","hub-db","filestore","hub-ar","gke-nat"],"notes":"Custom VPC hosts both Private GKE Nodes and Filestore standard-rwx with zero external node IPs."},{"n":"4","tone":"green","title":"4 Annotated Workload Identity KSAs","line":"Namespace scion binds factory-coordinator, factory-worker, pack-deployer, and pack-evaluator KSAs to least-privilege GCP SAs — strictly 0 sandbox-janitor KSA.","facts":[["Allowed KSAs","coord, work, dep, eval"],["Forbidden KSA","sandbox-janitor (0)"],["Inference Role","vertexInferencePredict"]],"edges":["e4","e5"],"units":["ksas","no-jan","vertex","budget","sbx-dep"],"notes":"Required K8s RBAC is scoped to serviceaccounts:get,list,watch; optional kaizen-viewer KSA is enabled only when enable_kaizen_gcp_obs=true."},{"n":"6","tone":"yellow","title":"Keyless CI Verdict Gate & Janitor","line":"GitHub Actions authenticates via WIF OIDC to grade [CI] ADK/GECX runtimes under evaluator@ and run always() cleanup under janitor@.","facts":[["WIF Targets","evaluator@ & janitor@"],["PR Builds","sandbox-images (0 Hub AR)"],["Janitor in GKE","Forbidden (0 KSA)"]],"edges":["e6","e7","s-sbx","s-eval"],"units":["gh-actions","wif","sbx-dep","sbx-rt","janitor"],"notes":"Sandbox isolation is identical to Setup 2 while the Hub scales horizontally on GKE."},{"tone":"dash","title":"Optional Private Delta Watcher on HA GKE","line":"When enable_delta_watcher=true, Cloud Scheduler ticks a private Cloud Run service that wakes the internal Hub over Direct VPC Egress.","facts":[["Ingress","INGRESS_TRAFFIC_INTERNAL_ONLY"],["OIDC Allow","oidc_allowed_gcp_projects"],["Cursor Lock","delta-watcher/ IAM cond."]],"edges":["s-dw1","s-dw2","s-dw3"],"units":["dw-sched","dw-run","dw-store","hub-tls"],"notes":"ha-gke contract emits delta_watcher_enabled and oidc_allowed_gcp_projects=[hub_project_id] automatically."},{"tone":"green","title":"Setup 3 Summary — Enterprise HA GKE","line":"Full multi-project isolation, Shielded Private GKE Nodes, Workload Identity KSAs, durable storage, and zero static keys across the entire factory.","facts":[["Projects","3 (Hub + Inf + Sandbox)"],["Zero Keys","WI KSAs + GitHub WIF"],["Contract","ha-gke -> upstream Helm/TF"]],"edges":[],"units":[],"notes":"Use the topology tabs above to compare Setup 1 (2-Project CI-Only), Setup 2 (3-Project Pilot), and Setup 3 (3-Project HA GKE)."}]}];
+
+const NS = "http://www.w3.org/2000/svg";
+const mk = (n, a) => { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); return e; };
+
+const TONES = {
+  dash:   { tint: "#F8F9FA", edge: "#BDC1C6", paper: "#5F6368", dashed: true },
+  blue:   { tint: "#E8F0FE", edge: "#A8C7FA", paper: "#1A73E8" },
+  red:    { tint: "#FCE8E6", edge: "#F2B8B5", paper: "#C5221F" },
+  yellow: { tint: "#FEF7E0", edge: "#FDE293", paper: "#B06000" },
+  green:  { tint: "#E6F4EA", edge: "#A8DAB5", paper: "#137333" },
+  grey:   { tint: "#F1F3F4", edge: "#C8CCD1", paper: "#5F6368" }
+};
+
+function icon(name, x, y, size) {
+  const ic = ICONS[name];
+  if (!ic) return null;
+  const [vx, vy, vw, vh] = ic.vb.split(/\s+/).map(Number);
+  const scale = size / Math.max(vw, vh);
+  const g = mk("g", { transform: `translate(${x + (size - vw * scale) / 2} ${y + (size - vh * scale) / 2}) scale(${scale}) translate(${-vx} ${-vy})` });
+  g.innerHTML = ic.d;
+  return g;
+}
+
+function glyph(kind, x, y) {
+  const g = mk("g", {
+    transform: `translate(${x} ${y})`, fill: "none", stroke: "#5F6368",
+    "stroke-width": "1.6", "stroke-linecap": "round", "stroke-linejoin": "round"
+  });
+  const paths = {
+    person: ["M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z", "M4 21a8 8 0 0 1 16 0"],
+    server: ["M4 5h16v6H4z", "M4 13h16v6H4z", "M8 8h.01", "M8 16h.01"]
+  }[kind] || [];
+  for (const d of paths) g.append(mk("path", { d }));
+  return g;
+}
+
+const svg = document.getElementById("diagram");
+const stage = document.getElementById("stage");
+const sheet = document.getElementById("sheet");
+const stagewrap = document.getElementById("stagewrap");
+const layerFrames = document.getElementById("layer-frames");
+const layerWires = document.getElementById("layer-wires");
+const layerUnits = document.getElementById("layer-units");
+const tip = document.getElementById("tip");
+const notes = document.getElementById("notes");
+const notesToggle = document.getElementById("notes-toggle");
+const componentPicker = document.getElementById("component-picker");
+const dotsWrap = document.getElementById("dots");
+const topoTabsWrap = document.getElementById("topo-tabs");
+
+const elStepNo = document.getElementById("stepno");
+const elTitle = document.getElementById("title");
+const elLine = document.getElementById("line");
+const elChips = document.getElementById("chips");
+const elCounter = document.getElementById("counter");
+const elBadge = document.getElementById("topo-badge");
+
+let currentTopo = TOPOLOGIES[0];
+let VW = 1240, VH = 800;
+let wireParts = {}, edgeById = {}, unitG = {}, byId = {}, ALL = [], dotBtn = [];
+let at = 0;
+
+function showTip(id) {
+  const u = byId[id];
+  if (!u) return;
+  document.getElementById("tip-title").textContent = u.title;
+  document.getElementById("tip-sub").textContent = u.groupTitle ? u.groupTitle + " · " + u.sub : u.sub;
+  document.getElementById("tip-what").textContent = u.what;
+  const why = document.getElementById("tip-why");
+  why.textContent = u.why ? "Why: " + u.why : "";
+  why.hidden = !u.why;
+  tip.hidden = false;
+
+  const box = unitG[id].getBoundingClientRect();
+  const frame = stagewrap.getBoundingClientRect();
+  const left = box.left - frame.left, top = box.top - frame.top;
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = frame.width - (left + box.width) > w + 20 ? left + box.width + 12 : left - w - 12;
+  x = Math.max(10, Math.min(x, frame.width - w - 10));
+  let y = top + box.height / 2 - h / 2;
+  y = Math.max(10, Math.min(y, frame.height - h - 10));
+  tip.style.left = x + "px";
+  tip.style.top = y + "px";
+}
+
+function hideTip() { tip.hidden = true; }
+document.addEventListener("click", (ev) => { if (ev.target !== componentPicker) hideTip(); });
+componentPicker.addEventListener("change", () => { if (componentPicker.value) showTip(componentPicker.value); else hideTip(); });
+notesToggle.addEventListener("click", () => { notes.hidden = !notes.hidden; notesToggle.setAttribute("aria-expanded", String(!notes.hidden)); });
+
+function focusBox(slide) {
+  let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  const grow = (ax, ay, bx, by) => {
+    x1 = Math.min(x1, ax); y1 = Math.min(y1, ay);
+    x2 = Math.max(x2, bx); y2 = Math.max(y2, by);
+  };
+  for (const id of slide.units) { const u = byId[id]; if (u) grow(u.x, u.y, u.x + u.w, u.y + u.h); }
+  for (const id of slide.edges) { const e = edgeById[id]; if (e) for (const [px, py] of e.pts) grow(px, py, px, py); }
+  if (x1 === Infinity) return { x: 0, y: 0, w: VW, h: VH };
+  const pad = 48;
+  return { x: x1 - pad, y: y1 - pad, w: x2 - x1 + pad * 2, h: y2 - y1 + pad * 2 };
+}
+
+function frameStage(slide) {
+  const f = focusBox(slide);
+  const s = Math.max(1, Math.min(VW / f.w, VH / f.h, 2.2));
+  const cx = f.x + f.w / 2, cy = f.y + f.h / 2;
+  let tx = VW / 2 - s * cx, ty = VH / 2 - s * cy;
+  tx = Math.min(0, Math.max(VW * (1 - s), tx));
+  ty = Math.min(0, Math.max(VH * (1 - s), ty));
+  stage.setAttribute("transform", `translate(${tx.toFixed(2)} ${ty.toFixed(2)}) scale(${s.toFixed(4)})`);
+  sheet.classList.toggle("zoomed", s > 1.02);
+}
+
+function go(i) {
+  const SLIDES = currentTopo.SLIDES;
+  at = (i + SLIDES.length) % SLIDES.length;
+  const s = SLIDES[at];
+  const tone = TONES[s.tone || "blue"];
+
+  document.documentElement.style.setProperty("--accent", tone.paper);
+  document.documentElement.style.setProperty("--accent-paper", tone.paper);
+
+  elStepNo.hidden = !s.n;
+  if (s.n) elStepNo.textContent = s.n;
+  elTitle.textContent = s.title;
+  elLine.textContent = s.line;
+  notes.textContent = s.notes || "";
+  notes.hidden = true;
+  notesToggle.hidden = !s.notes;
+  notesToggle.setAttribute("aria-expanded", "false");
+
+  elChips.hidden = !s.facts;
+  elChips.textContent = "";
+  for (const [k, v] of s.facts || []) {
+    const li = document.createElement("li");
+    const b = document.createElement("b"); b.textContent = v;
+    const sp = document.createElement("span"); sp.textContent = k;
+    li.append(b, sp);
+    elChips.append(li);
+  }
+
+  const showAll = !s.edges.length && !s.units.length;
+  for (const u of ALL) {
+    const lit = s.units.includes(u.id);
+    unitG[u.id].classList.toggle("lit", lit);
+    unitG[u.id].classList.toggle("dim", !showAll && !lit);
+  }
+  for (const e of currentTopo.EDGES) {
+    const lit = s.edges.includes(e.id);
+    for (const part of wireParts[e.id]) {
+      part.classList.toggle("lit", lit);
+      part.classList.toggle("dim", !showAll && !lit);
+    }
+  }
+
+  frameStage(s);
+  hideTip();
+  dotBtn.forEach((b, j) => b.setAttribute("aria-current", String(j === at)));
+  elCounter.textContent = (at + 1) + " / " + SLIDES.length;
+  dotBtn[at].scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+function renderTopology(topo) {
+  currentTopo = topo;
+  const { DIAGRAM, OUTSIDE, GROUPS, CARDS, EDGES, SLIDES } = topo;
+  VW = DIAGRAM.viewBox[0]; VH = DIAGRAM.viewBox[1];
+  svg.setAttribute("viewBox", `0 0 ${VW} ${VH}`);
+  document.title = DIAGRAM.title;
+  elBadge.textContent = topo.badge;
+
+  for (const [id, value] of [["notice", DIAGRAM.notice], ["legend", (DIAGRAM.legend || []).join(" · ")]]) {
+    const el = document.getElementById(id); el.textContent = value || ""; el.hidden = !value;
+  }
+
+  layerFrames.textContent = "";
+  layerWires.textContent = "";
+  layerUnits.textContent = "";
+  dotsWrap.textContent = "";
+  componentPicker.innerHTML = '<option value="">Explore a component…</option>';
+  wireParts = {}; unitG = {}; ALL = [];
+
+  const cloud = DIAGRAM.cloud;
+  layerFrames.append(mk("rect", { class: "gc-frame", x: cloud.x, y: cloud.y, width: cloud.w, height: cloud.h }));
+  const mark = cloud.icon && icon(cloud.icon, cloud.x + 16, cloud.y + 10, 20);
+  if (mark) layerFrames.append(mark);
+  const cloudLabel = mk("text", { class: "gc-label", x: cloud.x + (mark ? 44 : 16), y: cloud.y + 25 });
+  cloudLabel.textContent = cloud.label;
+  layerFrames.append(cloudLabel);
+
+  if (DIAGRAM.outsideLabel) {
+    const t = mk("text", { class: "zone-label", x: 16, y: 28 });
+    t.textContent = DIAGRAM.outsideLabel;
+    layerFrames.append(t);
+  }
+
+  for (const g of GROUPS) {
+    const tone = TONES[g.tone];
+    layerFrames.append(mk("rect", {
+      class: "grp", x: g.x, y: g.y, width: g.w, height: g.h,
+      style: `--tint:${tone.tint};--edge:${tone.edge}` + (tone.dashed ? ";stroke-dasharray:5 4" : "")
+    }));
+    const t = mk("text", { class: "grp-title", x: g.x + 14, y: g.y + 21 });
+    t.textContent = g.title;
+    layerFrames.append(t);
+  }
+
+  edgeById = Object.fromEntries(EDGES.map((e) => [e.id, e]));
+  for (const e of EDGES) {
+    const d = e.pts.map((p, i) => (i ? `L ${p[0]} ${p[1]}` : `M ${p[0]} ${p[1]}`)).join(" ");
+    const parts = [mk("path", { class: "wirepart wire" + (e.dash ? " dash" : ""), d })];
+    const [px, py] = e.pts[e.pts.length - 2];
+    const [qx, qy] = e.pts[e.pts.length - 1];
+    if (py === qy) {
+      const s = qx > px ? 1 : -1;
+      parts.push(mk("polygon", { class: "wirepart wire-head", points: `${qx - 7 * s},${qy - 4} ${qx - 7 * s},${qy + 4} ${qx},${qy}` }));
+    } else {
+      const s = qy > py ? 1 : -1;
+      parts.push(mk("polygon", { class: "wirepart wire-head", points: `${qx - 4},${qy - 7 * s} ${qx + 4},${qy - 7 * s} ${qx},${qy}` }));
+    }
+    if (e.label) {
+      const label = mk("text", { class: "wirepart wire-label", x: e.lx, y: e.ly, "text-anchor": e.anchor || "middle" });
+      label.textContent = e.label;
+      parts.push(label);
+    }
+    if (e.disc) {
+      parts.push(mk("circle", { class: "wirepart disc", cx: e.disc[0], cy: e.disc[1], r: 9 }));
+      const n = mk("text", { class: "wirepart disc-n", x: e.disc[0], y: e.disc[1] + 3.5, "text-anchor": "middle" });
+      n.textContent = e.n;
+      parts.push(n);
+    }
+    layerWires.append(...parts);
+    wireParts[e.id] = parts;
+  }
+
+  function addUnit(u) {
+    const g = mk("g", {
+      class: "unit", id: "u-" + u.id, role: "button", tabindex: "0",
+      "aria-label": u.title + ", " + u.sub + ". " + u.what
+    });
+    if (u.kind === "outside") {
+      g.append(mk("rect", { class: "box", x: u.x, y: u.y, width: u.w, height: u.h }));
+      g.append(glyph(u.glyph, u.x + 12, u.y + 18));
+      const t = mk("text", { class: "box-title", x: u.x + 44, y: u.y + 30 });
+      t.textContent = u.title;
+      const s = mk("text", { class: "box-sub", x: u.x + 44, y: u.y + 46 });
+      s.textContent = u.sub;
+      g.append(t, s);
+    } else {
+      g.append(mk("rect", { class: "card", x: u.x, y: u.y, width: u.w, height: u.h, style: `--edge:${TONES[u.tone].edge}` }));
+      const ic = u.icon && icon(u.icon, u.x + 11, u.y + (u.h - 20) / 2, 20);
+      if (ic) g.append(ic);
+      const tx = u.icon ? u.x + 40 : u.x + 13;
+      const two = u.h >= 50;
+      const t = mk("text", { class: "card-title", x: tx, y: u.y + (two ? 22 : 18) });
+      t.textContent = u.title;
+      const s = mk("text", { class: "card-sub", x: tx, y: u.y + (two ? 38 : 32) });
+      s.textContent = u.sub;
+      g.append(t, s);
+    }
+    g.addEventListener("mouseenter", () => showTip(u.id));
+    g.addEventListener("focus", () => showTip(u.id));
+    g.addEventListener("mouseleave", hideTip);
+    g.addEventListener("blur", hideTip);
+    g.addEventListener("click", (ev) => { ev.stopPropagation(); showTip(u.id); });
+    g.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); showTip(u.id); }
+    });
+    layerUnits.append(g);
+    unitG[u.id] = g;
+    ALL.push(u);
+  }
+
+  for (const o of OUTSIDE) { addUnit({ ...o, kind: "outside" }); }
+  for (const c of CARDS) {
+    const grp = GROUPS.find((g) => g.id === c.group);
+    addUnit({ ...c, kind: "card", tone: grp.tone, groupTitle: grp.title });
+  }
+  byId = Object.fromEntries(ALL.map((u) => [u.id, u]));
+  for (const u of ALL) {
+    const option = document.createElement("option");
+    option.value = u.id; option.textContent = u.title;
+    componentPicker.append(option);
+  }
+
+  dotBtn = SLIDES.map((s, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "dot";
+    b.textContent = s.n || "◆";
+    b.setAttribute("aria-label", "Step " + (i + 1) + ": " + s.title);
+    b.style.setProperty("--dot", TONES[s.tone || "blue"].paper);
+    b.addEventListener("click", () => go(i));
+    dotsWrap.append(b);
+    return b;
+  });
+
+  [...topoTabsWrap.children].forEach((btn, idx) => {
+    btn.setAttribute("aria-selected", String(TOPOLOGIES[idx].id === topo.id));
+  });
+
+  go(0);
+}
+
+TOPOLOGIES.forEach((topo) => {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "topo-tab";
+  btn.setAttribute("role", "tab");
+  btn.textContent = topo.tab;
+  btn.addEventListener("click", () => renderTopology(topo));
+  topoTabsWrap.append(btn);
+});
+
+document.getElementById("prev").addEventListener("click", () => go(at - 1));
+document.getElementById("next").addEventListener("click", () => go(at + 1));
+
+addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") { hideTip(); notes.hidden = true; notesToggle.setAttribute("aria-expanded", "false"); return; }
+  if (ev.target.closest('button, input, textarea, select, [contenteditable="true"]')) return;
+  if (ev.key === "ArrowRight" || ev.key === "PageDown" || ev.key === " ") { ev.preventDefault(); go(at + 1); }
+  else if (ev.key === "ArrowLeft" || ev.key === "PageUp") { ev.preventDefault(); go(at - 1); }
+  else if (ev.key === "Home") go(0);
+  else if (ev.key === "End") go(currentTopo.SLIDES.length - 1);
+});
+
+let downX = null;
+stagewrap.addEventListener("pointerdown", (ev) => { downX = ev.clientX; });
+stagewrap.addEventListener("pointerup", (ev) => {
+  if (downX === null) return;
+  const dx = ev.clientX - downX;
+  downX = null;
+  if (Math.abs(dx) > 55) go(at + (dx < 0 ? 1 : -1));
+});
+
+addEventListener("resize", () => frameStage(currentTopo.SLIDES[at]));
+renderTopology(TOPOLOGIES[0]);
+</script>
+</body>
+</html>
