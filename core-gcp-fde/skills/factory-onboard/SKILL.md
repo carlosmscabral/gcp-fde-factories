@@ -25,7 +25,7 @@ description: Day-0 brownfield and greenfield onboarding skill (ADR-008, ADR-015,
   3. **Stack, Toolchain, and Container:** Confirm canonical `build`/`lint`/`test`/`e2e` commands, `absorbed_conventions`, and missing or unsupported binaries for `.factory/Dockerfile.customer` (+ `-tester` for Playwright/JDK).
   4. **Deploy Target and Cloud Boundary:** Confirm `mode` (`sandbox-direct` vs. `ci-only`). For `packs/generic`, always confirm `deploy_target` (`cloud-run`, `gke`, `custom`, or `none` for libraries/CLIs).
   5. **SEP Team, Capacity, and Models:** Confirm Vertex AI `diversity_profile` (`cross-vendor` requires manual Claude Model Garden opt-in on `inference_project_id`. Otherwise use `cross-model` 1P Gemini tiers), curate `roster.enabled_roles` and `roster.disabled_roles` with explicit reasons from `proposed_roles`, and set `reviewer_replicas: 2` when `max_wip >= 4`.
-  6. **Evaluation Pyramid, Wave-1, and Kaizen:** Confirm `evaluation_pyramid` (`l1_offline` plus `l2_sandbox` when `deploy_target != none`), explicit `not_verifiable_in_sandbox` blind spots, initial `waves` (`W1-01`..`W1-05` linked to `REQ-NNN` with SEP size `small`/`chunky`/`large`), and Kaizen cron (`America/Sao_Paulo`).
+  6. **Evaluation Pyramid, Wave-1, and Kaizen:** Confirm `evaluation_pyramid` (`l1_offline` plus `l2_sandbox` when `deploy_target != none`), explicit `not_verifiable_in_sandbox` blind spots, initial `waves` (`W1-01`..`W1-05` linked to `REQ-NNN` with SEP size `small`/`chunky`/`large`), External Delta Watcher `intake` opt-in (`factory:ready`, provider, `max_concurrent_issues` 1–3), and Kaizen cron (`America/Sao_Paulo`).
 - source: https://github.com/scion-frontiers/agent-team
 
 ## 3. Validate, Emit Zero-Clobber Knowledge Plane, and Check Contracts

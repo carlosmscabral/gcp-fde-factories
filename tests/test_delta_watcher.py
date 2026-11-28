@@ -485,3 +485,38 @@ def test_delta_watcher_module_budgets_terraform_isolation_and_coordinator_deltas
         delta = (REPO_ROOT / f"packs/{pack}/templates/coordinator/delta.md").read_text(encoding="utf-8")
         assert "[External Delta Watcher]" in delta
         assert "<!-- scion-factory -->" in delta
+
+
+def test_grill_me_includes_external_delta_watcher_and_emits_intake_overlay(tmp_path: pathlib.Path) -> None:
+    """Confirms /grill-me asks about External Delta Watcher, prefills provider, and emits intake into hub-project.yaml."""
+    from scripts.lib.onboard_emitter import emit_layer3_overlay
+    from scripts.lib.onboard_questions import build_draft_profile
+    from scripts.lib.onboard_scanner import scan_repository_facts
+
+    repo = tmp_path / "sample-adk-repo"
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    (repo / ".github" / "workflows" / "ci.yml").write_text("name: CI\n", encoding="utf-8")
+    (repo / "pyproject.toml").write_text('[project]\nname = "demo"\ndependencies = ["google-adk"]\n', encoding="utf-8")
+
+    facts = scan_repository_facts(repo, pack="adk", track="express")
+    q_ids = [q["id"] for q in facts["grill_questions"]]
+    assert "external_delta_watcher" in q_ids
+    dw_q = next(q for q in facts["grill_questions"] if q["id"] == "external_delta_watcher")
+    assert dw_q["prefilled_from_scan"]["enabled"] is False
+    assert dw_q["prefilled_from_scan"]["provider"] == "github"
+
+    draft = build_draft_profile(facts, pack="adk", track="express")
+    draft["commands"]["lint"] = "ruff check ."
+    draft["intake"]["enabled"] = True
+    draft["intake"]["max_concurrent_issues"] = 2
+
+    pack_img = "us-central1-docker.pkg.dev/demo-hub/factory-images/adk-runtime@sha256:" + ("a" * 64)
+    emit_layer3_overlay(repo, draft, pack_img, REPO_ROOT / "schemas/factory-profile.schema.json")
+    emitted_hub = yaml.safe_load((repo / ".factory/hub-project.yaml").read_text(encoding="utf-8"))
+    assert emitted_hub["intake"]["enabled"] is True
+    assert emitted_hub["intake"]["provider"] == "github"
+    assert emitted_hub["intake"]["release_label"] == "factory:ready"
+
+    parsed = _load_parse_hub_project().parse_hub_project(repo, expected_pack="adk")
+    assert parsed["intake"]["enabled"] is True
+    assert parsed["intake"]["max_concurrent_issues"] == 2

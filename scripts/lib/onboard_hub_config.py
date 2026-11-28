@@ -110,6 +110,21 @@ def build_hub_project_overlay(
             "max_wip": int(roster_cfg.get("max_wip") or 3),
             "reviewer_replicas": int(roster_cfg.get("reviewer_replicas") or 1),
         }
+    intake_cfg = profile.get("intake") if isinstance(profile.get("intake"), dict) else (
+        existing_hub.get("intake") if isinstance(existing_hub.get("intake"), dict) else None
+    )
+    if intake_cfg:
+        hub_project["intake"] = {
+            "enabled": bool(intake_cfg.get("enabled", False)),
+            "provider": str(intake_cfg.get("provider") or "github"),
+            "max_concurrent_issues": int(intake_cfg.get("max_concurrent_issues") if intake_cfg.get("max_concurrent_issues") is not None else 2),
+            "scope_label": str(intake_cfg.get("scope_label") or ""),
+            "release_label": str(intake_cfg.get("release_label") or "factory:ready"),
+            "hold_label": str(intake_cfg.get("hold_label") or "factory:hold"),
+            "cadence_cron": str(intake_cfg.get("cadence_cron") or "*/5 * * * *"),
+            "time_zone": str(intake_cfg.get("time_zone") or "America/Sao_Paulo"),
+            "paused": bool(intake_cfg.get("paused", False)),
+        }
 
     if hub_schema_path.is_file():
         hub_errs = validate_against_schema(hub_project, hub_schema_path)

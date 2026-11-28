@@ -47,6 +47,27 @@ def _sanitize_slug(raw_name: str) -> str:
     return cleaned[:33].rstrip("-") or "app-factory"
 
 
+def _default_intake_from_scan(scan_facts: dict[str, Any]) -> dict[str, Any]:
+    """Derives an opt-in External Delta Watcher default from detected repository CI/tracker signals."""
+    ci_platform = str((scan_facts.get("git_flow") or {}).get("ci_platform") or "github-actions")
+    provider_map = {
+        "github-actions": "github",
+        "azure-devops": "azure_devops",
+        "gitlab-ci": "gitlab",
+    }
+    return {
+        "enabled": False,
+        "provider": provider_map.get(ci_platform, "github"),
+        "max_concurrent_issues": 2,
+        "scope_label": "",
+        "release_label": "factory:ready",
+        "hold_label": "factory:hold",
+        "cadence_cron": "*/5 * * * *",
+        "time_zone": "America/Sao_Paulo",
+        "paused": False,
+    }
+
+
 def _prefill_for_field(field_path: str, scan_facts: dict[str, Any], pack: str, roster: dict[str, Any]) -> Any:
     """Extracts pre-filled static scan evidence so /grill-me never re-asks discovered facts."""
     mapping: dict[str, Any] = {
@@ -64,6 +85,7 @@ def _prefill_for_field(field_path: str, scan_facts: dict[str, Any], pack: str, r
         },
         "deploy_target": scan_facts.get("suggested_deploy_target"),
         "roster": roster,
+        "intake": _default_intake_from_scan(scan_facts),
     }
     return mapping.get(field_path)
 
@@ -179,6 +201,7 @@ def build_draft_profile(
         "kaizen_enabled": True,
         "kaizen_schedule_cron": "0 0 * * *",
         "kaizen_time_zone": "America/Sao_Paulo",
+        "intake": _default_intake_from_scan(scan_facts),
     }
     if monorepo_info.get("detected"):
         draft["monorepo"] = {

@@ -185,6 +185,16 @@ questions:
     why_we_ask: "Gives the lead Coordinator a concrete, PO-approved starting queue in .factory/waves/wave-1.yaml upon startup."
     challenge_prompt: "Start Wave-1 with at least one small end-to-end vertical slice so the factory validates its full PR and review loop early."
 
+  - id: external_delta_watcher
+    pillar: "6. Evaluation Pyramid, Wave-1, and Kaizen"
+    field_path: intake
+    applies_to_packs: ["all"]
+    applies_to_tracks: ["express", "complete"]
+    required_for_generic_express: true
+    prompt: "Enable the External Delta Watcher (Cloud Run + Cloud Scheduler) to poll repository issues/PRs and auto-wake the Coordinator on factory:ready items? Confirm enabled (true/false), provider (github, azure_devops, gitlab, jira), max_concurrent_issues (1-3, default 2), and optional scope_label."
+    why_we_ask: "Automates zero-token backlog intake from GitHub Issues or enterprise trackers without exposing inbound webhooks or burning idle LLM turns."
+    challenge_prompt: "Confirm whether the PO wants opt-in issue-driven intake (factory:ready) or manual Scion Web Chat triggers only, and keep max_concurrent_issues between 1 and 3."
+
   - id: kaizen_schedule
     pillar: "6. Evaluation Pyramid, Wave-1, and Kaizen"
     field_path: kaizen_schedule_cron
