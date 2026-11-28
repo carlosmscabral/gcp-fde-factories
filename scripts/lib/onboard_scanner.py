@@ -1,8 +1,9 @@
-"""Zero-token static repository scanner, role proposer, and Day-2 drift detector (v0.6.0).
+"""Zero-token static repository scanner, role proposer, and Day-2 drift detector (Wave 2).
 
-Orchestrates manifest parsers (onboard_parsers) and extended stack/monorepo detectors
-(onboard_stack_detectors) to produce discovery facts, pack recommendations, evidence-based
-SEP role proposals, and dynamic 6-pillar /grill-me questions.
+Combines universal <2s Tier-A structural discovery (onboard_tier_a) with manifest parsers
+(onboard_parsers) and extended stack detectors (onboard_stack_detectors) to produce facts,
+pack recommendations, lean/full role proposals, and the 2-block /grill-me interview bank
+without importing jsonschema during scan.
 """
 from __future__ import annotations
 
@@ -21,14 +22,7 @@ from scripts.lib.onboard_parsers import (
 from scripts.lib.onboard_questions import select_grill_questions
 from scripts.lib.onboard_roles import propose_roles, recommend_pack
 from scripts.lib.onboard_stack_detectors import detect_extended_signals
-
-AI_FILE_CANDIDATES = (
-    "AGENTS.md",
-    "CLAUDE.md",
-    "GEMINI.md",
-    ".cursorrules",
-    ".github/copilot-instructions.md",
-)
+from scripts.lib.onboard_tier_a import scan_tier_a_signals
 
 HEAVY_TEST_BINARIES = {"playwright", "playwright-node"}
 SUPPORTED_RECIPE_BINARIES = frozenset(INSTALL_RECIPES.keys())
@@ -59,31 +53,76 @@ def scan_repository_facts(
     toolchain_manifest_path: pathlib.Path | None = None,
     pack: str | None = None,
     track: str = "complete",
+    roster_preset: str = "lean",
 ) -> dict[str, Any]:
-    """Scans repo_dir statically and computes toolchain delta, pack advice, roles, and /grill-me bank."""
+    """Scans repo_dir statically (<2s, zero jsonschema) and computes Tier-A facts, roles, and /grill-me bank."""
     repo = repo_dir.resolve()
+    tier_a = scan_tier_a_signals(repo)
     binaries, commands, stacks, versions = detect_binaries_and_commands(repo)
     ext = detect_extended_signals(repo)
 
     merged_binaries = sorted(set(binaries) | set(ext["extra_binaries"]))
     merged_stacks = sorted(set(stacks) | set(ext["extra_stacks"]))
+    merged_versions = {**versions, **tier_a["version_pins"]}
     merged_commands = dict(commands)
     for key, val in ext["extra_commands"].items():
         if not merged_commands.get(key) or "configure lint command" in str(merged_commands.get(key)):
             merged_commands[key] = val
-    if not merged_commands.get("test") and ("python" in merged_stacks or (not merged_stacks and (pack in ("adk", "gecx") or (toolchain_manifest_path and toolchain_manifest_path.parent.name in ("adk", "gecx"))))):
+    if not merged_commands.get("test") and (
+        "python" in merged_stacks
+        or (
+            not merged_stacks
+            and (
+                pack in ("adk", "gecx")
+                or (toolchain_manifest_path and toolchain_manifest_path.parent.name in ("adk", "gecx"))
+            )
+        )
+    ):
         merged_commands["test"] = "pytest -q"
 
     git_ci = detect_git_and_ci(repo)
+    if (repo / "Jenkinsfile").is_file() and git_ci.get("ci_platform") == "none":
+        git_ci["ci_platform"] = "jenkins"
+        git_ci["workflows"] = sorted(set(git_ci.get("workflows") or []) | {"Jenkinsfile"})
+
     knowledge = detect_knowledge_sources(repo)
     untrusted_hooks, ai_divergence, advisory_findings = detect_hooks_and_ai_divergence(repo)
     gaps = detect_modernization_gaps(repo, git_ci, untrusted_hooks=untrusted_hooks, ai_divergence=ai_divergence)
 
-    ai_files = [rel for rel in AI_FILE_CANDIDATES if (repo / rel).is_file()]
-    if (repo / ".claude" / "skills").is_dir():
-        ai_files.append(".claude/skills/")
+    if tier_a["skill_collisions"]:
+        advisory_findings.append({
+            "code": "SKILL_NAME_COLLISION",
+            "severity": "high",
+            "blocking": False,
+            "paths": tier_a["skill_collisions"],
+            "message": f"Local skill directory collides with pack skill name: {', '.join(tier_a['skill_collisions'])}.",
+        })
+    for warn in tier_a["tier_c_warnings"]:
+        advisory_findings.append({
+            "code": warn["code"],
+            "severity": "medium",
+            "blocking": False,
+            "message": warn["message"],
+        })
+    if tier_a["git_support_tier"] == "best_effort":
+        advisory_findings.append({
+            "code": "NON_GITHUB_BEST_EFFORT",
+            "severity": "low",
+            "blocking": False,
+            "message": (
+                f"Detected non-GitHub remote host '{tier_a['remote_host']}'. "
+                "Scion clones HTTPS via project GITHUB_TOKEN secret; PR automation and Delta Watcher run in best-effort mode."
+            ),
+        })
 
-    # Compute pack recommendation before toolchain delta so packless scans resolve baked binaries (HC-09 F2).
+    # Merge extended monorepo layouts (5 canonical layouts from Tier-A) with legacy ext monorepo object.
+    monorepo = {
+        "detected": bool(tier_a["monorepo"]["detected"] or ext["monorepo"]["detected"]),
+        "tool": tier_a["monorepo"]["tool"] or ext["monorepo"]["tool"],
+        "layouts": tier_a["monorepo"]["layouts"],
+        "candidates": sorted(set(tier_a["monorepo"]["candidates"]) | set(ext["monorepo"]["candidates"]))[:25],
+    }
+
     pack_rec = recommend_pack({"stacks": merged_stacks})
     chosen_pack = pack or pack_rec["pack"]
     effective_manifest = _resolve_pack_manifest(toolchain_manifest_path, chosen_pack)
@@ -105,49 +144,62 @@ def scan_repository_facts(
         gap_id = "GAP-TOOLCHAIN-" + "".join(ch if ch.isalnum() else "-" for ch in binary.upper()).strip("-")
         gaps.append({
             "id": gap_id[:40],
-            "title": f"Add manual Dockerfile recipe for unsupported binary '{binary}'",
+            "title": f"Add .factory/Dockerfile.customer recipe for '{binary}'",
             "severity": "medium",
             "effort": "M",
             "status": "open",
-            "benefit": f"Provides pinned container support for '{binary}' outside the standard recipe allowlist.",
+            "benefit": f"Provides pinned container support for '{binary}' verified by Stage 03.",
         })
 
     facts: dict[str, Any] = {
         "repo_path": str(repo),
         "stacks": merged_stacks,
-        "runtime_versions": versions,
+        "runtime_versions": merged_versions,
         "detected_binaries": merged_binaries,
         "missing_binaries": core_missing,
         "heavy_test_binaries": heavy_missing,
         "unsupported_binaries": unsupported_missing,
         "commands": merged_commands,
         "frontend_frameworks": ext["frontend_frameworks"],
-        "monorepo": ext["monorepo"],
+        "monorepo": monorepo,
         "deploy_signals": ext["deploy_signals"],
         "suggested_deploy_target": ext["suggested_deploy_target"],
-        "ai_files_detected": ai_files,
+        "ai_files_detected": tier_a["ai_files"],
+        "skill_collisions": tier_a["skill_collisions"],
         "untrusted_hooks_detected": untrusted_hooks,
         "ai_file_divergence": ai_divergence,
         "advisory_findings": advisory_findings,
         "git_flow": git_ci,
+        "git_support_tier": tier_a["git_support_tier"],
+        "tier_a": tier_a,
         "knowledge_sources": knowledge,
         "modernization_gaps": gaps,
     }
 
     facts["recommended_pack"] = pack_rec
     facts["selected_pack"] = chosen_pack
-    facts["proposed_roles"] = propose_roles(facts, pack=chosen_pack, track=track)
-    facts["grill_questions"] = select_grill_questions(pack=chosen_pack, track=track, scan_facts=facts)
+    facts["proposed_roles"] = propose_roles(facts, pack=chosen_pack, track=track, roster_preset=roster_preset)
+    facts["grill_questions"] = select_grill_questions(
+        pack=chosen_pack,
+        track=track,
+        scan_facts=facts,
+        roster_preset=roster_preset,
+    )
     return facts
 
 
 def detect_repo_drift(
     repo_dir: pathlib.Path,
     toolchain_manifest_path: pathlib.Path | None = None,
+    config_path: pathlib.Path | None = None,
 ) -> dict[str, Any]:
-    """Compares current repo scan against .factory/factory-profile.yaml for Day-2 Kaizen drift."""
+    """Compares current repo scan against .factory/factory.yaml (or legacy factory-profile.yaml) for Day-2 drift."""
     scan = scan_repository_facts(repo_dir, toolchain_manifest_path)
-    profile_path = repo_dir / ".factory" / "factory-profile.yaml"
+    profile_path = config_path or (
+        repo_dir / ".factory" / "factory.yaml"
+        if (repo_dir / ".factory" / "factory.yaml").is_file()
+        else repo_dir / ".factory" / "factory-profile.yaml"
+    )
     notes: list[str] = []
     all_missing_vs_pack = set(scan["missing_binaries"]) | set(scan["heavy_test_binaries"])
 
@@ -156,12 +208,12 @@ def detect_repo_drift(
         return {
             "drift_detected": bool(missing_list),
             "missing_binaries": missing_list,
-            "notes": [_truncate_note("No .factory/factory-profile.yaml found. Run factory-onboard for baseline.")],
+            "notes": [_truncate_note("No .factory/factory.yaml found. Run factory-onboard for baseline.")],
         }
 
     prof = load_yaml(profile_path)
     if not isinstance(prof, dict):
-        raise ValueError(".factory/factory-profile.yaml must contain a YAML mapping.")
+        raise ValueError(f"{profile_path} must contain a YAML mapping.")
 
     prev_bins = set(prof.get("detected_binaries") or [])
     curr_bins = set(scan["detected_binaries"])
@@ -172,7 +224,6 @@ def detect_repo_drift(
     if removed_bins:
         notes.append(_truncate_note(f"Repository binaries removed since onboarding: {', '.join(removed_bins)}."))
 
-    # Exclude binaries already covered by the emitted Layer 3 customer Dockerfiles.
     covered_by_profile = set(prof.get("missing_binaries") or []) | set(prof.get("heavy_test_binaries") or [])
     unsatisfied = sorted(all_missing_vs_pack - covered_by_profile) if toolchain_manifest_path else []
 

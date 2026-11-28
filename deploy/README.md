@@ -2,7 +2,7 @@
 
 All infrastructure deploys directly inside the customer's Google Cloud organization with **zero static JSON keys**, **additive-only IAM bindings**, **explicit non-wildcard Sandbox Custom Roles**, and **fail-closed Hub settings**.
 
-> **Enterprise Customer Checklist:** Review [ENTERPRISE_PREREQUISITES.md](ENTERPRISE_PREREQUISITES.md) with customer SecOps, Network, GKE, and Billing/Gemini Enterprise admins before Day-1 deployment, and open [docs/gcp-factory-architectures.html](../docs/gcp-factory-architectures.html) for the interactive GCP component-by-component walkthrough across all 3 setup topologies.
+> **Enterprise Customer Checklist:** Review [ENTERPRISE_PREREQUISITES.md](ENTERPRISE_PREREQUISITES.md) with customer SecOps, Network, GKE, and Billing/Gemini Enterprise admins before Day-1 deployment, read [docs/PLATFORM_HUB_SETUP.md](../docs/PLATFORM_HUB_SETUP.md) for the explicit **1 Hub → N Factories** separation (Phase A Platform 1× vs. Phase B Per-Factory `/grill-me` N×), and open [docs/gcp-factory-architectures.html](../docs/gcp-factory-architectures.html) for the interactive GCP component-by-component walkthrough across all 3 setup topologies.
 
 ---
 

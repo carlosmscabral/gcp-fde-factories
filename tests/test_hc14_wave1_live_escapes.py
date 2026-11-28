@@ -37,7 +37,7 @@ def _load_generic_gate():
 def test_hc14_f1_stage03_switches_cwd_to_target_repo_and_keeps_backups_out_of_repo() -> None:
     """Locks HC14-F1: bootstrap-hub-project.sh enters TARGET_REPO and avoids polluting customer repos with .backups."""
     text = (REPO_ROOT / "deploy" / "03-hub-bootstrap" / "bootstrap-hub-project.sh").read_text(encoding="utf-8")
-    assert 'TARGET_REPO="$(cd "$TARGET_REPO" && pwd)"' in text
+    assert 'TARGET_REPO="$(cd "$TARGET_REPO" && pwd -P)"' in text
     assert 'cd "$TARGET_REPO"' in text
     assert 'dir="${BACKUP_DIR:-${TMPDIR:-/tmp}/scion-hub-backups/$ts}"' in text
     assert "$(pwd)/.backups" not in text

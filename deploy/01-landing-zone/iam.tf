@@ -337,6 +337,38 @@ resource "google_artifact_registry_repository_iam_member" "deployer_sandbox_ar_r
   member     = "serviceAccount:${google_service_account.sandbox_deployer[0].email}"
 }
 
+# Read-only cross-project AR bindings so sandbox_builder pulls pack base images from Hub AR
+# (with zero write access on Hub AR) and Hub/GKE brokers pull built customer images from Sandbox AR (Wave 2 C1).
+resource "google_artifact_registry_repository_iam_member" "sandbox_builder_hub_ar_reader" {
+  count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? 1 : 0
+
+  project    = var.hub_project_id
+  location   = var.region
+  repository = google_artifact_registry_repository.scion_images.repository_id
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:${google_service_account.sandbox_builder[0].email}"
+}
+
+resource "google_artifact_registry_repository_iam_member" "hub_sa_sandbox_ar_reader" {
+  count = var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? 1 : 0
+
+  project    = var.sandbox_project_id
+  location   = var.region
+  repository = google_artifact_registry_repository.sandbox_images[0].repository_id
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:${google_service_account.scion_hub.email}"
+}
+
+resource "google_artifact_registry_repository_iam_member" "gke_node_sandbox_ar_reader" {
+  count = var.enable_gke_api && var.enable_sandbox_project && (var.enable_adk_sandbox_roles || var.enable_generic_sandbox_roles) ? 1 : 0
+
+  project    = var.sandbox_project_id
+  location   = var.region
+  repository = google_artifact_registry_repository.sandbox_images[0].repository_id
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:${google_service_account.gke_node[0].email}"
+}
+
 resource "google_project_iam_member" "builder_logging" {
   project = var.hub_project_id
   role    = "roles/logging.logWriter"

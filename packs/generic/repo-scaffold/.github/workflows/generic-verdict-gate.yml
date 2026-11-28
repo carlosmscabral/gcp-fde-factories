@@ -37,7 +37,7 @@ jobs:
           PR_LABELS: "${{ join(github.event.pull_request.labels.*.name, ',') }}"
         run: |
           CHANGED="$(git diff --no-renames --name-only "$BASE_SHA" "$PR_HEAD_SHA")"
-          if grep -Eq '(^|.*/)(evals/|\.factory/(factory-profile|hub-project|factory)\.yaml$|\.factory/Dockerfile\.customer|\.github/workflows/)' <<< "$CHANGED"; then
+          if grep -Eq '(^|.*/)(evals/|\.factory/(.+/)?(factory-profile|hub-project|factory)\.yaml$|\.factory/(.+/)?Dockerfile\.customer|\.github/workflows/)' <<< "$CHANGED"; then
             if ! tr ',' '\n' <<< "$PR_LABELS" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -qx 'eval-change-approved'; then
               echo "::error::PR modifies evals/, .factory/ verification profile, customer Dockerfile, or workflows without human label 'eval-change-approved'."
               exit 1
@@ -65,7 +65,9 @@ jobs:
         env:
           PULL_TOKEN: "${{ steps.auth-pull.outputs.access_token }}"
           BASE_SHA: "${{ github.event.pull_request.base.sha }}"
+          PR_HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
           PR_LABELS: "${{ join(github.event.pull_request.labels.*.name, ',') }}"
+          FACTORY_CONFIG: "${{ vars.GENERIC_FACTORY_CONFIG }}"
         run: |
           if [[ -n "$PULL_TOKEN" ]]; then
             REG="${GENERIC_RUNTIME_IMAGE%%/*}"
@@ -73,15 +75,36 @@ jobs:
             docker pull "$GENERIC_RUNTIME_IMAGE" >/dev/null
             docker logout "https://${REG}" >/dev/null || true
           fi
+          # Resolve v2 .factory/[<prefix>/]factory.yaml or legacy .factory/factory-profile.yaml on BASE_SHA (C2).
+          CFG_PATH="$FACTORY_CONFIG"
+          if [[ -z "$CFG_PATH" ]]; then
+            for cand in ".factory/factory.yaml" ".factory/factory-profile.yaml"; do
+              if git cat-file -e "${BASE_SHA}:${cand}" 2>/dev/null; then
+                CFG_PATH="$cand"
+                break
+              fi
+            done
+          fi
           BASE_REF_ARGS=(--base-ref "$BASE_SHA")
-          # Allow initial onboarding PR when base branch lacks .factory/factory-profile.yaml and human approved via label.
-          if ! git cat-file -e "${BASE_SHA}:.factory/factory-profile.yaml" 2>/dev/null; then
+          if [[ -z "$CFG_PATH" ]] || ! git cat-file -e "${BASE_SHA}:${CFG_PATH}" 2>/dev/null; then
             if tr ',' '\n' <<< "$PR_LABELS" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -qx 'eval-change-approved'; then
               BASE_REF_ARGS=()
+              if [[ -z "$CFG_PATH" ]]; then
+                for cand in ".factory/factory.yaml" ".factory/factory-profile.yaml"; do
+                  if git cat-file -e "${PR_HEAD_SHA}:${cand}" 2>/dev/null; then
+                    CFG_PATH="$cand"
+                    break
+                  fi
+                done
+              fi
             else
-              echo "::error::Base branch lacks .factory/factory-profile.yaml. Add label 'eval-change-approved' for initial onboarding PR."
+              echo "::error::Base branch lacks ${CFG_PATH:-.factory/factory.yaml}. Add label 'eval-change-approved' for initial onboarding PR."
               exit 1
             fi
+          fi
+          CFG_ARGS=()
+          if [[ -n "$CFG_PATH" ]]; then
+            CFG_ARGS=(--config "$CFG_PATH")
           fi
           docker run --rm --network none --entrypoint "" --user "$(id -u):$(id -g)" \
             -v "$PWD:/workspace" -w /workspace \
@@ -89,6 +112,7 @@ jobs:
             python3 /opt/generic-factory/generic_sandbox_gate.py \
               --repo /workspace \
               --level 1 \
+              "${CFG_ARGS[@]}" \
               "${BASE_REF_ARGS[@]}"
 
   verify-verdict:
@@ -118,14 +142,32 @@ jobs:
           BASE_SHA: "${{ github.event.pull_request.base.sha }}"
           PR_HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
           PR_LABELS: "${{ join(github.event.pull_request.labels.*.name, ',') }}"
+          FACTORY_CONFIG: "${{ vars.GENERIC_FACTORY_CONFIG }}"
         run: |
           CHANGED="$(git diff --no-renames --name-only "$BASE_SHA" "$PR_HEAD_SHA")"
           NON_DOCS="$(grep -Ev '^(README\.md|docs/.*|.*\.md|\.factory/.*)$' <<< "$CHANGED" || true)"
           PROFILE_REF="$BASE_SHA"
-          if ! git cat-file -e "${BASE_SHA}:.factory/factory-profile.yaml" 2>/dev/null; then
-            PROFILE_REF="$PR_HEAD_SHA"
+          CFG_PATH="$FACTORY_CONFIG"
+          if [[ -z "$CFG_PATH" ]]; then
+            for cand in ".factory/factory.yaml" ".factory/factory-profile.yaml"; do
+              if git cat-file -e "${BASE_SHA}:${cand}" 2>/dev/null; then
+                CFG_PATH="$cand"
+                break
+              fi
+            done
           fi
-          DEPLOY_TARGET="$(git show "${PROFILE_REF}:.factory/factory-profile.yaml" 2>/dev/null | awk -F: '/^deploy_target:/{gsub(/[[:space:]"'"'"']/, "", $2); print $2; exit}' || true)"
+          if [[ -z "$CFG_PATH" ]] || ! git cat-file -e "${BASE_SHA}:${CFG_PATH}" 2>/dev/null; then
+            PROFILE_REF="$PR_HEAD_SHA"
+            if [[ -z "$CFG_PATH" ]]; then
+              for cand in ".factory/factory.yaml" ".factory/factory-profile.yaml"; do
+                if git cat-file -e "${PR_HEAD_SHA}:${cand}" 2>/dev/null; then
+                  CFG_PATH="$cand"
+                  break
+                fi
+              done
+            fi
+          fi
+          DEPLOY_TARGET="$(git show "${PROFILE_REF}:${CFG_PATH:-.factory/factory.yaml}" 2>/dev/null | python3 -c 'import sys, yaml; d = yaml.safe_load(sys.stdin.read()) or {}; print(str(d.get("deploy_target") or "none").strip())' 2>/dev/null || echo "none")"
           DEPLOY_TARGET="${DEPLOY_TARGET:-none}"
           if [[ -n "$NON_DOCS" && "$DEPLOY_TARGET" != "none" ]]; then
             echo "REQUIRE_LIVE=true" >> "$GITHUB_ENV"

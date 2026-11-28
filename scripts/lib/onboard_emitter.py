@@ -15,6 +15,14 @@ import yaml
 
 from scripts.lib.dockerfile_recipes import render_conditional_dockerfile
 from scripts.lib.io_utils import assert_no_symlink_escape, atomic_write_bytes
+from scripts.lib.onboard_factory_v2 import (
+    build_unified_factory_yaml,
+    check_v2_readiness,
+    plan_optional_v2_knowledge_files,
+    render_surgical_agents_block,
+    resolve_conventions_skill_dir,
+    resolve_factory_dir_rel,
+)
 from scripts.lib.onboard_git_ops import compute_unified_diffs
 from scripts.lib.onboard_hub_config import build_hub_project_overlay, merge_modernization_backlog
 from scripts.lib.onboard_kp import plan_knowledge_plane
@@ -72,26 +80,48 @@ def check_readiness(profile: dict[str, Any], schema_path: pathlib.Path) -> dict[
     return {"ready": len(issues) == 0, "missing_or_weak": issues, "warnings": warnings}
 
 
-def compute_merged_agents_md(existing: str | None, block_body: str) -> str:
-    """Computes an idempotent, CRLF-preserving delimited merge without corrupting customer prose."""
+def _find_unquoted_marker_spans(text: str, marker: str) -> list[tuple[int, int]]:
+    """Finds line-anchored marker byte spans while ignoring lines inside triple-backtick code fences (L3)."""
+    spans: list[tuple[int, int]] = []
+    in_fence = False
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+        elif not in_fence and stripped == marker:
+            spans.append((offset, offset + len(line.rstrip("\r\n"))))
+        offset += len(line)
+    return spans
+
+
+def compute_merged_agents_md(existing: str | None, block_body: str, scope_id: str = "") -> str:
+    """Computes an idempotent, CRLF-preserving delimited merge without corrupting customer prose or code fences.
+
+    Uses scoped markers (`<!-- gcp-fde-factory:<scope_id>:start -->`) when scope_id is provided so
+    multiple sibling factories inside one monorepo coexist cleanly in root AGENTS.md.
+    """
+    start_m = f"<!-- gcp-fde-factory:{scope_id}:start -->" if scope_id else START_MARKER
+    end_m = f"<!-- gcp-fde-factory:{scope_id}:end -->" if scope_id else END_MARKER
+
     eol = "\r\n" if (existing and "\r\n" in existing) else "\n"
     normalized_body = eol.join(block_body.strip().splitlines())
-    wrapped = f"{START_MARKER}{eol}{normalized_body}{eol}{END_MARKER}{eol}"
+    wrapped = f"{start_m}{eol}{normalized_body}{eol}{end_m}{eol}"
 
     if existing is None or not existing.strip():
         return wrapped
 
-    starts = list(START_LINE_RE.finditer(existing))
-    ends = list(END_LINE_RE.finditer(existing))
+    starts = _find_unquoted_marker_spans(existing, start_m)
+    ends = _find_unquoted_marker_spans(existing, end_m)
     if len(starts) != len(ends) or len(starts) > 1:
         raise ValueError(
             "AGENTS.md has malformed factory markers (orphan or duplicate markers). Repair markers manually before emit."
         )
     if len(starts) == 1:
-        if ends[0].start() < starts[0].end():
+        if ends[0][0] < starts[0][1]:
             raise ValueError("AGENTS.md has END marker before START marker. Repair markers manually before emit.")
-        before = existing[: starts[0].start()].rstrip("\r\n")
-        after = existing[ends[0].end() :].lstrip("\r\n")
+        before = existing[: starts[0][0]].rstrip("\r\n")
+        after = existing[ends[0][1] :].lstrip("\r\n")
         prefix = (before + eol + eol) if before else ""
         suffix = (eol + after) if after else ""
         return prefix + wrapped + suffix
@@ -160,12 +190,19 @@ def emit_layer3_overlay(
     dry_run: bool = False,
     acknowledge_hazards: bool = False,
 ) -> dict[str, Any]:
-    """Pre-validates security hazards, paths, and symlinks, then emits or previews Layer 3 files."""
+    """Pre-validates security hazards, paths, and symlinks, then emits or previews Layer 3 files.
+
+    When profile.schema_version == '2' (Wave 2 unified format), emits a single consolidated
+    .factory/[<prefix>/]factory.yaml, surgical <6 KB AGENTS.md block, and zero empty Day-0
+    Knowledge Plane placeholders. Legacy schema_version == '1' profiles retain v0.6.0 emission.
+    """
     repo = repo_dir.resolve()
     if not repo.is_dir():
         raise ValueError(f"Target repository directory does not exist: {repo}")
 
-    gate = check_readiness(profile, profile_schema_path)
+    is_v2 = str(profile.get("schema_version") or "1") == "2"
+    effective_schema = (profile_schema_path.parent / "factory.schema.json") if is_v2 else profile_schema_path
+    gate = check_v2_readiness(profile, effective_schema) if is_v2 else check_readiness(profile, effective_schema)
     if not gate["ready"]:
         raise ValueError("Readiness Gate failed: " + " | ".join(gate["missing_or_weak"]))
 
@@ -186,47 +223,100 @@ def emit_layer3_overlay(
         )
 
     slug = profile["slug"]
-    core_df_text = render_conditional_dockerfile(pack_image_ref, profile.get("missing_binaries") or [], tester_only=False)
-    core_df_rel = ".factory/Dockerfile.customer" if core_df_text else None
+    factory_dir_rel = resolve_factory_dir_rel(profile) if is_v2 else ".factory"
+    # In v2, only auto-generate recipe Dockerfiles for allowlisted binaries when no custom toolchain.dockerfile exists.
+    custom_df_declared = bool(is_v2 and (profile.get("toolchain") or {}).get("dockerfile"))
+    recipe_missing = [b for b in (profile.get("missing_binaries") or []) if not custom_df_declared]
+    recipe_heavy = [b for b in (profile.get("heavy_test_binaries") or []) if not custom_df_declared]
+    core_df_text = render_conditional_dockerfile(pack_image_ref, recipe_missing, tester_only=False) if recipe_missing else None
+    core_df_rel = f"{factory_dir_rel}/Dockerfile.customer" if core_df_text else None
     tester_base = f"{slug}-customer:local" if core_df_text else pack_image_ref
-    tester_df_text = render_conditional_dockerfile(
-        tester_base,
-        profile.get("heavy_test_binaries") or [],
-        tester_only=True,
-        allow_local_stage_ref=bool(core_df_text),
+    tester_df_text = (
+        render_conditional_dockerfile(tester_base, recipe_heavy, tester_only=True, allow_local_stage_ref=bool(core_df_text))
+        if recipe_heavy
+        else None
     )
-    tester_df_rel = ".factory/Dockerfile.customer-tester" if tester_df_text else None
+    tester_df_rel = f"{factory_dir_rel}/Dockerfile.customer-tester" if tester_df_text else None
 
     skill_text = _render_conventions_skill(profile)
     skill_ver = _content_semver(skill_text)
-    conv_dir_rel = f"skills/{slug}-repo-conventions"
+    conv_dir_rel = resolve_conventions_skill_dir(profile) if is_v2 else f"skills/{slug}-repo-conventions"
 
     # Phase 1: Validate all paths/symlinks and compute every payload BEFORE writing any file on disk.
-    hub_project, coordinator_name = build_hub_project_overlay(
-        repo,
-        profile,
-        conv_dir_rel=conv_dir_rel,
-        skill_ver=skill_ver,
-        core_df_rel=core_df_rel,
-        tester_df_rel=tester_df_rel,
-        hub_schema_path=profile_schema_path.parent / "hub-project.schema.json",
-    )
-    merged_gaps = merge_modernization_backlog(repo, profile)
-    kp_plan = plan_knowledge_plane(repo, profile, coordinator_name, force_knowledge=force_knowledge)
+    writes: list[tuple[pathlib.Path, bytes, str]] = []
+    unlinks: list[pathlib.Path] = []
+    preserved_custom_dockerfiles: list[str] = []
 
+    if is_v2:
+        unified_cfg, coordinator_name = build_unified_factory_yaml(
+            repo,
+            profile,
+            factory_dir_rel=factory_dir_rel,
+            conv_dir_rel=conv_dir_rel,
+            skill_ver=skill_ver,
+            core_df_rel=core_df_rel,
+            tester_df_rel=tester_df_rel,
+            factory_schema_path=effective_schema,
+        )
+        kp_plan = plan_optional_v2_knowledge_files(
+            repo,
+            unified_cfg,
+            factory_dir_rel,
+            coordinator_name,
+            force_knowledge=force_knowledge,
+        )
+        cfg_rel = f"{factory_dir_rel}/factory.yaml"
+        writes.append((assert_no_symlink_escape(repo, repo / cfg_rel), yaml.safe_dump(unified_cfg, sort_keys=False).encode("utf-8"), cfg_rel))
+        block = render_surgical_agents_block(unified_cfg, factory_dir_rel, conv_dir_rel)
+    else:
+        hub_project, coordinator_name = build_hub_project_overlay(
+            repo,
+            profile,
+            conv_dir_rel=conv_dir_rel,
+            skill_ver=skill_ver,
+            core_df_rel=core_df_rel,
+            tester_df_rel=tester_df_rel,
+            hub_schema_path=profile_schema_path.parent / "hub-project.schema.json",
+        )
+        merged_gaps = merge_modernization_backlog(repo, profile)
+        kp_plan = plan_knowledge_plane(repo, profile, coordinator_name, force_knowledge=force_knowledge)
+        yaml_files = (
+            (".factory/hub-project.yaml", hub_project),
+            (".factory/factory-profile.yaml", profile),
+            (
+                ".factory/knowledge-index.yaml",
+                {
+                    "schema_version": "1",
+                    "sources": profile.get("knowledge_sources", []),
+                    "knowledge_files": kp_plan["knowledge_files"],
+                    "requirements": profile.get("requirements", []),
+                    "invariants": profile.get("invariants", []),
+                },
+            ),
+            (".factory/modernization-backlog.yaml", {"schema_version": "1", "gaps": merged_gaps}),
+        )
+        for rel, payload in yaml_files:
+            path = assert_no_symlink_escape(repo, repo / rel)
+            writes.append((path, yaml.safe_dump(payload, sort_keys=False).encode("utf-8"), rel))
+        block = (
+            f"## Google Cloud FDE Factory Overlay (`{profile['pack']}@{profile['pack_version']}`)\n"
+            f"- Factory overlay config: `.factory/hub-project.yaml` and `.factory/factory-profile.yaml`\n"
+            f"- In-place knowledge index: `.factory/knowledge-index.yaml`\n"
+            f"- Initial Wave-1 backlog: `.factory/waves/wave-1.yaml`\n"
+            f"- Coordinator standby brief: `.factory/coordinator-bootstrap-brief.md`\n"
+            f"- Repository conventions skill: `{conv_dir_rel}/SKILL.md`\n"
+            f"- Modernization backlog: `.factory/modernization-backlog.yaml`"
+        )
+
+    agents_scope = (
+        str((profile.get("monorepo") or {}).get("agent_prefix") or "").strip()
+        if is_v2 and isinstance(profile.get("monorepo"), dict) and profile["monorepo"].get("enabled")
+        else ""
+    )
     agents_path = assert_no_symlink_escape(repo, repo / "AGENTS.md")
     existing_agents_raw = agents_path.read_bytes() if agents_path.exists() else None
     existing_agents_str = existing_agents_raw.decode("utf-8") if existing_agents_raw is not None else None
-    block = (
-        f"## Google Cloud FDE Factory Overlay (`{profile['pack']}@{profile['pack_version']}`)\n"
-        f"- Factory overlay config: `.factory/hub-project.yaml` and `.factory/factory-profile.yaml`\n"
-        f"- In-place knowledge index: `.factory/knowledge-index.yaml`\n"
-        f"- Initial Wave-1 backlog: `.factory/waves/wave-1.yaml`\n"
-        f"- Coordinator standby brief: `.factory/coordinator-bootstrap-brief.md`\n"
-        f"- Repository conventions skill: `{conv_dir_rel}/SKILL.md`\n"
-        f"- Modernization backlog: `.factory/modernization-backlog.yaml`"
-    )
-    merged_agents_bytes = compute_merged_agents_md(existing_agents_str, block).encode("utf-8")
+    merged_agents_bytes = compute_merged_agents_md(existing_agents_str, block, scope_id=agents_scope).encode("utf-8")
     mirror_siblings = (
         existing_agents_raw is not None
         and (repo / "CLAUDE.md").is_file()
@@ -240,11 +330,7 @@ def emit_layer3_overlay(
     gitignore_path = assert_no_symlink_escape(repo, repo / ".gitignore")
     updated_gi_bytes = _ensure_scion_gitignore_bytes(gitignore_path.read_bytes() if gitignore_path.exists() else None)
 
-    writes: list[tuple[pathlib.Path, bytes, str]] = []
-    unlinks: list[pathlib.Path] = []
-    preserved_custom_dockerfiles: list[str] = []
-
-    for rel_df, content in ((".factory/Dockerfile.customer", core_df_text), (".factory/Dockerfile.customer-tester", tester_df_text)):
+    for rel_df, content in ((f"{factory_dir_rel}/Dockerfile.customer", core_df_text), (f"{factory_dir_rel}/Dockerfile.customer-tester", tester_df_text)):
         df_path = assert_no_symlink_escape(repo, repo / rel_df)
         is_generated = df_path.is_file() and df_path.read_text(encoding="utf-8", errors="ignore").startswith(GENERATED_DOCKERFILE_HEADER)
         if content:
@@ -252,31 +338,12 @@ def emit_layer3_overlay(
                 preserved_custom_dockerfiles.append(rel_df)
             else:
                 writes.append((df_path, content.encode("utf-8"), rel_df))
-        elif is_generated:
+        elif is_generated and not custom_df_declared:
             unlinks.append(df_path)
 
     skill_path = assert_no_symlink_escape(repo, repo / conv_dir_rel / "SKILL.md")
     writes.append((skill_path, skill_text.encode("utf-8"), f"{conv_dir_rel}/SKILL.md"))
     writes.extend(kp_plan["writes"])
-
-    yaml_files = (
-        (".factory/hub-project.yaml", hub_project),
-        (".factory/factory-profile.yaml", profile),
-        (
-            ".factory/knowledge-index.yaml",
-            {
-                "schema_version": "1",
-                "sources": profile.get("knowledge_sources", []),
-                "knowledge_files": kp_plan["knowledge_files"],
-                "requirements": profile.get("requirements", []),
-                "invariants": profile.get("invariants", []),
-            },
-        ),
-        (".factory/modernization-backlog.yaml", {"schema_version": "1", "gaps": merged_gaps}),
-    )
-    for rel, payload in yaml_files:
-        path = assert_no_symlink_escape(repo, repo / rel)
-        writes.append((path, yaml.safe_dump(payload, sort_keys=False).encode("utf-8"), rel))
 
     writes.append((agents_path, merged_agents_bytes, "AGENTS.md"))
     if updated_gi_bytes is not None:
@@ -302,10 +369,12 @@ def emit_layer3_overlay(
                         bridged_claude = compute_merged_agents_md(claude_raw, "@AGENTS.md").encode("utf-8")
                         writes.append((assert_no_symlink_escape(repo, claude_path), bridged_claude, "CLAUDE.md"))
 
+    config_rel = f"{factory_dir_rel}/factory.yaml" if is_v2 else ".factory/hub-project.yaml"
     if dry_run:
         diffs = compute_unified_diffs(repo, writes, unlinks)
         return {
             "dry_run": True,
+            "config_path": config_rel,
             "would_emit_files": [rel for _, _, rel in writes],
             "would_unlink_files": [p.relative_to(repo).as_posix() for p in unlinks],
             "blocking_hazards": unacknowledged_hazards,
@@ -326,6 +395,7 @@ def emit_layer3_overlay(
         created.append(rel)
 
     return {
+        "config_path": config_rel,
         "emitted_files": created,
         "preserved_knowledge_files": kp_plan["preserved"],
         "preserved_custom_dockerfiles": preserved_custom_dockerfiles,

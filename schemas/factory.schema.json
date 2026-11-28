@@ -1,0 +1,336 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gcp-fde-factories.local/schemas/factory.schema.json",
+  "title": "Unified Factory Configuration (.factory/factory.yaml, Wave 2 v2)",
+  "description": "Single source of truth consolidating PO intent, Hub overlay, lean/full roster preset, toolchain Dockerfile contract, and optional wave_0 modernization tasks.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "slug",
+    "pack",
+    "pack_version",
+    "confirmed_by",
+    "mode",
+    "diversity_profile",
+    "autonomy",
+    "git_flow",
+    "commands"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "const": "2" },
+    "slug": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,32}$" },
+    "pack": { "type": "string", "enum": ["gecx", "adk", "generic"] },
+    "pack_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "confirmed_by": { "type": "string", "minLength": 2, "maxLength": 80 },
+    "existing_hub": { "type": "boolean", "default": false },
+    "mode": { "type": "string", "enum": ["sandbox-direct", "ci-only"] },
+    "deploy_target": {
+      "type": "string",
+      "enum": ["cloud-run", "gke", "agent-engine", "ces", "custom", "none"]
+    },
+    "diversity_profile": { "type": "string", "enum": ["cross-vendor", "cross-model", "single-family"] },
+    "autonomy": { "type": "string", "enum": ["supervised", "standard"] },
+    "git_support_tier": { "type": "string", "enum": ["native_github", "best_effort"], "default": "native_github" },
+    "mission": { "type": "string", "minLength": 10, "maxLength": 400 },
+    "non_goals": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 5, "maxLength": 240 },
+      "default": []
+    },
+    "monorepo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "tool": { "type": ["string", "null"], "pattern": "^[a-z0-9_-]{1,32}$" },
+        "subdir": { "type": "string", "pattern": "^[^\\r\\n`]{0,160}$", "default": "" },
+        "agent_prefix": { "type": "string", "pattern": "^([a-z][a-z0-9-]{1,15})?$" }
+      }
+    },
+    "roster": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preset": { "type": "string", "enum": ["lean", "full"], "default": "lean" },
+        "enabled_roles": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z0-9-]+$" }
+        },
+        "disabled_roles": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              { "type": "string", "pattern": "^[a-z0-9-]+$" },
+              {
+                "type": "object",
+                "required": ["role", "reason"],
+                "additionalProperties": false,
+                "properties": {
+                  "role": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+                  "reason": { "type": "string", "minLength": 5, "maxLength": 240 }
+                }
+              }
+            ]
+          }
+        },
+        "max_wip": { "type": "integer", "minimum": 1, "maximum": 20, "default": 3 },
+        "reviewer_replicas": { "type": "integer", "minimum": 1, "maximum": 5, "default": 1 }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default_max_duration": { "type": "string", "pattern": "^[0-9]+(m|h)$" },
+        "default_max_turns": { "type": "integer", "minimum": 10, "maximum": 200 },
+        "default_max_model_calls": { "type": "integer", "minimum": 10, "maximum": 500 },
+        "auto_suspend_idle": { "type": "boolean" }
+      }
+    },
+    "git_flow": {
+      "type": "object",
+      "required": ["base_branch", "branch_pattern", "commit_convention", "ci_platform"],
+      "additionalProperties": false,
+      "properties": {
+        "base_branch": { "type": "string", "pattern": "^[A-Za-z0-9._/-]{1,80}$" },
+        "branch_pattern": { "type": "string", "pattern": "^[^\\r\\n`]{1,80}$" },
+        "commit_convention": { "type": "string", "pattern": "^[^\\r\\n`]{1,80}$" },
+        "ci_platform": { "type": "string", "enum": ["github-actions", "azure-devops", "gitlab-ci", "jenkins", "none"] },
+        "pr_template": { "type": ["string", "null"], "pattern": "^[^\\r\\n`]{1,160}$" },
+        "workflows": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n`]{1,160}$" }, "default": [] },
+        "has_codeowners": { "type": "boolean" }
+      }
+    },
+    "commands": {
+      "type": "object",
+      "required": ["lint", "test"],
+      "additionalProperties": false,
+      "properties": {
+        "build": { "type": "string", "pattern": "^[^\\r\\n`]{0,200}$" },
+        "lint": { "type": "string", "pattern": "^[^\\r\\n`]{1,200}$" },
+        "test": { "type": "string", "pattern": "^[^\\r\\n`]{1,200}$" },
+        "e2e": { "type": "string", "pattern": "^[^\\r\\n`]{0,200}$" }
+      }
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dockerfile": { "type": ["string", "null"], "pattern": "^\\.factory/[A-Za-z0-9._/-]{1,120}$" },
+        "tester_dockerfile": { "type": ["string", "null"], "pattern": "^\\.factory/[A-Za-z0-9._/-]{1,120}$" },
+        "verify_binaries": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._+-]{0,31}( (--version|-version|version|--help|playwright --version))?$"
+          },
+          "default": []
+        },
+        "pinned_image": { "type": ["string", "null"], "pattern": "^[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}$" }
+      }
+    },
+    "detected_binaries": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9+._-]{0,31}$" },
+      "default": []
+    },
+    "missing_binaries": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9+._-]{0,31}$" },
+      "default": []
+    },
+    "heavy_test_binaries": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9+._-]{0,31}$" },
+      "default": []
+    },
+    "ai_files_detected": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n`]{1,160}$" }, "default": [] },
+    "acknowledged_workspace_hazards": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n`]{1,160}$" }, "default": [] },
+    "absorbed_conventions": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n`]{5,240}$" }, "default": [] },
+    "knowledge_sources": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n`]{1,200}$" }, "default": [] },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "summary", "acceptance_criteria"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^REQ-[0-9]{3,}$" },
+          "summary": { "type": "string", "minLength": 10, "maxLength": 240 },
+          "acceptance_criteria": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 10, "maxLength": 240 }
+          }
+        }
+      },
+      "default": []
+    },
+    "invariants": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 10, "maxLength": 240 },
+      "default": []
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "decision"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^ADR-[0-9]{3,}$" },
+          "title": { "type": "string", "minLength": 5, "maxLength": 160 },
+          "status": { "type": "string", "enum": ["accepted", "proposed"], "default": "accepted" },
+          "decision": { "type": "string", "minLength": 10, "maxLength": 300 }
+        }
+      },
+      "default": []
+    },
+    "glossary": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["term", "definition"],
+        "additionalProperties": false,
+        "properties": {
+          "term": { "type": "string", "minLength": 2, "maxLength": 80 },
+          "definition": { "type": "string", "minLength": 5, "maxLength": 240 }
+        }
+      },
+      "default": []
+    },
+    "evaluation_pyramid": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "minLength": 3, "maxLength": 200 },
+      "default": {}
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeout_seconds": { "type": "integer", "minimum": 10, "maximum": 3600, "default": 600 },
+        "env_passthrough": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+          "default": []
+        }
+      }
+    },
+    "not_verifiable_in_sandbox": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 5, "maxLength": 240 },
+      "default": []
+    },
+    "wave_0": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "severity", "effort", "benefit"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^GAP-[A-Z0-9-]+$" },
+          "title": { "type": "string", "minLength": 5, "maxLength": 160 },
+          "severity": { "type": "string", "enum": ["high", "medium", "low"] },
+          "effort": { "type": "string", "enum": ["S", "M", "L"] },
+          "status": { "type": "string", "enum": ["open", "done"], "default": "open" },
+          "benefit": { "type": "string", "minLength": 5, "maxLength": 240 }
+        }
+      },
+      "default": []
+    },
+    "waves": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "size"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^W[0-9]+-[0-9]{2,}$" },
+          "title": { "type": "string", "minLength": 5, "maxLength": 160 },
+          "req_ids": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^REQ-[0-9]{3,}$" },
+            "default": []
+          },
+          "size": { "type": "string", "enum": ["small", "chunky", "large"] },
+          "owner_role": { "type": "string", "pattern": "^[a-z0-9-]+$", "default": "developer" },
+          "status": { "type": "string", "enum": ["pending", "in-progress", "done"], "default": "pending" },
+          "acceptance_criteria": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 5, "maxLength": 240 },
+            "default": []
+          }
+        }
+      },
+      "default": []
+    },
+    "exclude_skills": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+      "default": []
+    },
+    "overlay_skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["dir", "version"],
+        "additionalProperties": false,
+        "properties": {
+          "dir": { "type": "string", "pattern": "^skills/[a-z0-9-]+$" },
+          "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" }
+        }
+      },
+      "default": []
+    },
+    "kaizen": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "schedule_cron": { "type": "string", "default": "0 0 * * *" },
+        "time_zone": { "type": "string", "default": "America/Sao_Paulo" },
+        "coordinator_agent": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+        "enable_gcp_obs": { "type": "boolean", "default": false }
+      }
+    },
+    "intake": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "provider": { "type": "string", "enum": ["github", "azure_devops", "gitlab", "jira"], "default": "github" },
+        "max_concurrent_issues": { "type": "integer", "minimum": 1, "maximum": 3, "default": 2 },
+        "scope_label": { "type": "string", "maxLength": 64, "default": "" },
+        "release_label": { "type": "string", "minLength": 1, "maxLength": 64, "default": "factory:ready" },
+        "hold_label": { "type": "string", "minLength": 1, "maxLength": 64, "default": "factory:hold" },
+        "cadence_cron": { "type": "string", "minLength": 5, "maxLength": 64, "default": "*/5 * * * *" },
+        "time_zone": { "type": "string", "minLength": 1, "maxLength": 64, "default": "America/Sao_Paulo" },
+        "paused": { "type": "boolean", "default": false }
+      }
+    },
+    "harnesses": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default": { "type": "string", "enum": ["antigravity-vertex", "claude-vertex"], "default": "antigravity-vertex" },
+        "claude_model_garden_enabled": { "type": "boolean", "default": false },
+        "vertex_gemini_location": { "type": "string", "pattern": "^[a-z0-9-]+$", "default": "global" },
+        "vertex_claude_region": { "type": "string", "pattern": "^[a-z0-9-]+$", "default": "global" }
+      }
+    },
+    "model_routing": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["harness", "model"],
+        "additionalProperties": false,
+        "properties": {
+          "harness": { "type": "string", "enum": ["antigravity-vertex", "claude-vertex"] },
+          "model": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+          "thinking_level": { "type": "integer", "minimum": 0, "maximum": 100 }
+        }
+      }
+    }
+  }
+}

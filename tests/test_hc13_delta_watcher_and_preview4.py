@@ -69,8 +69,10 @@ def test_hc13_f4_f5_f6_f7_stage03_preview4_ordering_never_suspend_isolation_and_
     apply_body = src.split("do_apply() {", 1)[1].split("do_overlay_sync() {", 1)[0]
     assert apply_body.index("ensure_coordinator_started") < apply_body.index("ensure_kaizen_schedule")
 
-    # HC13-F5: lifecycle.never_suspend experiment is enabled alongside lifecycle.idle_suspend.
-    assert 'scion hub experiments enable lifecycle.never_suspend --hub "$HUB_URL"' in apply_body
+    # HC13-F5: lifecycle.never_suspend experiment is enabled via apply_hub_global_governance (called by do_apply and platform-init).
+    gov_body = src.split("apply_hub_global_governance() {", 1)[1].split("do_platform_init() {", 1)[0]
+    assert 'scion hub experiments enable lifecycle.never_suspend --hub "$HUB_URL"' in gov_body
+    assert "apply_hub_global_governance" in apply_body
 
     # HC13-F7: Delta Watcher Hub RBAC helper grants strictly agent.message + agent.read only.
     assert "ensure_delta_watcher_hub_rbac" in src

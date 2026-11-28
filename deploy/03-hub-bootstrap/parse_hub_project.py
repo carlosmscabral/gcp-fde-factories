@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Validated YAML parser, overlay skill checker, and Vertex AI harness renderer for Stage 03.
+"""Validated YAML parser, 4-rule Dockerfile linter, overlay skill checker, and Vertex AI harness renderer for Stage 03.
 
-Enforces hub-project.schema.json validation, pack matching, path-traversal protection on
-overlay_skills, 300-line / non-colliding overlay skill budgets, default weekly Kaizen
-scheduling, fail-closed Claude Vertex AI opt-in, and fail-closed rejection of placeholder
-or zero-digest container images before syncing harness-configs to Scion Hub.
+Supports both Wave 2 unified `.factory/[<prefix>/]factory.yaml` (schema_version: '2') and legacy
+`.factory/hub-project.yaml` (schema_version: '1') via a backward-compatible read shim. Enforces
+schema validation, pack matching, path-traversal protection on overlay_skills and toolchain.dockerfile,
+300-line / non-colliding overlay skill budgets, lean/full roster normalization, fail-closed Claude
+Vertex AI opt-in, and fail-closed rejection of placeholder or zero-digest container images.
 """
 from __future__ import annotations
 
@@ -18,10 +19,26 @@ from typing import Any
 import yaml
 
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 MODEL_GARDEN_URL = "https://console.cloud.google.com/vertex-ai/publishers/anthropic/model-garden/claude-opus-5-5"
 ZERO_DIGEST = "@sha256:" + ("0" * 64)
 MAX_OVERLAY_SKILL_LINES = 300
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+LEAN_CORE_ROLES = frozenset({"coordinator", "developer", "code-reviewer", "security-auditor", "test-engineer"})
+ALL_OPTIONAL_ROLES = (
+    "eng-manager",
+    "architect",
+    "kaizen-analyst",
+    "investigator",
+    "doc-writer",
+    "researcher",
+    "release-notes",
+    "web-builder",
+    "qa-tester",
+)
 
 
 def read_scion_project_id(settings_path: pathlib.Path) -> str:
@@ -41,10 +58,16 @@ def read_scion_project_id(settings_path: pathlib.Path) -> str:
         raise ValueError(f"Invalid hub.project_id UUID in {settings_path}: '{pid}'.")
     return pid
 
+
 DEFAULT_CONFIG: dict[str, Any] = {
+    "schema_version": "1",
+    "slug": "",
+    "config_rel_path": ".factory/hub-project.yaml",
+    "coordinator_brief_rel": ".factory/coordinator-bootstrap-brief.md",
     "pack": "",
     "mode": "sandbox-direct",
     "diversity_profile": "cross-model",
+    "existing_hub": False,
     "limits": {
         "default_max_duration": "2h",
         "default_max_turns": 60,
@@ -69,7 +92,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model_routing": {},
     "deploy_target": "",
     "monorepo": {"enabled": False, "subdir": "", "agent_prefix": ""},
-    "roster": {"enabled_roles": [], "disabled_roles": [], "max_wip": 3, "reviewer_replicas": 1},
+    "roster": {"preset": "lean", "enabled_roles": [], "disabled_roles": [], "max_wip": 3, "reviewer_replicas": 1},
+    "toolchain": {"dockerfile": "", "tester_dockerfile": "", "verify_binaries": [], "pinned_image": ""},
     "intake": {
         "enabled": False,
         "provider": "github",
@@ -84,12 +108,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 
-def _find_hub_project_schema() -> pathlib.Path | None:
-    """Locates schemas/hub-project.schema.json inside a Release Kit or catalog repo."""
+def _find_schema(filename: str) -> pathlib.Path | None:
+    """Locates schemas/<filename> inside a Release Kit, catalog repo, or container image."""
     candidates = (
-        SCRIPT_DIR.parent / "schemas" / "hub-project.schema.json",
-        SCRIPT_DIR.parent.parent / "schemas" / "hub-project.schema.json",
-        pathlib.Path("/opt/gcp-fde/schemas/hub-project.schema.json"),
+        SCRIPT_DIR.parent / "schemas" / filename,
+        SCRIPT_DIR.parent.parent / "schemas" / filename,
+        pathlib.Path(f"/opt/gcp-fde/schemas/{filename}"),
     )
     for cand in candidates:
         if cand.is_file():
@@ -97,14 +121,21 @@ def _find_hub_project_schema() -> pathlib.Path | None:
     return None
 
 
-def _validate_hub_schema(raw: dict[str, Any]) -> None:
-    """Validates raw YAML mapping against hub-project.schema.json when jsonschema is available."""
-    schema_path = _find_hub_project_schema()
+def _validate_schema(raw: dict[str, Any], schema_filename: str, *, require_validator: bool = False) -> None:
+    """Validates raw YAML mapping against schema_filename; fails closed when require_validator=True (M1)."""
+    schema_path = _find_schema(schema_filename)
     if schema_path is None:
+        if require_validator:
+            raise ValueError(f"Required schema '{schema_filename}' not found alongside Stage 03 parser.")
         return
     try:
         from jsonschema import Draft202012Validator
-    except ImportError:
+    except ImportError as exc:
+        if require_validator:
+            raise ValueError(
+                f"jsonschema is required to validate v2 config against {schema_filename}. "
+                "Run Stage 03 with the factory Python venv (/opt/gcp-fde/.venv/bin/python3 or .venv/bin/python)."
+            ) from exc
         return
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     validator = Draft202012Validator(schema)
@@ -113,21 +144,73 @@ def _validate_hub_schema(raw: dict[str, Any]) -> None:
         for err in sorted(validator.iter_errors(raw), key=lambda e: list(e.path))
     ]
     if errs:
-        raise ValueError("hub-project.schema.json validation failed: " + " | ".join(errs))
+        raise ValueError(f"{schema_filename} validation failed: " + " | ".join(errs))
 
 
-def parse_hub_project(repo_dir: pathlib.Path, expected_pack: str = "") -> dict[str, Any]:
-    """Loads and validates .factory/hub-project.yaml under repo_dir, returning normalized JSON."""
+def _resolve_config_path(repo: pathlib.Path, explicit_config: pathlib.Path | None = None) -> pathlib.Path | None:
+    """Resolves explicit --config -> .factory/factory.yaml -> legacy .factory/hub-project.yaml safely inside repo."""
+    if explicit_config is not None:
+        candidate = explicit_config if explicit_config.is_absolute() else (repo / explicit_config)
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(repo)
+        except ValueError as exc:
+            raise ValueError(f"Factory config path escapes repository root: '{explicit_config}'") from exc
+        if not resolved.is_file():
+            raise ValueError(f"Declared --config file does not exist: '{resolved}'")
+        return resolved
+
+    for rel in (".factory/factory.yaml", ".factory/hub-project.yaml"):
+        cand = repo / rel
+        if cand.is_file():
+            resolved = cand.resolve()
+            try:
+                resolved.relative_to(repo)
+            except ValueError as exc:
+                raise ValueError(f"Factory config path escapes repository root: '{rel}'") from exc
+            return resolved
+    return None
+
+
+def _resolve_repo_rel_file(repo: pathlib.Path, rel: str, field_name: str) -> str:
+    """Validates a repository-relative path does not escape repo_dir."""
+    clean = str(rel or "").strip()
+    if not clean:
+        return ""
+    resolved = (repo / clean).resolve()
+    try:
+        resolved.relative_to(repo)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} escapes repository root: '{clean}'") from exc
+    return clean
+
+
+def parse_hub_project(
+    repo_dir: pathlib.Path,
+    expected_pack: str = "",
+    config_path: pathlib.Path | None = None,
+) -> dict[str, Any]:
+    """Loads and validates .factory/[<prefix>/]factory.yaml or legacy .factory/hub-project.yaml."""
     repo = repo_dir.resolve()
-    cfg_path = repo / ".factory" / "hub-project.yaml"
-    if not cfg_path.is_file():
+    cfg_path = _resolve_config_path(repo, config_path)
+    if cfg_path is None:
         return json.loads(json.dumps(DEFAULT_CONFIG))
 
     raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(f"{cfg_path} must contain a YAML mapping.")
 
-    _validate_hub_schema(raw)
+    schema_ver = str(raw.get("schema_version") or "1")
+    is_v2 = schema_ver == "2"
+    _validate_schema(raw, "factory.schema.json" if is_v2 else "hub-project.schema.json", require_validator=is_v2)
+    if is_v2:
+        for base in (SCRIPT_DIR.parent, REPO_ROOT, pathlib.Path("/opt/gcp-fde")):
+            if (base / "scripts" / "lib" / "onboard_validator.py").is_file() and str(base) not in sys.path:
+                sys.path.insert(0, str(base))
+        from scripts.lib.onboard_validator import validate_confirmed_by
+        cb_errs = validate_confirmed_by(raw)
+        if cb_errs:
+            raise ValueError(f"{cfg_path}: " + " | ".join(cb_errs))
 
     pack = str(raw.get("pack") or "")
     if expected_pack and pack and pack != expected_pack:
@@ -153,12 +236,7 @@ def parse_hub_project(repo_dir: pathlib.Path, expected_pack: str = "") -> dict[s
     for item in raw.get("overlay_skills") or []:
         if not isinstance(item, dict) or not item.get("dir"):
             raise ValueError(f"Invalid overlay_skills entry in {cfg_path}: {item!r}")
-        rel = str(item["dir"])
-        resolved = (repo / rel).resolve()
-        try:
-            resolved.relative_to(repo)
-        except ValueError as exc:
-            raise ValueError(f"Overlay skill path escapes repository root: '{rel}'") from exc
+        rel = _resolve_repo_rel_file(repo, str(item["dir"]), "Overlay skill path")
         overlays.append({"dir": rel, "version": str(item.get("version") or "1.0.0")})
 
     raw_kz = raw.get("kaizen") if isinstance(raw.get("kaizen"), dict) else {}
@@ -197,13 +275,7 @@ def parse_hub_project(repo_dir: pathlib.Path, expected_pack: str = "") -> dict[s
         )
 
     raw_mono = raw.get("monorepo") if isinstance(raw.get("monorepo"), dict) else {}
-    mono_subdir = str(raw_mono.get("subdir") or "").strip()
-    if mono_subdir:
-        resolved_sub = (repo / mono_subdir).resolve()
-        try:
-            resolved_sub.relative_to(repo)
-        except ValueError as exc:
-            raise ValueError(f"monorepo.subdir escapes repository root: '{mono_subdir}'") from exc
+    mono_subdir = _resolve_repo_rel_file(repo, str(raw_mono.get("subdir") or ""), "monorepo.subdir")
     monorepo = {
         "enabled": bool(raw_mono.get("enabled", False)),
         "subdir": mono_subdir,
@@ -211,11 +283,33 @@ def parse_hub_project(repo_dir: pathlib.Path, expected_pack: str = "") -> dict[s
     }
 
     raw_roster = raw.get("roster") if isinstance(raw.get("roster"), dict) else {}
+    preset = str(raw_roster.get("preset") or ("lean" if is_v2 else "full"))
+    enabled_roles = [str(r) for r in (raw_roster.get("enabled_roles") or [])]
+    disabled_roles = [
+        str(d["role"] if isinstance(d, dict) else d)
+        for d in (raw_roster.get("disabled_roles") or [])
+    ]
+    # Under lean preset, ALWAYS disable optional SEP roles not explicitly opted into enabled_roles (M3).
+    if is_v2 and preset == "lean":
+        disabled_roles = sorted((set(ALL_OPTIONAL_ROLES) - set(enabled_roles)) | set(disabled_roles))
     roster = {
-        "enabled_roles": [str(r) for r in (raw_roster.get("enabled_roles") or [])],
-        "disabled_roles": [str(r) for r in (raw_roster.get("disabled_roles") or [])],
+        "preset": preset,
+        "enabled_roles": enabled_roles,
+        "disabled_roles": disabled_roles,
         "max_wip": int(raw_roster.get("max_wip") or 3),
         "reviewer_replicas": int(raw_roster.get("reviewer_replicas") or 1),
+    }
+
+    # Only wire Stage 03 automatic Dockerfile build/pin for Wave 2 (schema_version == '2') so legacy v1 repos stay intact (M4).
+    raw_tc = raw.get("toolchain") if (is_v2 and isinstance(raw.get("toolchain"), dict)) else {}
+    raw_bf = raw.get("brownfield") if isinstance(raw.get("brownfield"), dict) else {}
+    df_rel = _resolve_repo_rel_file(repo, str(raw_tc.get("dockerfile") or ""), "toolchain.dockerfile") if is_v2 else ""
+    tester_df_rel = _resolve_repo_rel_file(repo, str(raw_tc.get("tester_dockerfile") or ""), "toolchain.tester_dockerfile") if is_v2 else ""
+    toolchain = {
+        "dockerfile": df_rel,
+        "tester_dockerfile": tester_df_rel,
+        "verify_binaries": [str(x) for x in (raw_tc.get("verify_binaries") or []) if str(x).strip()],
+        "pinned_image": str(raw_tc.get("pinned_image") or ""),
     }
 
     raw_intake = raw.get("intake") if isinstance(raw.get("intake"), dict) else {}
@@ -237,12 +331,18 @@ def parse_hub_project(repo_dir: pathlib.Path, expected_pack: str = "") -> dict[s
         "paused": bool(raw_intake.get("paused", False)),
     }
 
-    raw_bf = raw.get("brownfield") if isinstance(raw.get("brownfield"), dict) else {}
+    cfg_rel = cfg_path.relative_to(repo).as_posix()
+    brief_rel = (cfg_path.parent / "coordinator-bootstrap-brief.md").relative_to(repo).as_posix()
+    existing_hub = bool(raw.get("existing_hub", False)) if is_v2 else bool(raw_bf.get("existing_hub", False))
     return {
+        "schema_version": schema_ver,
+        "slug": str(raw.get("slug") or ""),
+        "config_rel_path": cfg_rel,
+        "coordinator_brief_rel": brief_rel,
         "pack": pack,
         "mode": mode,
         "deploy_target": str(raw.get("deploy_target") or ""),
-        "existing_hub": bool(raw_bf.get("existing_hub", False)),
+        "existing_hub": existing_hub,
         "diversity_profile": diversity,
         "limits": limits,
         "exclude_skills": [str(s) for s in (raw.get("exclude_skills") or [])],
@@ -252,6 +352,7 @@ def parse_hub_project(repo_dir: pathlib.Path, expected_pack: str = "") -> dict[s
         "model_routing": raw_routing,
         "monorepo": monorepo,
         "roster": roster,
+        "toolchain": toolchain,
         "intake": intake,
     }
 
@@ -275,12 +376,7 @@ def render_harness_config(
     image_override: str = "",
     base_yaml: pathlib.Path | None = None,
 ) -> None:
-    """Materializes customer Vertex AI project, region, and validated image onto an upstream Scion harness config.
-
-    When base_yaml is supplied (pulled from the Hub's built-in antigravity or claude harness bundle),
-    inherits upstream provisioner, command, model_aliases, thinking levels, and auth rules intact while
-    overlaying Vertex AI settings and stripping non-schema catalog keys (schema_version, name, resources).
-    """
+    """Materializes customer Vertex AI project, region, and validated image onto an upstream Scion harness config."""
     overlay = yaml.safe_load(src_yaml.read_text(encoding="utf-8"))
     if not isinstance(overlay, dict):
         raise ValueError(f"Expected YAML mapping in {src_yaml}")
@@ -321,7 +417,6 @@ def render_harness_config(
         env["GOOGLE_CLOUD_LOCATION"] = gemini_location
         env["AGY_ADC_AUTH"] = "true"
         if inference_project:
-            # Antigravity CLI 1.5.14 in AGY_ADC_AUTH mode routes Vertex AI through ADC quotaProject (HC-02 F8).
             env["GOOGLE_CLOUD_PROJECT"] = inference_project
             env["GOOGLE_CLOUD_QUOTA_PROJECT"] = inference_project
     data["env"] = env
@@ -345,10 +440,24 @@ def check_overlay_skill(skill_dir: pathlib.Path, pack_skill_names: set[str]) -> 
         raise ValueError(f"Overlay skill '{sname}' contains a forbidden floating gh:// URI.")
 
 
+def _lint_dockerfile_cli(dockerfile_path: pathlib.Path, verify_binaries_json: str) -> int:
+    """Runs the 4-rule deterministic customer Dockerfile linter (strict mode) for Stage 03."""
+    for base in (SCRIPT_DIR.parent, REPO_ROOT, pathlib.Path("/opt/gcp-fde")):
+        if (base / "scripts" / "lib" / "dockerfile_recipes.py").is_file() and str(base) not in sys.path:
+            sys.path.insert(0, str(base))
+    from scripts.lib.dockerfile_recipes import validate_customer_dockerfile
+
+    verify_bins = json.loads(verify_binaries_json) if verify_binaries_json else []
+    report = validate_customer_dockerfile(dockerfile_path, strict=True, verify_binaries=verify_bins)
+    print(json.dumps(report, indent=2))
+    return 0 if report["ok"] else 1
+
+
 def main(argv: list[str] | None = None) -> int:
-    """CLI entrypoint parsing hub-project.yaml, checking overlay skills, or rendering harness configs."""
-    parser = argparse.ArgumentParser(description="Parse .factory/hub-project.yaml or render harness configs.")
+    """CLI entrypoint parsing factory.yaml/hub-project.yaml, linting Dockerfiles, checking skills, or rendering harnesses."""
+    parser = argparse.ArgumentParser(description="Parse .factory/[<prefix>/]factory.yaml or legacy hub-project.yaml.")
     parser.add_argument("--repo", type=pathlib.Path)
+    parser.add_argument("--config", type=pathlib.Path, default=None)
     parser.add_argument("--expected-pack", default="")
     parser.add_argument("--render-harness-src", type=pathlib.Path)
     parser.add_argument("--render-harness-dst", type=pathlib.Path)
@@ -360,8 +469,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check-overlay-skill", type=pathlib.Path)
     parser.add_argument("--pack-skills-json", default="[]")
     parser.add_argument("--read-scion-project-id", type=pathlib.Path)
+    parser.add_argument("--lint-dockerfile", type=pathlib.Path)
+    parser.add_argument("--verify-binaries-json", default="[]")
     args = parser.parse_args(argv)
     try:
+        if args.lint_dockerfile:
+            return _lint_dockerfile_cli(args.lint_dockerfile, args.verify_binaries_json)
         if args.read_scion_project_id:
             print(read_scion_project_id(args.read_scion_project_id))
             return 0
@@ -381,8 +494,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
         if not args.repo:
-            parser.error("--repo is required unless --render-harness-src/dst or --check-overlay-skill is set.")
-        result = parse_hub_project(args.repo, expected_pack=args.expected_pack)
+            parser.error("--repo is required unless another action flag is set.")
+        result = parse_hub_project(args.repo, expected_pack=args.expected_pack, config_path=args.config)
     except (OSError, ValueError, yaml.YAMLError, json.JSONDecodeError) as exc:
         print(f"HUB-PROJECT PARSE ERROR: {exc}", file=sys.stderr)
         return 1

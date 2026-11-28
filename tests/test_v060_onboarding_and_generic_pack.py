@@ -95,8 +95,8 @@ def test_brownfield_generic_monorepo_scan_draft_questions_and_roles(tmp_path: pa
             str(repo),
             "--pack",
             "generic",
-            "--track",
-            "complete",
+            "--roster-preset",
+            "full",
             "--emit-draft",
             str(draft_path),
             "--json",
@@ -119,7 +119,7 @@ def test_brownfield_generic_monorepo_scan_draft_questions_and_roles(tmp_path: pa
     assert {"coordinator", "developer", "code-reviewer", "web-builder", "generic-deployer", "qa-tester"}.issubset(enabled)
 
     q_ids = {q["id"] for q in scan["grill_questions"]}
-    assert {"pack_selection", "monorepo_scope", "deploy_target_and_gcp_services", "sep_role_curation", "wave1_initial_backlog"}.issubset(q_ids)
+    assert {"mission_and_scope", "roster_preset", "commands_and_pyramid", "toolchain_and_dockerfile", "cloud_and_models"}.issubset(q_ids)
 
     draft = yaml.safe_load(draft_path.read_text(encoding="utf-8"))
     assert draft["pack"] == "generic"

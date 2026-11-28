@@ -498,24 +498,26 @@ def test_grill_me_includes_external_delta_watcher_and_emits_intake_overlay(tmp_p
     (repo / ".github" / "workflows" / "ci.yml").write_text("name: CI\n", encoding="utf-8")
     (repo / "pyproject.toml").write_text('[project]\nname = "demo"\ndependencies = ["google-adk"]\n', encoding="utf-8")
 
-    facts = scan_repository_facts(repo, pack="adk", track="express")
+    facts = scan_repository_facts(repo, pack="adk")
     q_ids = [q["id"] for q in facts["grill_questions"]]
-    assert "external_delta_watcher" in q_ids
-    dw_q = next(q for q in facts["grill_questions"] if q["id"] == "external_delta_watcher")
+    assert "autonomy_and_intake" in q_ids
+    dw_q = next(q for q in facts["grill_questions"] if q["id"] == "autonomy_and_intake")
     assert dw_q["prefilled_from_scan"]["enabled"] is False
     assert dw_q["prefilled_from_scan"]["provider"] == "github"
 
-    draft = build_draft_profile(facts, pack="adk", track="express")
+    draft = build_draft_profile(facts, pack="adk")
+    draft["confirmed_by"] = "Carlos Cabral"
+    draft["mission"] = "Automate ADK sample agent releases with verified PR gates."
     draft["commands"]["lint"] = "ruff check ."
     draft["intake"]["enabled"] = True
     draft["intake"]["max_concurrent_issues"] = 2
 
     pack_img = "us-central1-docker.pkg.dev/demo-hub/factory-images/adk-runtime@sha256:" + ("a" * 64)
     emit_layer3_overlay(repo, draft, pack_img, REPO_ROOT / "schemas/factory-profile.schema.json")
-    emitted_hub = yaml.safe_load((repo / ".factory/hub-project.yaml").read_text(encoding="utf-8"))
-    assert emitted_hub["intake"]["enabled"] is True
-    assert emitted_hub["intake"]["provider"] == "github"
-    assert emitted_hub["intake"]["release_label"] == "factory:ready"
+    emitted_cfg = yaml.safe_load((repo / ".factory/factory.yaml").read_text(encoding="utf-8"))
+    assert emitted_cfg["intake"]["enabled"] is True
+    assert emitted_cfg["intake"]["provider"] == "github"
+    assert emitted_cfg["intake"]["release_label"] == "factory:ready"
 
     parsed = _load_parse_hub_project().parse_hub_project(repo, expected_pack="adk")
     assert parsed["intake"]["enabled"] is True

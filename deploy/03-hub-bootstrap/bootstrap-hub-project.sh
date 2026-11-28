@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Stage 03 Hub Bootstrap reconciler (Contract 2: preflight / plan / backup / apply / rollback / overlay-sync).
-# Enforces compat.yaml closed version checks, Scion v0.4.0-preview.3 CLI contracts
-# (`harness-config sync <name> --global`, `schedule list --show recurring`), fail-closed
-# image validation (rejects REPLACE_ / zero-digest harness images), default weekly Kaizen
+# Stage 03 Hub Bootstrap reconciler (Contract 2: platform-init / preflight / plan / backup / apply / rollback / overlay-sync).
+# Separates Phase A 1x Hub-global setup (platform-init) from Phase B N-factory onboarding (apply),
+# enforces compat.yaml closed version checks, Scion v0.4.0-preview.4 CLI contracts, fail-closed
+# image validation, isolated --network=none customer Dockerfile verification, sibling-safe Kaizen
 # scheduling, and strict overlay skill budget + collision verification.
 set -euo pipefail
 
@@ -13,6 +13,11 @@ LANDING_ZONE_JSON=""
 HUB_URL=""
 PROJECT_SLUG=""
 TARGET_REPO=""
+CONFIG_PATH=""
+GCLOUD_CONFIG=""
+SKIP_CUSTOMER_IMAGE_BUILD="false"
+ALLOW_HUB_CUSTOMER_IMAGE_BUILD="false"
+HARNESS_IMAGE_TESTER=""
 BACKUP_DIR=""
 HARNESS_IMAGE_ANTIGRAVITY=""
 HARNESS_IMAGE_CLAUDE=""
@@ -34,9 +39,10 @@ trap cleanup_tmp EXIT
 
 usage() {
   cat <<'EOF'
-Usage: bootstrap-hub-project.sh <preflight|plan|backup|apply|rollback|overlay-sync> \
+Usage: bootstrap-hub-project.sh <platform-init|preflight|plan|backup|apply|rollback|overlay-sync> \
   --kit <release-kit-dir> --hub <https-or-loopback-url> \
-  [--landing-zone <landing-zone-outputs.json>] [--repo <target-repo-dir>] [--backup-dir <dir>] \
+  [--landing-zone <landing-zone-outputs.json>] [--repo <target-repo-dir>] [--config <.factory/[<prefix>/]factory.yaml>] \
+  [--backup-dir <dir>] [--gcloud-config <name>] [--skip-customer-image-build] [--allow-hub-customer-image-build] \
   [--harness-image-antigravity <digest-or-registry-ref>] [--harness-image-claude <digest-or-registry-ref>] \
   [--start-coordinator | --no-start-coordinator] [--allow-unpushed-factory]
 EOF
@@ -51,6 +57,10 @@ while [[ $# -gt 0 ]]; do
     --project) PROJECT_SLUG="$2"; shift 2 ;;
     --landing-zone) LANDING_ZONE_JSON="$2"; shift 2 ;;
     --repo) TARGET_REPO="$2"; shift 2 ;;
+    --config) CONFIG_PATH="$2"; shift 2 ;;
+    --gcloud-config) GCLOUD_CONFIG="$2"; shift 2 ;;
+    --skip-customer-image-build) SKIP_CUSTOMER_IMAGE_BUILD="true"; shift ;;
+    --allow-hub-customer-image-build) ALLOW_HUB_CUSTOMER_IMAGE_BUILD="true"; shift ;;
     --backup-dir) BACKUP_DIR="$2"; shift 2 ;;
     --harness-image-antigravity) HARNESS_IMAGE_ANTIGRAVITY="$2"; shift 2 ;;
     --harness-image-claude) HARNESS_IMAGE_CLAUDE="$2"; shift 2 ;;
@@ -72,8 +82,28 @@ if [[ -n "$BACKUP_DIR" ]]; then
   mkdir -p "$BACKUP_DIR"
   BACKUP_DIR="$(cd "$BACKUP_DIR" && pwd)"
 fi
+if [[ -n "$CONFIG_PATH" && -z "$TARGET_REPO" ]]; then
+  echo "ERROR: --config requires --repo <target-repo-dir>." >&2
+  exit 2
+fi
 if [[ -n "$TARGET_REPO" && -d "$TARGET_REPO" ]]; then
-  TARGET_REPO="$(cd "$TARGET_REPO" && pwd)"
+  TARGET_REPO="$(cd "$TARGET_REPO" && pwd -P)"
+  if [[ -n "$CONFIG_PATH" ]]; then
+    # Normalize --config strictly relative to physical TARGET_REPO and reject escapes (L1).
+    CONFIG_PATH="$(python3 - "$TARGET_REPO" "$CONFIG_PATH" <<'PYEOF'
+import os, pathlib, sys
+repo = pathlib.Path(sys.argv[1]).resolve()
+raw = pathlib.Path(sys.argv[2])
+target = raw.resolve() if raw.is_absolute() else (repo / raw).resolve()
+try:
+    rel = target.relative_to(repo).as_posix()
+except ValueError:
+    print(f"ERROR: --config '{sys.argv[2]}' escapes --repo '{repo}'.", file=sys.stderr)
+    raise SystemExit(1)
+print(rel)
+PYEOF
+)"
+  fi
   cd "$TARGET_REPO"
 fi
 export SCION_HUB_ENDPOINT="$HUB_URL"
@@ -87,12 +117,16 @@ require_cmd() {
 
 parse_repo_cfg() {
   local pack_name="$1"
-  if [[ -n "$TARGET_REPO" && -f "$TARGET_REPO/.factory/hub-project.yaml" ]]; then
+  local cfg_args=()
+  if [[ -n "$CONFIG_PATH" ]]; then
+    cfg_args=(--config "$CONFIG_PATH")
+  fi
+  if [[ -n "$TARGET_REPO" && ( -n "$CONFIG_PATH" || -f "$TARGET_REPO/.factory/factory.yaml" || -f "$TARGET_REPO/.factory/hub-project.yaml" ) ]]; then
     require_cmd python3
-    python3 "$SCRIPT_DIR/parse_hub_project.py" --repo "$TARGET_REPO" --expected-pack "$pack_name"
+    python3 "$SCRIPT_DIR/parse_hub_project.py" --repo "$TARGET_REPO" --expected-pack "$pack_name" "${cfg_args[@]}"
   else
     cat <<'JSON'
-{"pack":"","mode":"sandbox-direct","deploy_target":"","existing_hub":false,"diversity_profile":"cross-model","limits":{"default_max_duration":"2h","default_max_turns":60,"default_max_model_calls":150,"auto_suspend_idle":true},"exclude_skills":[],"overlay_skills":[],"kaizen":{"enabled":true,"schedule_cron":"0 0 * * *","time_zone":"America/Sao_Paulo","coordinator_agent":"coordinator","enable_gcp_obs":false},"harnesses":{"default":"antigravity-vertex","claude_model_garden_enabled":false,"vertex_gemini_location":"global","vertex_claude_region":"global"},"model_routing":{},"monorepo":{"enabled":false,"subdir":"","agent_prefix":""},"roster":{"enabled_roles":[],"disabled_roles":[],"max_wip":3,"reviewer_replicas":1}}
+{"schema_version":"1","slug":"","config_rel_path":".factory/hub-project.yaml","coordinator_brief_rel":".factory/coordinator-bootstrap-brief.md","pack":"","mode":"sandbox-direct","deploy_target":"","existing_hub":false,"diversity_profile":"cross-model","limits":{"default_max_duration":"2h","default_max_turns":60,"default_max_model_calls":150,"auto_suspend_idle":true},"exclude_skills":[],"overlay_skills":[],"kaizen":{"enabled":true,"schedule_cron":"0 0 * * *","time_zone":"America/Sao_Paulo","coordinator_agent":"coordinator","enable_gcp_obs":false},"harnesses":{"default":"antigravity-vertex","claude_model_garden_enabled":false,"vertex_gemini_location":"global","vertex_claude_region":"global"},"model_routing":{},"monorepo":{"enabled":false,"subdir":"","agent_prefix":""},"roster":{"preset":"lean","enabled_roles":[],"disabled_roles":[],"max_wip":3,"reviewer_replicas":1},"toolchain":{"dockerfile":"","tester_dockerfile":"","verify_binaries":[],"pinned_image":""},"intake":{"enabled":false,"provider":"github","max_concurrent_issues":2,"scope_label":"","release_label":"factory:ready","hold_label":"factory:hold","cadence_cron":"*/5 * * * *","time_zone":"America/Sao_Paulo","paused":false}}
 JSON
   fi
 }
@@ -116,7 +150,7 @@ do_preflight() {
 
 do_plan() {
   do_preflight
-  local pack_name pack_prefix repo_cfg disabled_roles_json mode deploy_target coord_tpl has_brief="false"
+  local pack_name pack_prefix repo_cfg disabled_roles_json mode deploy_target coord_tpl brief_rel has_brief="false"
   pack_name="$(jq -re '.pack' "$KIT_DIR/manifest.json")"
   pack_prefix="$(jq -re '.pack_prefix // .pack' "$KIT_DIR/manifest.json")"
   repo_cfg="$(parse_repo_cfg "$pack_name")"
@@ -124,7 +158,8 @@ do_plan() {
   mode="$(jq -re '.mode' <<< "$repo_cfg")"
   deploy_target="$(jq -r '.deploy_target // ""' <<< "$repo_cfg")"
   coord_tpl="${pack_prefix}-coordinator"
-  if [[ -n "$TARGET_REPO" && -f "$TARGET_REPO/.factory/coordinator-bootstrap-brief.md" ]]; then
+  brief_rel="$(jq -r '.coordinator_brief_rel // ".factory/coordinator-bootstrap-brief.md"' <<< "$repo_cfg")"
+  if [[ -n "$TARGET_REPO" && -f "$TARGET_REPO/$brief_rel" ]]; then
     has_brief="true"
   fi
 
@@ -278,19 +313,17 @@ warn_github_token_injection_mode() {
   fi
 }
 
-check_remote_factory_landed() {
-  # Verifies .factory/hub-project.yaml is pushed to origin/<base_branch> BEFORE mutating Hub state (UX-C1, M1).
-  # Skips cleanly for non-git fixtures or repos without an origin remote; bypass with --allow-unpushed-factory.
-  [[ -n "$TARGET_REPO" && -d "$TARGET_REPO" ]] || return 0
-  [[ "$ALLOW_UNPUSHED_FACTORY" != "true" ]] || return 0
-  command -v git >/dev/null 2>&1 || return 0
-  git -C "$TARGET_REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
-  git -C "$TARGET_REPO" remote get-url origin >/dev/null 2>&1 || return 0
-
+resolve_repo_base_branch() {
+  # Resolves the git base branch from factory config or origin tracking refs (shared by landed-check and git archive).
+  local target_cfg_rel="${1:-}"
   local remote_head base_branch=""
-  if [[ -f "$TARGET_REPO/.factory/factory-profile.yaml" ]]; then
-    base_branch="$(python3 -c 'import sys, yaml; d=yaml.safe_load(open(sys.argv[1])) or {}; print(((d.get("git_flow") or {}).get("base_branch")) or "")' "$TARGET_REPO/.factory/factory-profile.yaml" 2>/dev/null || true)"
-  fi
+  for cfg_cand in "$TARGET_REPO/$target_cfg_rel" "$TARGET_REPO/.factory/factory-profile.yaml"; do
+    if [[ -n "$target_cfg_rel" || "$cfg_cand" == *factory-profile.yaml ]]; then
+      if [[ -z "$base_branch" && -f "$cfg_cand" ]]; then
+        base_branch="$(python3 -c 'import sys, yaml; d=yaml.safe_load(open(sys.argv[1])) or {}; print(((d.get("git_flow") or {}).get("base_branch")) or "")' "$cfg_cand" 2>/dev/null || true)"
+      fi
+    fi
+  done
   if [[ -z "$base_branch" ]]; then
     remote_head="$(git -C "$TARGET_REPO" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)"
     base_branch="${remote_head#origin/}"
@@ -303,22 +336,239 @@ check_remote_factory_landed() {
       fi
     done
   fi
+  printf '%s' "$base_branch"
+}
+
+check_remote_factory_landed() {
+  # Verifies the resolved factory config and any v2 toolchain Dockerfiles are pushed to origin/<base_branch>
+  # BEFORE mutating Hub state or submitting Cloud Build archives (UX-C1, M1, Wave 2 M9).
+  local repo_cfg="${1:-}"
+  [[ -n "$TARGET_REPO" && -d "$TARGET_REPO" ]] || return 0
+  [[ "$ALLOW_UNPUSHED_FACTORY" != "true" ]] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+  git -C "$TARGET_REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  git -C "$TARGET_REPO" remote get-url origin >/dev/null 2>&1 || return 0
+
+  local target_cfg_rel="" schema_ver="1" df_rel="" tester_df_rel=""
+  if [[ -n "$repo_cfg" ]]; then
+    target_cfg_rel="$(jq -r '.config_rel_path // ""' <<< "$repo_cfg")"
+    schema_ver="$(jq -r '.schema_version // "1"' <<< "$repo_cfg")"
+    df_rel="$(jq -r '.toolchain.dockerfile // ""' <<< "$repo_cfg")"
+    tester_df_rel="$(jq -r '.toolchain.tester_dockerfile // ""' <<< "$repo_cfg")"
+  fi
+  if [[ -z "$target_cfg_rel" ]]; then
+    if [[ -n "$CONFIG_PATH" ]]; then
+      target_cfg_rel="$CONFIG_PATH"
+    elif [[ -f "$TARGET_REPO/.factory/factory.yaml" ]]; then
+      target_cfg_rel=".factory/factory.yaml"
+    else
+      target_cfg_rel=".factory/hub-project.yaml"
+    fi
+  fi
+
+  local base_branch
+  base_branch="$(resolve_repo_base_branch "$target_cfg_rel")"
   [[ -n "$base_branch" ]] || return 0
 
   # Refresh remote tracking ref best-effort so recently merged PRs do not trigger stale local failures (M1).
   git -C "$TARGET_REPO" fetch origin "$base_branch" --quiet 2>/dev/null || true
 
   if git -C "$TARGET_REPO" rev-parse --verify "refs/remotes/origin/${base_branch}" >/dev/null 2>&1; then
-    if ! git -C "$TARGET_REPO" ls-tree -r --name-only "refs/remotes/origin/${base_branch}" -- .factory/hub-project.yaml 2>/dev/null | grep -q .; then
-      echo "APPLY FAILED: .factory/hub-project.yaml is not landed on origin/${base_branch}." >&2
-      echo "  Remote Scion containers clone from origin and will not see local-only .factory/ files." >&2
-      echo "  If you just merged the PR on GitHub, run: git -C \"$TARGET_REPO\" fetch origin ${base_branch}" >&2
-      echo "  Otherwise run: factory_onboard.py emit --pr (or pass --allow-unpushed-factory for local tests)." >&2
-      exit 1
+    local required_paths=("$target_cfg_rel")
+    if [[ "$schema_ver" == "2" ]]; then
+      [[ -n "$df_rel" ]] && required_paths+=("$df_rel")
+      [[ -n "$tester_df_rel" ]] && required_paths+=("$tester_df_rel")
     fi
-    if [[ -f "$TARGET_REPO/.factory/hub-project.yaml" ]] && ! git -C "$TARGET_REPO" diff --quiet "refs/remotes/origin/${base_branch}" -- .factory/hub-project.yaml 2>/dev/null; then
-      echo "WARNING: Local .factory/hub-project.yaml differs from origin/${base_branch}. Push/merge changes so remote containers match." >&2
-    fi
+    local req_rel
+    for req_rel in "${required_paths[@]}"; do
+      if ! git -C "$TARGET_REPO" ls-tree -r --name-only "refs/remotes/origin/${base_branch}" -- "$req_rel" 2>/dev/null | grep -q .; then
+        echo "APPLY FAILED: ${req_rel} is not landed on origin/${base_branch}." >&2
+        echo "  Remote Scion containers and Cloud Build archives use origin/${base_branch} and will not see local-only .factory/ files." >&2
+        echo "  If you just merged the PR on GitHub, run: git -C \"$TARGET_REPO\" fetch origin ${base_branch}" >&2
+        echo "  Otherwise run: factory_onboard.py emit --pr (or pass --allow-unpushed-factory for local tests)." >&2
+        exit 1
+      fi
+      if [[ -f "$TARGET_REPO/$req_rel" ]] && ! git -C "$TARGET_REPO" diff --quiet "refs/remotes/origin/${base_branch}" -- "$req_rel" 2>/dev/null; then
+        echo "WARNING: Local ${req_rel} differs from origin/${base_branch}. Push/merge changes so remote builds and containers match." >&2
+      fi
+    done
+  fi
+}
+
+_build_one_customer_dockerfile() {
+  # Lints, archives, builds via isolated Cloud Build, verifies binaries inside `docker build --network=none`
+  # as non-root `scion` (never executing the customer image as a Cloud Build step, C1), and prints the pinned digest ref.
+  local df_rel="$1" verify_json="$2" base_img="$3" build_project="$4" region="$5" build_ar="$6" build_sa="$7" sa_project="$8" staging_bkt="$9" image_name="${10}" base_branch="${11}"
+  local df_abs="$TARGET_REPO/$df_rel"
+  [[ -f "$df_abs" ]] || { echo "APPLY FAILED: Declared Dockerfile '${df_rel}' does not exist." >&2; exit 1; }
+
+  echo "=== CUSTOMER DOCKERFILE LINT (4-rule fail-closed): ${df_rel} ===" >&2
+  python3 "$SCRIPT_DIR/parse_hub_project.py" \
+    --lint-dockerfile "$df_abs" \
+    --verify-binaries-json "$verify_json" >&2
+
+  if [[ "$SKIP_CUSTOMER_IMAGE_BUILD" == "true" ]]; then
+    echo "SKIP customer image build for ${df_rel} (--skip-customer-image-build set)." >&2
+    return 0
+  fi
+
+  local tmp_ctx tmp_cb target_tag="${build_ar}/${image_name}:latest"
+  tmp_ctx="$(mktemp -d)"
+  tmp_cb="$(mktemp -d)"
+  TMP_CLEANUP_DIRS+=("$tmp_ctx" "$tmp_cb")
+
+  # Archive strictly from refs/remotes/origin/<base_branch> unless --allow-unpushed-factory is set (M9).
+  if [[ "$ALLOW_UNPUSHED_FACTORY" != "true" ]] \
+    && command -v git >/dev/null 2>&1 \
+    && git -C "$TARGET_REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    && [[ -n "$base_branch" ]] \
+    && git -C "$TARGET_REPO" rev-parse --verify "refs/remotes/origin/${base_branch}" >/dev/null 2>&1; then
+    echo "=== ARCHIVING COMMITTED CONTEXT FROM origin/${base_branch} (M9) ===" >&2
+    git -C "$TARGET_REPO" archive "refs/remotes/origin/${base_branch}" | tar -x -C "$tmp_ctx"
+  else
+    tar -C "$TARGET_REPO" --exclude='.git' --exclude='.scion' -cf - . | tar -x -C "$tmp_ctx"
+  fi
+  [[ -f "$tmp_ctx/$df_rel" ]] || { echo "APPLY FAILED: ${df_rel} missing in archived build context." >&2; exit 1; }
+
+  # Build a network-isolated verification Dockerfile using JSON exec-form RUN as USER scion (C1).
+  python3 - "$tmp_cb/cloudbuild.yaml" "$tmp_ctx/.scion-verify.Dockerfile" "$df_rel" "$base_img" "$target_tag" "$verify_json" <<'PYEOF'
+import json, pathlib, re, shlex, sys, yaml
+
+cb_path, verify_df_path, df_rel, base_img, target_tag, verify_raw = sys.argv[1:7]
+VERIFY_RE = re.compile(r"^[a-z0-9][a-z0-9._+-]{0,31}( (--version|-version|version|--help|playwright --version))?$")
+verify_cmds = json.loads(verify_raw) if verify_raw else []
+lines = [f"FROM {target_tag}", "USER scion"]
+for cmd in verify_cmds:
+    s = str(cmd).strip()
+    if not VERIFY_RE.fullmatch(s):
+        raise SystemExit(f"ERROR: Unsafe toolchain.verify_binaries command rejected: {s!r}")
+    argv = shlex.split(s)
+    lines.append(f"RUN {json.dumps(argv)}")
+if not verify_cmds:
+    lines.append('RUN ["id"]')
+pathlib.Path(verify_df_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+cb = {
+    "steps": [
+        {
+            "name": "gcr.io/cloud-builders/docker",
+            "id": "build-customer-runtime",
+            "args": ["build", "-f", df_rel, "--build-arg", f"BASE_IMAGE={base_img}", "-t", target_tag, "."],
+        },
+        {
+            "name": "gcr.io/cloud-builders/docker",
+            "id": "verify-binaries-network-none",
+            "args": ["build", "--network=none", "-f", ".scion-verify.Dockerfile", "."],
+        },
+    ],
+    "images": [target_tag],
+    "options": {"logging": "CLOUD_LOGGING_ONLY"},
+}
+pathlib.Path(cb_path).write_text(yaml.safe_dump(cb, sort_keys=False), encoding="utf-8")
+PYEOF
+
+  local gcloud_flags=()
+  if [[ -n "$GCLOUD_CONFIG" ]]; then
+    gcloud_flags+=(--configuration="$GCLOUD_CONFIG")
+  fi
+  echo "=== CUSTOMER DOCKERFILE BUILD + ISOLATED VERIFY_BINARIES: ${df_rel} -> ${target_tag} (project=${build_project}, sa=${build_sa}) ===" >&2
+  gcloud "${gcloud_flags[@]}" builds submit "$tmp_ctx" \
+    --project="$build_project" \
+    --region="$region" \
+    --config="$tmp_cb/cloudbuild.yaml" \
+    --service-account="projects/${sa_project}/serviceAccounts/${build_sa}" \
+    --gcs-source-staging-dir="gs://${staging_bkt}/customer-images/${image_name}" \
+    --quiet >&2
+
+  local digest
+  digest="$(gcloud "${gcloud_flags[@]}" artifacts docker images describe "$target_tag" \
+    --project="$build_project" --format='value(image_summary.digest)')"
+  [[ "$digest" == sha256:* ]] || { echo "APPLY FAILED: Could not resolve @sha256 digest for ${target_tag}." >&2; exit 1; }
+  printf '%s' "${build_ar}/${image_name}@${digest}"
+}
+
+build_and_pin_customer_dockerfile() {
+  # Runs only for schema_version 2 (M4). Builds core Dockerfile.customer (and optional Dockerfile.tester, H2)
+  # using the isolated Sandbox Cloud Build SA when available, or fails closed on 2-project Hubs unless
+  # --allow-hub-customer-image-build is explicitly passed (C1, costela H3).
+  local repo_cfg="$1" pack_name="$2" pack_prefix="$3"
+  local schema_ver df_rel tester_df_rel verify_json
+  schema_ver="$(jq -r '.schema_version // "1"' <<< "$repo_cfg")"
+  [[ "$schema_ver" == "2" ]] || return 0
+  df_rel="$(jq -r '.toolchain.dockerfile // ""' <<< "$repo_cfg")"
+  tester_df_rel="$(jq -r '.toolchain.tester_dockerfile // ""' <<< "$repo_cfg")"
+  [[ ( -n "$df_rel" || -n "$tester_df_rel" ) && -n "$TARGET_REPO" ]] || return 0
+
+  verify_json="$(jq -c '.toolchain.verify_binaries // []' <<< "$repo_cfg")"
+  if [[ "$SKIP_CUSTOMER_IMAGE_BUILD" == "true" ]]; then
+    [[ -n "$df_rel" ]] && python3 "$SCRIPT_DIR/parse_hub_project.py" --lint-dockerfile "$TARGET_REPO/$df_rel" --verify-binaries-json "$verify_json"
+    [[ -n "$tester_df_rel" ]] && python3 "$SCRIPT_DIR/parse_hub_project.py" --lint-dockerfile "$TARGET_REPO/$tester_df_rel" --verify-binaries-json "[]"
+    echo "SKIP customer image build (--skip-customer-image-build set)."
+    return 0
+  fi
+  if [[ -z "$LANDING_ZONE_JSON" || ! -f "$LANDING_ZONE_JSON" ]]; then
+    [[ -n "$df_rel" ]] && python3 "$SCRIPT_DIR/parse_hub_project.py" --lint-dockerfile "$TARGET_REPO/$df_rel" --verify-binaries-json "$verify_json"
+    [[ -n "$tester_df_rel" ]] && python3 "$SCRIPT_DIR/parse_hub_project.py" --lint-dockerfile "$TARGET_REPO/$tester_df_rel" --verify-binaries-json "[]"
+    echo "WARNING: Skipping customer Dockerfile Cloud Build (no --landing-zone outputs JSON provided)." >&2
+    return 0
+  fi
+
+  local hub_p region hub_ar hub_sa sbx_p sbx_ar sbx_sa staging_bkt base_img
+  local build_project build_ar build_sa sa_project
+  hub_p="$(jq -r '.hub_project_id.value // empty' "$LANDING_ZONE_JSON")"
+  region="$(jq -r '.region.value // "us-central1"' "$LANDING_ZONE_JSON")"
+  hub_ar="$(jq -r '.artifact_registry_url.value // empty' "$LANDING_ZONE_JSON")"
+  hub_sa="$(jq -r '.release_builder_sa_email.value // empty' "$LANDING_ZONE_JSON")"
+  sbx_p="$(jq -r '.sandbox_project_id.value // empty' "$LANDING_ZONE_JSON")"
+  sbx_ar="$(jq -r '.sandbox_artifact_registry_url.value // empty' "$LANDING_ZONE_JSON")"
+  sbx_sa="$(jq -r '.sandbox_builder_sa_email.value // empty' "$LANDING_ZONE_JSON")"
+  staging_bkt="$(jq -r '.sandbox_staging_bucket.value // empty' "$LANDING_ZONE_JSON")"
+  base_img="${HARNESS_IMAGE_ANTIGRAVITY:-$(jq -r --arg k "${pack_name}-antigravity-runtime" '.images[$k] // empty' "$KIT_DIR/manifest.json")}"
+
+  if [[ ! "$base_img" =~ @sha256:[0-9a-f]{64}$ ]]; then
+    echo "APPLY FAILED: Base antigravity image '${base_img:-missing}' is not pinned to an immutable @sha256 digest (H1-j)." >&2
+    exit 1
+  fi
+  [[ -n "$staging_bkt" ]] || { echo "APPLY FAILED: Missing sandbox_staging_bucket in landing-zone outputs." >&2; exit 1; }
+
+  if [[ -n "$sbx_p" && -n "$sbx_ar" && -n "$sbx_sa" ]]; then
+    build_project="$sbx_p"
+    build_ar="$sbx_ar"
+    build_sa="$sbx_sa"
+    sa_project="$sbx_p"
+  elif [[ "$ALLOW_HUB_CUSTOMER_IMAGE_BUILD" == "true" ]]; then
+    [[ -n "$hub_p" && -n "$hub_ar" && -n "$hub_sa" ]] || { echo "APPLY FAILED: Missing Hub builder outputs in landing-zone JSON." >&2; exit 1; }
+    build_project="$hub_p"
+    build_ar="$hub_ar"
+    build_sa="$hub_sa"
+    sa_project="$hub_p"
+    echo "WARNING: Building customer Dockerfile inside Hub project '${hub_p}' (--allow-hub-customer-image-build set; no Sandbox project provisioned)." >&2
+  else
+    echo "APPLY FAILED: Refusing to build customer Dockerfile with Hub release_builder SA (costela H3 / C1)." >&2
+    echo "  Provision the isolated Sandbox project (enable_sandbox_project=true), OR pass --allow-hub-customer-image-build on 2-project Hubs." >&2
+    exit 1
+  fi
+
+  local cfg_slug mono_prefix origin_url="" origin_hash="" img_slug base_branch target_cfg_rel
+  cfg_slug="$(jq -r '(.slug // "") | if . == "" then "customer" else . end' <<< "$repo_cfg")"
+  mono_prefix="$(jq -r 'if .monorepo.enabled then (.monorepo.agent_prefix // "") else "" end' <<< "$repo_cfg")"
+  target_cfg_rel="$(jq -r '.config_rel_path // ""' <<< "$repo_cfg")"
+  base_branch="$(resolve_repo_base_branch "$target_cfg_rel")"
+  if command -v git >/dev/null 2>&1 && git -C "$TARGET_REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    origin_url="$(git -C "$TARGET_REPO" remote get-url origin 2>/dev/null || true)"
+  fi
+  if [[ -n "$origin_url" ]]; then
+    origin_hash="$(printf '%s' "$origin_url" | python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.read().strip().encode()).hexdigest()[:6])')"
+  fi
+  img_slug="${cfg_slug}${mono_prefix:+-$mono_prefix}${origin_hash:+-$origin_hash}"
+
+  if [[ -n "$df_rel" ]]; then
+    HARNESS_IMAGE_ANTIGRAVITY="$(_build_one_customer_dockerfile "$df_rel" "$verify_json" "$base_img" "$build_project" "$region" "$build_ar" "$build_sa" "$sa_project" "$staging_bkt" "${img_slug}-antigravity" "$base_branch")"
+    echo "PINNED CUSTOMER RUNTIME IMAGE: ${HARNESS_IMAGE_ANTIGRAVITY}"
+  fi
+  if [[ -n "$tester_df_rel" ]]; then
+    HARNESS_IMAGE_TESTER="$(_build_one_customer_dockerfile "$tester_df_rel" "[]" "$base_img" "$build_project" "$region" "$build_ar" "$build_sa" "$sa_project" "$staging_bkt" "${img_slug}-tester-antigravity" "$base_branch")"
+    echo "PINNED CUSTOMER TESTER IMAGE: ${HARNESS_IMAGE_TESTER}"
   fi
 }
 
@@ -491,29 +741,34 @@ register_and_verify_sa() {
 }
 
 ensure_kaizen_schedule() {
-  local pack_prefix="$1" kz_enabled="$2" kz_cron="$3" kz_tz="$4" kz_coord="$5" kz_gcp_obs="${6:-false}"
+  local pack_prefix="$1" kz_enabled="$2" kz_cron="$3" kz_tz="$4" kz_coord="$5" kz_gcp_obs="${6:-false}" existing_hub="${7:-false}" mono_enabled="${8:-false}"
   if [[ "$kz_enabled" != "true" ]]; then
-    echo "KAIZEN SCHEDULE: explicitly disabled via .factory/hub-project.yaml (kaizen.enabled=false)."
+    echo "KAIZEN SCHEDULE: explicitly disabled via factory config (kaizen.enabled=false)."
     return 0
+  fi
+  local sched_name="daily-kaizen"
+  # Scope schedule name per coordinator in monorepo or shared-Hub factories so sibling schedules never clobber each other (H3).
+  if [[ ( "$mono_enabled" == "true" || "$existing_hub" == "true" ) && -n "$kz_coord" && "$kz_coord" != "coordinator" && "$kz_coord" != "${pack_prefix}-coordinator" ]]; then
+    sched_name="daily-kaizen-${kz_coord}"
   fi
   local sched_json existing_match stale_ids kz_sa_hint="worker SA"
   if [[ "$kz_gcp_obs" == "true" ]]; then
     kz_sa_hint="kaizen-viewer SA"
   fi
   sched_json="$(scion --format json schedule list --show recurring "${PROJ_FLAGS[@]}" --hub "$HUB_URL")"
-  # Reconcile daily-kaizen idempotently: skip if cron and timezone already match, else replace stale daily/weekly entries.
-  existing_match="$(jq -r --arg c "$kz_cron" --arg tz "$kz_tz" '((if type == "array" then . elif (.schedules | type) == "object" then (.schedules.schedules // []) elif (.schedules | type) == "array" then .schedules else (.items // []) end)[] | select(.name == "daily-kaizen" and ((.cronExpr // $c) == $c) and ((.timeZone // $tz) == $tz)) | .id) // empty' <<< "$sched_json" | head -n 1)"
+  # Reconcile idempotently matching both schedule name and target coordinator agent (H3).
+  existing_match="$(jq -r --arg sn "$sched_name" --arg coord "$kz_coord" --arg c "$kz_cron" --arg tz "$kz_tz" '((if type == "array" then . elif (.schedules | type) == "object" then (.schedules.schedules // []) elif (.schedules | type) == "array" then .schedules else (.items // []) end)[] | select(.name == $sn and ((.agent // .targetAgent // $coord) == $coord) and ((.cronExpr // $c) == $c) and ((.timeZone // $tz) == $tz)) | .id) // empty' <<< "$sched_json" | head -n 1)"
   if [[ -n "$existing_match" ]]; then
-    echo "SKIP schedule: daily-kaizen ($existing_match) already registered (${kz_cron} ${kz_tz})."
+    echo "SKIP schedule: ${sched_name} ($existing_match) already registered (${kz_cron} ${kz_tz} -> ${kz_coord})."
     return 0
   fi
-  stale_ids="$(jq -r '((if type == "array" then . elif (.schedules | type) == "object" then (.schedules.schedules // []) elif (.schedules | type) == "array" then .schedules else (.items // []) end)[] | select(.name == "daily-kaizen" or .name == "weekly-kaizen") | .id) // empty' <<< "$sched_json" || true)"
+  stale_ids="$(jq -r --arg sn "$sched_name" --arg coord "$kz_coord" '((if type == "array" then . elif (.schedules | type) == "object" then (.schedules.schedules // []) elif (.schedules | type) == "array" then .schedules else (.items // []) end)[] | select((.name == $sn or ($sn == "daily-kaizen" and .name == "weekly-kaizen")) and ((.agent // .targetAgent // $coord) == $coord)) | .id) // empty' <<< "$sched_json" || true)"
   while IFS= read -r stale_id; do
     [[ -n "$stale_id" ]] || continue
     scion schedule delete "$stale_id" "${PROJ_FLAGS[@]}" --hub "$HUB_URL" >/dev/null 2>&1 || true
   done <<< "$stale_ids"
   scion schedule create-recurring \
-    --name "daily-kaizen" \
+    --name "$sched_name" \
     --cron "$kz_cron" \
     --time-zone "$kz_tz" \
     --type message \
@@ -522,20 +777,22 @@ ensure_kaizen_schedule() {
     --message "Run daily closed-loop Kaizen cycle: spawn ${pack_prefix}-kaizen-analyst (--role baseline, ${kz_sa_hint}), collect 0-token telemetry, publish report and Artifact, then retire it." \
     "${PROJ_FLAGS[@]}" \
     --hub "$HUB_URL"
-  echo "SCHEDULED KAIZEN: daily-kaizen (${kz_cron} ${kz_tz} -> ${kz_coord} --wake)"
+  echo "SCHEDULED KAIZEN: ${sched_name} (${kz_cron} ${kz_tz} -> ${kz_coord} --wake)"
 }
 
 ensure_coordinator_started() {
-  local pack_prefix="$1" default_harness="$2" repo_cfg="$3" worker_sa="$4"
-  local coord_name coord_tpl coord_harness coord_model coord_thinking disabled_json coord_disabled
+  local pack_prefix="$1" default_harness="$2" repo_cfg="$3" worker_sa="$4" hc_prefix="${5:-$1}"
+  local coord_name coord_tpl coord_harness coord_model coord_thinking disabled_json coord_disabled brief_rel cfg_rel
   coord_name="$(jq -re --arg p "$pack_prefix" '.kaizen.coordinator_agent // ($p + "-coordinator")' <<< "$repo_cfg")"
   coord_tpl="${pack_prefix}-coordinator"
   coord_harness="$(jq -r --arg d "$default_harness" '.model_routing.coordinator.harness // $d' <<< "$repo_cfg")"
-  coord_harness="${pack_prefix}-${coord_harness}"
+  coord_harness="${hc_prefix}-${coord_harness}"
   coord_model="$(jq -r '.model_routing.coordinator.model // empty' <<< "$repo_cfg")"
   coord_thinking="$(jq -r '.model_routing.coordinator.thinking_level // empty' <<< "$repo_cfg")"
   disabled_json="$(jq -c '.roster.disabled_roles // []' <<< "$repo_cfg")"
   coord_disabled="$(jq -r --arg full "$coord_tpl" 'index("coordinator") != null or index($full) != null' <<< "$disabled_json")"
+  brief_rel="$(jq -r '.coordinator_brief_rel // ".factory/coordinator-bootstrap-brief.md"' <<< "$repo_cfg")"
+  cfg_rel="$(jq -r '.config_rel_path // ".factory/factory.yaml"' <<< "$repo_cfg")"
 
   if [[ "$coord_disabled" == "true" ]]; then
     echo "SKIP coordinator start: coordinator role is disabled in roster.disabled_roles."
@@ -555,11 +812,11 @@ ensure_coordinator_started() {
     start_args+=(--service-account "$worker_sa")
   fi
   local has_brief="false"
-  if [[ -n "$TARGET_REPO" && -f "$TARGET_REPO/.factory/coordinator-bootstrap-brief.md" ]]; then
+  if [[ -n "$TARGET_REPO" && -f "$TARGET_REPO/$brief_rel" ]]; then
     has_brief="true"
-    start_args+=(--task-file "$TARGET_REPO/.factory/coordinator-bootstrap-brief.md")
+    start_args+=(--task-file "$TARGET_REPO/$brief_rel")
   else
-    start_args+=("Read .factory/hub-project.yaml, .factory/knowledge-index.yaml, and .factory/waves/wave-1.yaml. Post a concise standby readiness summary in Scion Chat and run sciontool status blocked until the Product Owner approves execution.")
+    start_args+=("Read ${cfg_rel} and AGENTS.md. Post a concise standby readiness summary in Scion Chat and run sciontool status blocked until the Product Owner approves execution.")
   fi
   start_args+=(--wait-timeout 2m --non-interactive ${PROJ_FLAGS[@]+"${PROJ_FLAGS[@]}"} --hub "$HUB_URL")
 
@@ -629,15 +886,64 @@ ensure_coordinator_started() {
   echo "COORDINATOR STARTED (standby mode): ${coord_name} (template=${coord_tpl}, harness=${coord_harness})"
 }
 
+apply_hub_global_governance() {
+  # Applies Hub-wide IAM policy, limits, lifecycle experiments, broker governance, and GCP telemetry (Phase A 1x).
+  local max_dur="$1" max_turns="$2" max_calls="$3" auto_susp="$4"
+  # Note: default_agent_role is read-only through the Scion v0.4 server-config API
+  # (dbUnwrittenLayer1Paths) and is enforced per template and via Stage 02 settings.yaml.
+  # Use gcp_iam_deny_unknown_policy=fail-open (while keeping gcp_iam_check_mode=enforce) so
+  # project-scoped Hub SAs pass Policy Troubleshooter Allow checks without org-level denyReviewer (HC-01 F17b).
+  scion hub settings set server.hub.gcp_iam_check_mode enforce --hub "$HUB_URL"
+  scion hub settings set server.hub.gcp_iam_deny_unknown_policy "${GCP_IAM_DENY_UNKNOWN_POLICY:-fail-open}" --hub "$HUB_URL"
+  scion hub settings set default_gcp_identity_mode block --hub "$HUB_URL"
+  scion hub settings set default_max_duration "$max_dur" --hub "$HUB_URL"
+  scion hub settings set default_max_turns "$max_turns" --hub "$HUB_URL"
+  scion hub settings set default_max_model_calls "$max_calls" --hub "$HUB_URL"
+  scion hub settings set server.hub.auto_suspend_idle "$auto_susp" --hub "$HUB_URL"
+  if [[ "$auto_susp" == "true" ]]; then
+    scion hub experiments enable lifecycle.idle_suspend --hub "$HUB_URL"
+  fi
+  scion hub experiments enable lifecycle.never_suspend --hub "$HUB_URL" || true
+  for _exp in web.decisions hub.artifacts web.artifact_review_editor hub.artifact_archive; do
+    scion hub experiments enable "$_exp" --hub "$HUB_URL"
+  done
+  scion hub experiments enable hub.admin_managed_brokers --hub "$HUB_URL" \
+    || echo "WARNING: Could not enable hub.admin_managed_brokers on ${HUB_URL}." >&2
+  if [[ "${ENFORCE_ADMIN_MANAGED_BROKERS:-false}" == "true" ]]; then
+    scion hub settings set broker_policy.admin_managed_only true --hub "$HUB_URL"
+  fi
+  if [[ -n "$LANDING_ZONE_JSON" && -f "$LANDING_ZONE_JSON" ]]; then
+    local hub_p
+    hub_p="$(jq -r '.hub_project_id.value // empty' "$LANDING_ZONE_JSON")"
+    if [[ -n "$hub_p" ]]; then
+      scion hub settings set telemetry.enabled true --hub "$HUB_URL"
+      scion hub settings set telemetry.cloud.enabled true --hub "$HUB_URL"
+      scion hub settings set telemetry.cloud.provider gcp --hub "$HUB_URL"
+      scion hub settings set telemetry.cloud.gcp_project_id "$hub_p" --hub "$HUB_URL"
+    fi
+  fi
+}
+
+do_platform_init() {
+  # Phase A one-time Hub initialization for 1-Hub->N-Factories deployments (H4, M2).
+  do_preflight
+  apply_hub_global_governance \
+    "${PLATFORM_DEFAULT_MAX_DURATION:-2h}" \
+    "${PLATFORM_DEFAULT_MAX_TURNS:-60}" \
+    "${PLATFORM_DEFAULT_MAX_MODEL_CALLS:-150}" \
+    "${PLATFORM_AUTO_SUSPEND_IDLE:-true}"
+  echo "PLATFORM INIT COMPLETE."
+}
+
 do_apply() {
   do_preflight
-  if [[ -n "$TARGET_REPO" ]]; then
-    check_remote_factory_landed
-  fi
   local pack_name pack_prefix repo_cfg mode max_dur max_turns max_calls auto_susp exclude_json
   pack_name="$(jq -re '.pack' "$KIT_DIR/manifest.json")"
   pack_prefix="$(jq -re '.pack_prefix // .pack' "$KIT_DIR/manifest.json")"
   repo_cfg="$(parse_repo_cfg "$pack_name")"
+  if [[ -n "$TARGET_REPO" ]]; then
+    check_remote_factory_landed "$repo_cfg"
+  fi
 
   mode="$(jq -re '.mode' <<< "$repo_cfg")"
   max_dur="$(jq -re '.limits.default_max_duration' <<< "$repo_cfg")"
@@ -692,13 +998,40 @@ do_apply() {
     fi
   done < <(jq -r '.skills[] | [.name, .version, ((if has("attach_to_project") then .attach_to_project else true end) | tostring)] | @tsv' "$KIT_DIR/manifest.json")
 
-  # 2. Materialize Vertex AI project/region + real harness image into global Scion harness-configs store and sync.
-  local default_harness claude_mg_enabled gemini_loc claude_reg existing_hub inf_proj=""
+  # 2. Lint, build, verify_binaries, and digest-pin custom .factory/[<prefix>/]Dockerfile.customer when declared,
+  # then materialize Vertex AI project/region + real harness image and sync to Scion Hub.
+  build_and_pin_customer_dockerfile "$repo_cfg" "$pack_name" "$pack_prefix"
+
+  local default_harness claude_mg_enabled gemini_loc claude_reg existing_hub inf_proj="" hc_prefix="$pack_prefix" mono_enabled="false" mono_prefix="" cfg_slug="" df_declared="" tester_df_declared="" origin_url="" origin_hash=""
   default_harness="$(jq -re '.harnesses.default // "antigravity-vertex"' <<< "$repo_cfg")"
   claude_mg_enabled="$(jq -re '(.harnesses.claude_model_garden_enabled // false) | tostring' <<< "$repo_cfg")"
   gemini_loc="$(jq -re '.harnesses.vertex_gemini_location // "global"' <<< "$repo_cfg")"
   claude_reg="$(jq -re '.harnesses.vertex_claude_region // "global"' <<< "$repo_cfg")"
   existing_hub="$(jq -r '(.existing_hub // false) | tostring' <<< "$repo_cfg")"
+  mono_enabled="$(jq -r '(.monorepo.enabled // false) | tostring' <<< "$repo_cfg")"
+  mono_prefix="$(jq -r 'if .monorepo.enabled then (.monorepo.agent_prefix // "") else "" end' <<< "$repo_cfg")"
+  cfg_slug="$(jq -r '(.slug // "") | if . == "" then "customer" else . end' <<< "$repo_cfg")"
+  df_declared="$(jq -r '.toolchain.dockerfile // ""' <<< "$repo_cfg")"
+  tester_df_declared="$(jq -r '.toolchain.tester_dockerfile // ""' <<< "$repo_cfg")"
+  # Isolate harness-config name per factory (with origin URL hash when present) whenever a custom Dockerfile
+  # is declared so sibling factories or distinct repos sharing 1 Hub never overwrite shared images (H2, M10).
+  if [[ -n "$df_declared" || -n "$tester_df_declared" ]]; then
+    hc_prefix="${pack_prefix}-${cfg_slug}"
+    if [[ -n "$mono_prefix" && "$mono_prefix" != "$pack_prefix" ]]; then
+      hc_prefix="${hc_prefix}-${mono_prefix}"
+    fi
+    if [[ -n "$TARGET_REPO" ]] && command -v git >/dev/null 2>&1 && git -C "$TARGET_REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      origin_url="$(git -C "$TARGET_REPO" remote get-url origin 2>/dev/null || true)"
+    fi
+    if [[ -n "$origin_url" ]]; then
+      origin_hash="$(printf '%s' "$origin_url" | python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.read().strip().encode()).hexdigest()[:6])')"
+      hc_prefix="${hc_prefix}-${origin_hash}"
+    fi
+    if [[ "$hc_prefix" == "$pack_prefix" ]]; then
+      echo "APPLY FAILED: Custom Dockerfile resolved to shared pack harness prefix '${pack_prefix}'." >&2
+      exit 1
+    fi
+  fi
   if [[ -n "$LANDING_ZONE_JSON" && -f "$LANDING_ZONE_JSON" ]]; then
     inf_proj="$(jq -r '.inference_project_id.value // empty' "$LANDING_ZONE_JSON")"
   fi
@@ -715,16 +1048,17 @@ do_apply() {
     mkdir -p "$global_hc_root"
     for hc_dir in "$KIT_DIR"/harness-configs/*; do
       [[ -d "$hc_dir" && -f "$hc_dir/config.yaml" ]] || continue
-      local hc_name img_override=""
-      hc_name="$(basename "$hc_dir")"
-      if [[ "$hc_name" == *"-claude-vertex" && "$claude_mg_enabled" != "true" ]]; then
+      local src_hc_name hc_name img_override=""
+      src_hc_name="$(basename "$hc_dir")"
+      hc_name="${hc_prefix}-${src_hc_name#"${pack_prefix}-"}"
+      if [[ "$src_hc_name" == *"-claude-vertex" && "$claude_mg_enabled" != "true" ]]; then
         echo "SKIP harness-config: $hc_name (harnesses.claude_model_garden_enabled=false; using Vertex AI Gemini 1P)."
         continue
       fi
-      if [[ "$hc_name" == *"-claude-vertex" ]]; then
+      if [[ "$src_hc_name" == *"-claude-vertex" ]]; then
         img_override="$HARNESS_IMAGE_CLAUDE"
         echo "VERTEX MODEL GARDEN CHECKPOINT: confirm claude-opus-5-5 is manually enabled at https://console.cloud.google.com/vertex-ai/publishers/anthropic/model-garden/claude-opus-5-5?project=${inf_proj:-YOUR_INFERENCE_PROJECT} (region=${claude_reg})."
-      elif [[ "$hc_name" == *"-antigravity-vertex" ]]; then
+      elif [[ "$src_hc_name" == *"-antigravity-vertex" ]]; then
         img_override="$HARNESS_IMAGE_ANTIGRAVITY"
       fi
       rm -rf "${global_hc_root:?}/${hc_name}"
@@ -763,11 +1097,37 @@ do_apply() {
         return "$hc_rc"
       fi
     done
-    # Avoid overwriting Hub-global default_harness_config when attaching another factory to a shared Hub (HC-09 F1).
-    if [[ "$existing_hub" == "true" ]]; then
-      echo "SKIP hub-global default_harness_config update (brownfield.existing_hub=true; agents pass --harness-config explicitly)."
+    # Sync dedicated heavy tester harness-config when toolchain.tester_dockerfile built HARNESS_IMAGE_TESTER (H2).
+    if [[ -n "$HARNESS_IMAGE_TESTER" && -f "$KIT_DIR/harness-configs/${pack_prefix}-antigravity-vertex/config.yaml" ]]; then
+      local tester_hc_name="${hc_prefix}-tester-antigravity-vertex"
+      local tester_src="$KIT_DIR/harness-configs/${pack_prefix}-antigravity-vertex"
+      rm -rf "${global_hc_root:?}/${tester_hc_name}"
+      local tester_base_args=()
+      if scion harness-config pull "antigravity" --to "${global_hc_root}/${tester_hc_name}" --hub "$HUB_URL" >/dev/null 2>&1; then
+        tester_base_args=(--base-harness-yaml "${global_hc_root}/${tester_hc_name}/config.yaml")
+      else
+        cp -r "$tester_src" "${global_hc_root}/${tester_hc_name}"
+      fi
+      python3 "$SCRIPT_DIR/parse_hub_project.py" \
+        --render-harness-src "$tester_src/config.yaml" \
+        --render-harness-dst "${global_hc_root}/${tester_hc_name}/config.yaml" \
+        "${tester_base_args[@]}" \
+        --inference-project "$inf_proj" \
+        --gemini-location "$gemini_loc" \
+        --claude-region "$claude_reg" \
+        --pin-image "$HARNESS_IMAGE_TESTER"
+      if [[ -n "$TARGET_REPO" && -d "$TARGET_REPO/.scion" ]]; then
+        (cd "$TARGET_REPO" && scion harness-config sync "$tester_hc_name" "${hc_sync_flags[@]}" --hub "$HUB_URL")
+      else
+        scion harness-config sync "$tester_hc_name" "${hc_sync_flags[@]}" --hub "$HUB_URL"
+      fi
+      echo "SYNCED TESTER HARNESS-CONFIG: ${tester_hc_name}"
+    fi
+    # Never overwrite Hub-global default_harness_config on shared Hubs or when using a per-factory custom image (H4, M10).
+    if [[ "$existing_hub" == "true" || "$hc_prefix" != "$pack_prefix" ]]; then
+      echo "SKIP hub-global default_harness_config update (existing_hub=${existing_hub}, hc_prefix=${hc_prefix}; agents pass --harness-config explicitly)."
     else
-      scion hub settings set default_harness_config "${pack_prefix}-${default_harness}" --hub "$HUB_URL"
+      scion hub settings set default_harness_config "${hc_prefix}-${default_harness}" --hub "$HUB_URL"
     fi
   fi
 
@@ -838,50 +1198,12 @@ do_apply() {
     fi
   fi
 
-  # 5. Apply security, Vertex AI project env, and FinOps settings last.
-  # Note: default_agent_role is read-only through the Scion v0.4 server-config API
-  # (dbUnwrittenLayer1Paths) and is enforced per template and via Stage 02 settings.yaml.
-  # Use gcp_iam_deny_unknown_policy=fail-open (while keeping gcp_iam_check_mode=enforce) so
-  # project-scoped Hub SAs pass Policy Troubleshooter Allow checks without org-level denyReviewer (HC-01 F17b).
-  scion hub settings set server.hub.gcp_iam_check_mode enforce --hub "$HUB_URL"
-  scion hub settings set server.hub.gcp_iam_deny_unknown_policy "${GCP_IAM_DENY_UNKNOWN_POLICY:-fail-open}" --hub "$HUB_URL"
-  scion hub settings set default_gcp_identity_mode block --hub "$HUB_URL"
-  scion hub settings set default_max_duration "$max_dur" --hub "$HUB_URL"
-  scion hub settings set default_max_turns "$max_turns" --hub "$HUB_URL"
-  scion hub settings set default_max_model_calls "$max_calls" --hub "$HUB_URL"
-  scion hub settings set server.hub.auto_suspend_idle "$auto_susp" --hub "$HUB_URL"
-  # Enable lifecycle.idle_suspend experiment whenever auto_suspend_idle is active so the Hub
-  # runs the idle auto-suspend sweep and auto-wakes suspended coordinators on inbound messages.
-  if [[ "$auto_susp" == "true" ]]; then
-    scion hub experiments enable lifecycle.idle_suspend --hub "$HUB_URL"
-  fi
-  # Enable lifecycle.never_suspend on Scion v0.4.0-preview.4+ so Coordinator --never-suspend is enforced (HC13-F5).
-  scion hub experiments enable lifecycle.never_suspend --hub "$HUB_URL" || true
-
-  # Enable pilot-validated Decisions and Artifacts review experiments by default on every Hub.
-  for _exp in web.decisions hub.artifacts web.artifact_review_editor hub.artifact_archive; do
-    scion hub experiments enable "$_exp" --hub "$HUB_URL"
-  done
-  # Enable hub.admin_managed_brokers on dedicated Hubs; enforce admin_managed_only explicitly when requested
-  # so split/GKE Hubs with operator-registered brokers do not fail placement silently (v0.4.0-preview.4, M6).
-  if [[ "$existing_hub" != "true" ]]; then
-    scion hub experiments enable hub.admin_managed_brokers --hub "$HUB_URL" \
-      || echo "WARNING: Could not enable hub.admin_managed_brokers on ${HUB_URL}." >&2
-    if [[ "${ENFORCE_ADMIN_MANAGED_BROKERS:-false}" == "true" ]]; then
-      scion hub settings set broker_policy.admin_managed_only true --hub "$HUB_URL"
-    fi
-  fi
-
-  # Enable native Scion GCP telemetry export and Metrics Dashboard backed by hub_project_id (keyless ADC).
-  if [[ -n "$LANDING_ZONE_JSON" ]]; then
-    local hub_p
-    hub_p="$(jq -r '.hub_project_id.value // empty' "$LANDING_ZONE_JSON")"
-    if [[ -n "$hub_p" ]]; then
-      scion hub settings set telemetry.enabled true --hub "$HUB_URL"
-      scion hub settings set telemetry.cloud.enabled true --hub "$HUB_URL"
-      scion hub settings set telemetry.cloud.provider gcp --hub "$HUB_URL"
-      scion hub settings set telemetry.cloud.gcp_project_id "$hub_p" --hub "$HUB_URL"
-    fi
+  # 5. Apply Hub-global security, FinOps, and telemetry settings ONLY on dedicated Hubs (existing_hub=false, H4).
+  # Shared Hubs manage these once via Phase A `bootstrap-hub-project.sh platform-init`.
+  if [[ "$existing_hub" == "true" ]]; then
+    echo "SKIP Hub-global settings, experiments, and telemetry updates (existing_hub=true; managed once via platform-init)."
+  else
+    apply_hub_global_governance "$max_dur" "$max_turns" "$max_calls" "$auto_susp"
   fi
 
   # Set project-scope Vertex AI env vars (--always) via native Scion CLI (fallback to REST PUT only if CLI lacks --always)
@@ -921,16 +1243,18 @@ do_apply() {
     do_overlay_sync
   fi
   # Start Coordinator before scheduling recurring messages targeting it (Scion v0.4.0-preview.4 validates agent existence, HC13-F4).
-  ensure_coordinator_started "$pack_prefix" "$default_harness" "$repo_cfg" "${coord_sa:-$worker_sa}"
+  ensure_coordinator_started "$pack_prefix" "$default_harness" "$repo_cfg" "${coord_sa:-$worker_sa}" "$hc_prefix"
 
-  # 6. Schedule daily closed-loop Kaizen by default on every project.
+  # 6. Schedule daily closed-loop Kaizen by default on every project (sibling-safe in monorepos/shared Hubs, H3).
   ensure_kaizen_schedule \
     "$pack_prefix" \
     "$(jq -re '.kaizen.enabled | tostring' <<< "$repo_cfg")" \
     "$(jq -re '.kaizen.schedule_cron' <<< "$repo_cfg")" \
     "$(jq -re '.kaizen.time_zone' <<< "$repo_cfg")" \
     "$(jq -re '.kaizen.coordinator_agent' <<< "$repo_cfg")" \
-    "$(jq -r '(.kaizen.enable_gcp_obs // false) | tostring' <<< "$repo_cfg")"
+    "$(jq -r '(.kaizen.enable_gcp_obs // false) | tostring' <<< "$repo_cfg")" \
+    "$existing_hub" \
+    "$mono_enabled"
   warn_adk_ge_license_preflight "$pack_name"
   print_github_ci_variables "$pack_name"
   print_delta_watcher_alignment "$repo_cfg" "$pack_prefix" "${resolved_proj_id:-}"
@@ -1004,6 +1328,7 @@ do_rollback() {
 }
 
 case "$ACTION" in
+  platform-init) do_platform_init ;;
   preflight) do_preflight ;;
   plan) do_plan ;;
   backup) do_backup ;;

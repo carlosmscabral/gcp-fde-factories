@@ -102,27 +102,42 @@ def _git_head_sha(repo: pathlib.Path) -> str:
     return proc.stdout.strip() if proc.returncode == 0 and proc.stdout.strip() else "uncommitted"
 
 
-def _load_profile(repo: pathlib.Path, base_ref: str) -> dict[str, Any]:
-    """Loads .factory/factory-profile.yaml from base_ref (anti-self-certification) or working tree."""
+def _load_profile(repo: pathlib.Path, base_ref: str, config_rel: str = "") -> dict[str, Any]:
+    """Loads .factory/[<prefix>/]factory.yaml (or legacy factory-profile.yaml) from base_ref or working tree."""
+    if config_rel:
+        cfg_p = pathlib.Path(config_rel)
+        if cfg_p.is_absolute():
+            try:
+                config_rel = cfg_p.resolve().relative_to(repo).as_posix()
+            except ValueError as exc:
+                raise ValueError(f"--config escapes repository root: '{config_rel}'") from exc
+    candidates = [config_rel] if config_rel else [".factory/factory.yaml", ".factory/factory-profile.yaml"]
     if base_ref:
-        proc = subprocess.run(
-            ["git", "show", f"{base_ref}:.factory/factory-profile.yaml"],
-            cwd=str(repo),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if proc.returncode != 0:
-            raise ValueError(f"Could not read .factory/factory-profile.yaml from git ref '{base_ref}': {proc.stderr.strip()}")
-        raw = yaml.safe_load(proc.stdout)
-    else:
-        profile_path = repo / ".factory" / "factory-profile.yaml"
-        if not profile_path.is_file():
-            raise ValueError(f"Missing {profile_path}")
-        raw = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        raise ValueError("Invalid factory-profile.yaml mapping.")
-    return raw
+        last_err = ""
+        for rel in candidates:
+            proc = subprocess.run(
+                ["git", "show", f"{base_ref}:{rel}"],
+                cwd=str(repo),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if proc.returncode == 0:
+                raw = yaml.safe_load(proc.stdout)
+                if not isinstance(raw, dict):
+                    raise ValueError(f"Invalid YAML mapping in {base_ref}:{rel}")
+                return raw
+            last_err = proc.stderr.strip()
+        raise ValueError(f"Could not read factory config ({', '.join(candidates)}) from git ref '{base_ref}': {last_err}")
+
+    for rel in candidates:
+        profile_path = pathlib.Path(rel) if pathlib.Path(rel).is_absolute() else (repo / rel)
+        if profile_path.is_file():
+            raw = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                raise ValueError(f"Invalid YAML mapping in {profile_path}")
+            return raw
+    raise ValueError(f"Missing factory config in {repo} (checked {', '.join(candidates)})")
 
 
 def _run_step(
@@ -178,12 +193,13 @@ def run_generic_gate(
     level: int = 1,
     base_ref: str = "",
     timeout_seconds: int | None = None,
+    config_rel: str = "",
 ) -> dict[str, Any]:
-    """Runs Level 1 scrubbed offline checks or Level 2 sandbox E2E checks declared in factory-profile.yaml."""
+    """Runs Level 1 scrubbed offline checks or Level 2 sandbox E2E checks declared in factory.yaml or factory-profile.yaml."""
     repo = repo_dir.resolve()
     commit_sha = _git_head_sha(repo)
     try:
-        profile = _load_profile(repo, base_ref)
+        profile = _load_profile(repo, base_ref, config_rel=config_rel)
     except (OSError, ValueError, yaml.YAMLError) as exc:
         return {"ok": False, "level": level, "status": "error", "commit_sha": commit_sha, "error": str(exc), "steps": []}
 
@@ -279,11 +295,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", type=pathlib.Path, default=pathlib.Path("."))
     parser.add_argument("--level", type=int, choices=(1, 2), default=1)
     parser.add_argument("--base-ref", default="", help="Read commands from git ref (e.g. origin/main) to prevent PR self-certification.")
+    parser.add_argument("--config", default="", help="Optional relative or absolute path to .factory/[<prefix>/]factory.yaml.")
     parser.add_argument("--timeout-seconds", type=int, default=None, help="Override per-step subprocess timeout in seconds.")
     parser.add_argument("--out", type=pathlib.Path, default=None)
     args = parser.parse_args(argv)
 
-    result = run_generic_gate(args.repo, level=args.level, base_ref=args.base_ref, timeout_seconds=args.timeout_seconds)
+    result = run_generic_gate(
+        args.repo,
+        level=args.level,
+        base_ref=args.base_ref,
+        timeout_seconds=args.timeout_seconds,
+        config_rel=args.config,
+    )
     encoded = json.dumps(result, indent=2) + "\n"
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
