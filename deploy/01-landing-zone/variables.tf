@@ -155,3 +155,15 @@ variable "github_repositories" {
     error_message = "Every entry in github_repositories must match 'owner/repo'."
   }
 }
+
+variable "enable_delta_watcher" {
+  description = "If true, enables Cloud Scheduler API and provisions least-privilege Delta Watcher SAs and Hub cursor bucket in hub_project_id (Issue #2)."
+  type        = bool
+  default     = false
+}
+
+variable "delta_watcher_token_secret_id" {
+  description = "Optional Secret Manager secret ID in hub_project_id storing the tracker token accessed by the Delta Watcher SA."
+  type        = string
+  default     = ""
+}

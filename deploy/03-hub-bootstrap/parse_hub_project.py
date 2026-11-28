@@ -70,6 +70,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "deploy_target": "",
     "monorepo": {"enabled": False, "subdir": "", "agent_prefix": ""},
     "roster": {"enabled_roles": [], "disabled_roles": [], "max_wip": 3, "reviewer_replicas": 1},
+    "intake": {
+        "enabled": False,
+        "provider": "github",
+        "max_concurrent_issues": 2,
+        "scope_label": "",
+        "release_label": "factory:ready",
+        "hold_label": "factory:hold",
+        "cadence_cron": "*/5 * * * *",
+        "time_zone": "America/Sao_Paulo",
+        "paused": False,
+    },
 }
 
 
@@ -207,6 +218,25 @@ def parse_hub_project(repo_dir: pathlib.Path, expected_pack: str = "") -> dict[s
         "reviewer_replicas": int(raw_roster.get("reviewer_replicas") or 1),
     }
 
+    raw_intake = raw.get("intake") if isinstance(raw.get("intake"), dict) else {}
+    intake_provider = str(raw_intake.get("provider") or "github")
+    if intake_provider not in ("github", "azure_devops", "gitlab", "jira"):
+        raise ValueError(f"Invalid intake.provider '{intake_provider}' in {cfg_path}.")
+    intake_cap = int(raw_intake.get("max_concurrent_issues") if raw_intake.get("max_concurrent_issues") is not None else 2)
+    if intake_cap < 1 or intake_cap > 3:
+        raise ValueError(f"Invalid intake.max_concurrent_issues {intake_cap} in {cfg_path}. Expected 1..3.")
+    intake = {
+        "enabled": bool(raw_intake.get("enabled", False)),
+        "provider": intake_provider,
+        "max_concurrent_issues": intake_cap,
+        "scope_label": str(raw_intake.get("scope_label") or ""),
+        "release_label": str(raw_intake.get("release_label") or "factory:ready"),
+        "hold_label": str(raw_intake.get("hold_label") or "factory:hold"),
+        "cadence_cron": str(raw_intake.get("cadence_cron") or "*/5 * * * *"),
+        "time_zone": str(raw_intake.get("time_zone") or "America/Sao_Paulo"),
+        "paused": bool(raw_intake.get("paused", False)),
+    }
+
     raw_bf = raw.get("brownfield") if isinstance(raw.get("brownfield"), dict) else {}
     return {
         "pack": pack,
@@ -222,6 +252,7 @@ def parse_hub_project(repo_dir: pathlib.Path, expected_pack: str = "") -> dict[s
         "model_routing": raw_routing,
         "monorepo": monorepo,
         "roster": roster,
+        "intake": intake,
     }
 
 

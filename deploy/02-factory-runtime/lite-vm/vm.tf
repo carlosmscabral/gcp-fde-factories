@@ -46,7 +46,7 @@ resource "google_compute_instance" "scion_hub_vm" {
       gcp_iam_deny_unknown_policy = var.gcp_iam_deny_unknown_policy
       admin_emails                = var.admin_emails
       oidc_allowed_domains        = var.oidc_allowed_domains
-      oidc_allowed_gcp_projects   = var.oidc_allowed_gcp_projects
+      oidc_allowed_gcp_projects   = distinct(concat(var.oidc_allowed_gcp_projects, var.enable_delta_watcher ? [var.hub_project_id] : []))
     })
   }
 

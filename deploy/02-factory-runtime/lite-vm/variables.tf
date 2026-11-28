@@ -113,3 +113,98 @@ variable "boot_disk_kms_key_self_link" {
   type        = string
   default     = null
 }
+
+variable "enable_delta_watcher" {
+  description = "If true, deploys the private Cloud Run External Delta Watcher and Cloud Scheduler tick job reaching the Hub VM via Direct VPC Egress (Issue #2)."
+  type        = bool
+  default     = false
+}
+
+variable "delta_watcher_image" {
+  description = "Digest-pinned Artifact Registry image built from scripts/delta-watcher/Dockerfile."
+  type        = string
+  default     = ""
+}
+
+variable "delta_watcher_sa_email" {
+  description = "Delta Watcher Cloud Run runtime Service Account email from Stage 01."
+  type        = string
+  default     = ""
+}
+
+variable "delta_watcher_invoker_sa_email" {
+  description = "Delta Watcher Cloud Scheduler OIDC invoker Service Account email from Stage 01."
+  type        = string
+  default     = ""
+}
+
+variable "delta_watcher_state_bucket" {
+  description = "Hub-project GCS bucket name from Stage 01 for Delta Watcher optimistic-concurrency cursors."
+  type        = string
+  default     = ""
+}
+
+variable "delta_watcher_tracker_repo" {
+  description = "Target external tracker repository slug (owner/repo) polled by the Delta Watcher."
+  type        = string
+  default     = ""
+}
+
+variable "delta_watcher_token_secret_id" {
+  description = "Optional Secret Manager secret ID in hub_project_id mounted as GITHUB_TOKEN."
+  type        = string
+  default     = ""
+}
+
+variable "delta_watcher_scion_project_id" {
+  description = "Optional Scion Hub project UUID scoped for coordinator wakeup messages."
+  type        = string
+  default     = ""
+}
+
+variable "delta_watcher_coordinator_agent" {
+  description = "Scion coordinator agent slug notified by the External Delta Watcher."
+  type        = string
+  default     = "coordinator"
+}
+
+variable "delta_watcher_cadence_cron" {
+  description = "Cloud Scheduler cron schedule triggering POST /tick on the private Delta Watcher service."
+  type        = string
+  default     = "*/5 * * * *"
+}
+
+variable "delta_watcher_time_zone" {
+  description = "IANA time zone applied to the Delta Watcher Cloud Scheduler job."
+  type        = string
+  default     = "America/Sao_Paulo"
+}
+
+variable "delta_watcher_release_label" {
+  description = "Explicit opt-in tracker label releasing open issues to the factory."
+  type        = string
+  default     = "factory:ready"
+}
+
+variable "delta_watcher_hold_label" {
+  description = "Veto tracker label suppressing new issue dispatches."
+  type        = string
+  default     = "factory:hold"
+}
+
+variable "delta_watcher_scope_label" {
+  description = "Optional multi-factory scope label required alongside the release label."
+  type        = string
+  default     = ""
+}
+
+variable "delta_watcher_max_concurrent_issues" {
+  description = "SEP portfolio capacity cap for simultaneously dispatched open issues (1 to 3)."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.delta_watcher_max_concurrent_issues >= 1 && var.delta_watcher_max_concurrent_issues <= 3
+    error_message = "delta_watcher_max_concurrent_issues must stay within the SEP empirical ceiling (1 to 3)."
+  }
+}

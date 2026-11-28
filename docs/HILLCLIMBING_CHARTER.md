@@ -225,6 +225,12 @@ Every qualification round must run `scripts/audit-silent-403.py` across Hub, Inf
 | **M12.5** | Hardened keyless WIF Verdict Gate (`--no-renames`, `REQUIRE_LIVE=true`, multi-repo CEL `in`) | GitHub Actions WIF validates PR #1 under mixed-case multi-repo CEL condition, enforces `l2:agent-engine-remote-smoke` with numeric project number on Attempt 1, and sweeps ReasoningEngines to `0` | `PASS (WIF GREEN Attempt 1 + 0 residual)` |
 | **M12.6** | Zero-Silent-403 runtime Cloud Logging scan (`INV-18`) with OTLP telemetry active | `scripts/audit-silent-403.py` scans Hub, Inference, and Sandbox logs with `GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY=true`, proving zero OTLP `403`s and resolving every silent denial (`HC12-F3`, `HC12-F4`) | `PASS (0 OTLP 403 + silent denials fixed)` |
 
+## Planned Additive Gate: `M3.7` External Delta Watcher End-to-End Intake (Issue #2)
+
+| Metric ID | Additive Gate | Verification Requirement (`M3.7` Provider-Agnostic External Delta Watcher) | Target |
+| :--- | :--- | :--- | :--- |
+| **M3.7** | Zero-token Cloud Run plus Cloud Scheduler intake without manual chat ping | PO opens an unlabeled issue (`0` wakes), then adds `factory:ready`. Cloud Scheduler invokes private Cloud Run `/tick`, wakes `coordinator` via GCP SA OIDC over Direct VPC Egress, and `coordinator` runs SEP to deliver a verified PR with `0` echo loops | `PASS (0 unlabeled wakes, 0 echo loops, verified PR)` |
+
 ## Wave 2 Preview (Deferred Until Wave 1 = 100%)
 
 Once `core_v1` and active Wave 1 additive blocks reach `100%` with zero Showstoppers, Wave 2 introduces efficiency metrics:

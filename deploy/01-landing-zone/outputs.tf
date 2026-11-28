@@ -110,3 +110,18 @@ output "github_wif_provider_name" {
   description = "Full Workload Identity Provider resource name for GitHub Actions GCP_WIF_PROVIDER variable."
   value       = var.enable_sandbox_project && var.enable_github_wif ? google_iam_workload_identity_pool_provider.github_oidc[0].name : null
 }
+
+output "delta_watcher_sa_email" {
+  description = "Least-privilege Cloud Run runtime Service Account email for the External Delta Watcher."
+  value       = var.enable_delta_watcher ? google_service_account.delta_watcher[0].email : null
+}
+
+output "delta_watcher_invoker_sa_email" {
+  description = "Cloud Scheduler OIDC invoker Service Account email for the External Delta Watcher."
+  value       = var.enable_delta_watcher ? google_service_account.delta_watcher_invoker[0].email : null
+}
+
+output "delta_watcher_state_bucket" {
+  description = "Hub-project GCS bucket storing External Delta Watcher optimistic-concurrency cursors."
+  value       = var.enable_delta_watcher ? google_storage_bucket.delta_watcher_state[0].name : null
+}

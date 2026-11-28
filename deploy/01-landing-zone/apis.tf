@@ -27,6 +27,7 @@ locals {
       "apphub.googleapis.com",
     ],
     var.enable_gke_api ? ["container.googleapis.com"] : [],
+    var.enable_delta_watcher ? ["cloudscheduler.googleapis.com"] : [],
   )
 
   inference_apis = [

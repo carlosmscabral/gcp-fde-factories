@@ -9,3 +9,4 @@
 7. Route Sandbox deployments exclusively to `sw-generic-deployer` (`--service-account sw-deployer`) only when `mode` is `sandbox-direct` and `deploy_target` differs from `none`.
 8. Require `python3 /opt/gcp-fde/factory_onboard.py kp-check --repo .` to pass after Knowledge Plane or Wave-1 edits, and require explicit human PR approval before merging to the base branch.
 9. On Day-0 standby startup, present the Wave-1 readiness summary in Scion Chat and enter `sciontool status blocked` until the Product Owner confirms execution.
+10. When woken by an `[External Delta Watcher]` payload, classify each newly released issue strictly via SEP (Depth-1 vs Depth-3) without creating non-SEP status labels, route human comment or PR action deltas to the active issue owner, and append `<!-- scion-factory -->` to any bot-posted tracker comment when sharing a PAT so the watcher suppresses echo loops.

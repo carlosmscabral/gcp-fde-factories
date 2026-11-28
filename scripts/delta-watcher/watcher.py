@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Out-of-LLM GitHub Delta Watcher comparing repository event state before waking coordinator.
+"""External Delta Watcher tick orchestrator and legacy offline CLI helper.
 
-Maintains an atomically persisted JSON cursor of last-seen updated_at timestamps per Issue
-and PR. Emits wakeup payloads only when a genuine delta occurs so idle coordinator turns stay zero.
+Preserves backward-compatible compute_deltas, load_cursor, and save_cursor functions while
+orchestrating provider-agnostic polling, deterministic SEP filtering, Hub wake, and
+optimistic-concurrency cursor updates.
 """
 from __future__ import annotations
 
@@ -10,8 +11,19 @@ import argparse
 import json
 import os
 import pathlib
+import sys
 import tempfile
 from typing import Any
+
+# Ensure sibling modules resolve when executed as a standalone script or loaded via importlib.
+_THIS_DIR = str(pathlib.Path(__file__).resolve().parent)
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+
+from adapters.base import TrackerAdapter  # noqa: E402
+from hub_notifier import HubNotifier  # noqa: E402
+from intake_filter import IntakePolicy, WatcherState, evaluate_tick, parse_dependencies  # noqa: E402
+from state_store import ConcurrencyConflictError, StateStore  # noqa: E402
 
 
 def compute_deltas(
@@ -50,8 +62,84 @@ def save_cursor(cursor_path: pathlib.Path, state: dict[str, str]) -> None:
         raise
 
 
+def run_tick(
+    adapter: TrackerAdapter,
+    state_store: StateStore,
+    policy: IntakePolicy,
+    repo_slug: str,
+    notifier: HubNotifier | None = None,
+    max_conflict_retries: int = 2,
+) -> dict[str, Any]:
+    """Executes one idempotent poll-filter-persist-wake cycle with optimistic locking.
+
+    Commits the claimed cursor via ifGenerationMatch before waking the Hub so concurrent
+    Cloud Scheduler ticks never double-dispatch. If the Hub wake fails (for example during
+    scheduled VM off-hours), restores the prior cursor so the next tick retries cleanly.
+    """
+    last_conflict: ConcurrencyConflictError | None = None
+    for _ in range(max(1, max_conflict_retries + 1)):
+        raw_state, generation = state_store.load()
+        prev_state = WatcherState.from_dict(raw_state)
+
+        open_items = adapter.list_open_items()
+        open_prs = adapter.list_open_prs()
+
+        referenced_deps: set[int] = set()
+        for item in open_items:
+            referenced_deps.update(parse_dependencies(item.body))
+        open_nums = {item.number for item in open_items}
+        closed_deps = adapter.get_closed_item_numbers(referenced_deps - open_nums)
+
+        active_prev_nums = {int(k) for k in prev_state.dispatched_issues if k.isdigit()}
+        comments = adapter.list_comments(active_prev_nums | open_nums)
+
+        decision = evaluate_tick(
+            policy=policy,
+            state=prev_state,
+            open_items=open_items,
+            comments=comments,
+            open_prs=open_prs,
+            closed_dependency_numbers=closed_deps,
+        )
+
+        next_dict = decision.next_state.to_dict()
+        state_changed = next_dict != prev_state.to_dict()
+        new_generation = generation
+
+        if state_changed:
+            try:
+                new_generation = state_store.save(next_dict, generation)
+            except ConcurrencyConflictError as exc:
+                last_conflict = exc
+                continue
+
+        wake_result: dict[str, Any] = {"status": "skipped", "reason": "no_events"}
+        if decision.events and notifier is not None:
+            try:
+                wake_result = notifier.wake_coordinator(repo_slug, policy.provider, decision.events)
+            except Exception as exc:
+                # Roll back cursor when Hub is unreachable so off-hours ticks retry cleanly.
+                if state_changed:
+                    try:
+                        state_store.save(prev_state.to_dict(), new_generation)
+                    except ConcurrencyConflictError:
+                        pass
+                raise RuntimeError(f"Hub wake failed and cursor rollback attempted: {exc}") from exc
+        elif decision.events and notifier is None:
+            wake_result = {"status": "dry_run", "event_count": len(decision.events)}
+
+        return {
+            **decision.metrics,
+            "event_count": len(decision.events),
+            "hub_wake_status": wake_result["status"],
+            "wake_detail": wake_result,
+        }
+
+    raise ConcurrencyConflictError(f"Exhausted state conflict retries: {last_conflict}")
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Reads an event items JSON file, prints only genuine deltas, and updates cursor atomically."""
+    """Runs the legacy offline JSON cursor diff CLI for backward compatibility."""
     parser = argparse.ArgumentParser(description="Compute repository Issue/PR deltas against a persisted cursor.")
     parser.add_argument("--cursor", required=True, type=pathlib.Path)
     parser.add_argument("--items-json", required=True, type=pathlib.Path)

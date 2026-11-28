@@ -48,3 +48,9 @@ variable "iap_domain" {
   description = "Internal customer HTTPS domain fronted by IAP."
   type        = string
 }
+
+variable "enable_delta_watcher" {
+  description = "If true, emits Delta Watcher OIDC and private endpoint contract fields for HA GKE deployment (Issue #2)."
+  type        = bool
+  default     = false
+}

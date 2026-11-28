@@ -25,6 +25,8 @@ locals {
     telemetry_enabled           = true
     telemetry_cloud_provider    = "gcp"
     telemetry_gcp_project_id    = var.hub_project_id
+    delta_watcher_enabled       = var.enable_delta_watcher
+    oidc_allowed_gcp_projects   = var.enable_delta_watcher ? [var.hub_project_id] : []
     gke_dns_control_plane       = true
     hub_db_persistence          = "pvc-or-cloudsql-required"
     shared_dir_storage_class    = "standard-rwx"

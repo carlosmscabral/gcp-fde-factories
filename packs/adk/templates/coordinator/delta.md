@@ -8,3 +8,4 @@
 6. Never assign `adk-deployer` or `adk-evaluator` SAs to `adk-coordinator`, `adk-eng-manager`, `adk-architect`, `adk-developer`, or `adk-code-reviewer`.
 7. Require explicit human PR approval before merging to `main` or promoting any Gemini Enterprise App registration to DEV, HML, or PRD.
 8. When `adk-kaizen-analyst` requests Option A external skill discovery via `scion message`, spawn a bounded `adk-researcher` (`--role baseline`), return its Candidate Skill Sheet, and retire the researcher upon delivery.
+9. When woken by an `[External Delta Watcher]` payload, classify each newly released issue strictly via SEP (Depth-1 vs Depth-3) without creating non-SEP status labels, route human comment or PR action deltas to the active issue owner, and append `<!-- scion-factory -->` to any bot-posted tracker comment when sharing a PAT so the watcher suppresses echo loops.
