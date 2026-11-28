@@ -184,3 +184,41 @@ def test_native_scion_telemetry_defaults_across_stage01_and_stage02() -> None:
     assert 'telemetry_enabled           = true' in ha_gke
     assert 'telemetry_cloud_provider    = "gcp"' in ha_gke
     assert 'telemetry_gcp_project_id    = var.hub_project_id' in ha_gke
+
+
+def test_issue4_scion_preview4_pin_decisions_defaults_and_agent_registry_paths() -> None:
+    """Confirms Issue #4 parity: v0.4.0-preview.4 pin with preview.3 compat, Decisions/Artifacts defaults, --never-suspend guard, and Agent Registry paths."""
+    expected_tag = "v0.4.0-preview.4"
+    expected_sha = "0eaac10191dd948906c0957c78fdfd96eeef0a6e7cc56e3e30d2d728144ca5b9"
+    compat_paths = [
+        REPO_ROOT / "compat.yaml",
+        REPO_ROOT / "packs/adk/compat.yaml",
+        REPO_ROOT / "packs/gecx/compat.yaml",
+        REPO_ROOT / "packs/generic/compat.yaml",
+        REPO_ROOT / "packs/_template-pack/compat.yaml",
+    ]
+    for path in compat_paths:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        scion_cfg = data["scion"]
+        assert expected_tag in scion_cfg["tested"], f"{path} missing {expected_tag}"
+        assert "v0.4.0-preview.3" in scion_cfg["tested"], f"{path} dropped backward compat for v0.4.0-preview.3"
+        assert scion_cfg["binary_sha256"] == expected_sha, f"{path} sha mismatch"
+        assert expected_tag in scion_cfg["binary_url"], f"{path} binary_url mismatch"
+
+    lite_vars = (REPO_ROOT / "deploy/02-factory-runtime/lite-vm/variables.tf").read_text(encoding="utf-8")
+    ha_vars = (REPO_ROOT / "deploy/02-factory-runtime/ha-gke/variables.tf").read_text(encoding="utf-8")
+    assert f'default     = "{expected_tag}"' in lite_vars
+    assert f'default     = "{expected_sha}"' in lite_vars
+    assert f'default     = "{expected_tag}"' in ha_vars
+
+    bootstrap = (REPO_ROOT / "deploy/03-hub-bootstrap/bootstrap-hub-project.sh").read_text(encoding="utf-8")
+    for exp_name in ("web.decisions", "hub.artifacts", "web.artifact_review_editor", "hub.artifact_archive"):
+        assert exp_name in bootstrap
+    assert "--never-suspend" in bootstrap
+
+    adk_deployer = (REPO_ROOT / "packs/adk/templates/adk-deployer/delta.md").read_text(encoding="utf-8")
+    adk_eval = (REPO_ROOT / "packs/adk/templates/adk-eval-tester/delta.md").read_text(encoding="utf-8")
+    assert "gcloud agent-registry agents list" in adk_deployer
+    assert "--functional-type=agent --identity-type=agent-identity" in adk_deployer
+    assert "gcloud agent-registry services create" in adk_deployer
+    assert "gcloud agent-registry agents list" in adk_eval

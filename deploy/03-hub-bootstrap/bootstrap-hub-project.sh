@@ -429,6 +429,11 @@ ensure_coordinator_started() {
     return 0
   fi
 
+  # Protect the long-lived Coordinator from bulk `scion suspend --all` when running Scion v0.4.0-preview.4+.
+  if scion help start 2>&1 | grep -q -- '--never-suspend'; then
+    start_args+=(--never-suspend)
+  fi
+
   scion "${start_args[@]}"
   echo "COORDINATOR STARTED (standby mode): ${coord_name} (template=${coord_tpl}, harness=${coord_harness})"
 }
@@ -641,6 +646,11 @@ do_apply() {
   if [[ "$auto_susp" == "true" ]]; then
     scion hub experiments enable lifecycle.idle_suspend --hub "$HUB_URL"
   fi
+
+  # Enable pilot-validated Decisions and Artifacts review experiments by default on every Hub.
+  for _exp in web.decisions hub.artifacts web.artifact_review_editor hub.artifact_archive; do
+    scion hub experiments enable "$_exp" --hub "$HUB_URL"
+  done
 
   # Enable native Scion GCP telemetry export and Metrics Dashboard backed by hub_project_id (keyless ADC).
   if [[ -n "$LANDING_ZONE_JSON" ]]; then

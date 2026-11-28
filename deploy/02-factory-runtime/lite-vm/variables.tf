@@ -48,13 +48,13 @@ variable "machine_type" {
 variable "scion_version" {
   description = "Pinned Scion release tag matching compat.yaml (never floating latest)."
   type        = string
-  default     = "v0.4.0-preview.3"
+  default     = "v0.4.0-preview.4"
 }
 
 variable "scion_binary_sha256" {
   description = "Pinned SHA-256 hex digest of scion-linux-amd64.tar.gz matching compat.yaml (verified offline before extraction)."
   type        = string
-  default     = "d210505c58393f68ae719bc6185e71a3f0455caa1dce6e7798d6bc355663e17f"
+  default     = "0eaac10191dd948906c0957c78fdfd96eeef0a6e7cc56e3e30d2d728144ca5b9"
 
   validation {
     condition     = can(regex("^[0-9a-f]{64}$", var.scion_binary_sha256))

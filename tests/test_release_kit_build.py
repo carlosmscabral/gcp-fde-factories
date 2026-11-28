@@ -249,6 +249,8 @@ def test_bootstrap_schedules_weekly_kaizen_by_default_and_enforces_claude_model_
     assert "default_agent_role" not in calls  # read-only in Scion v0.4 server-config API (dbUnwrittenLayer1Paths)
     assert "default_max_model_calls 150" in calls
     assert "hub experiments enable lifecycle.idle_suspend --hub" in calls
+    for exp_name in ("web.decisions", "hub.artifacts", "web.artifact_review_editor", "hub.artifact_archive"):
+        assert f"hub experiments enable {exp_name} --hub" in calls
     assert "hub settings set telemetry.enabled true --hub" in calls
     assert "hub settings set telemetry.cloud.enabled true --hub" in calls
     assert "hub settings set telemetry.cloud.provider gcp --hub" in calls

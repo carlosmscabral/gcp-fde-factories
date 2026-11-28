@@ -41,7 +41,7 @@ variable "artifact_registry_url" {
 variable "scion_version" {
   description = "Pinned Scion release tag matching compat.yaml."
   type        = string
-  default     = "v0.4.0-preview.3"
+  default     = "v0.4.0-preview.4"
 }
 
 variable "iap_domain" {
